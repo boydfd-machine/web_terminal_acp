@@ -160,3 +160,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  postgres_data:
+  elasticsearch_data:
