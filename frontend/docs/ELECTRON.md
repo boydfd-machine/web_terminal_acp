@@ -17,11 +17,8 @@ npm run electron:dev
 
 This starts Vite on `http://127.0.0.1:5173` and opens Electron against it.
 
-Point the UI at your API when building:
-
-```bash
-VITE_API_BASE=http://your-server.example.com:8001 npm run build
-```
+The packaged app can point at a backend at runtime from **Settings -> Backend URL**.
+When no runtime URL is set, Electron defaults to `http://127.0.0.1:8001`.
 
 ## Installers
 
@@ -53,7 +50,7 @@ Packaged builds serve `dist/` on `http://127.0.0.1:4173` so CORS matches localho
 
 | Variable | Purpose |
 |----------|---------|
-| `VITE_API_BASE` | Backend URL baked into the build (e.g. `http://your-server.example.com:8001`) |
+| `VITE_API_BASE` | Optional build-time fallback backend URL; runtime Settings takes precedence |
 | `VITE_DEV_SERVER_URL` | Vite URL for `electron:dev` (default `http://127.0.0.1:5173`) |
 | `WTA_ELECTRON_STATIC_PORT` | Port for the embedded static server in production (default `4173`) |
 | `ELECTRON_DEV` | Force dev mode (load Vite instead of `dist/`) |

@@ -10,6 +10,8 @@ import {
   writeTerminalGroupingMode
 } from "../userPreferences";
 import { ensureDesktopNotificationPermission } from "../desktopNotifications";
+import { readApiBase, readConfiguredApiBase, writeConfiguredApiBase } from "../apiBase";
+import { useEffect, useState } from "react";
 
 type SettingsModalProps = {
   isOpen: boolean;
@@ -32,9 +34,28 @@ export function SettingsModal({
   onTerminalGroupingModeChange,
   onDesktopNotificationsEnabledChange
 }: SettingsModalProps) {
+  const [apiBaseDraft, setApiBaseDraft] = useState("");
+  const [apiBaseError, setApiBaseError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setApiBaseDraft(readConfiguredApiBase());
+      setApiBaseError(null);
+    }
+  }, [isOpen]);
+
   if (!isOpen) {
     return null;
   }
+
+  const saveApiBase = (value: string) => {
+    try {
+      writeConfiguredApiBase(value);
+      window.location.reload();
+    } catch {
+      setApiBaseError("请输入有效的 HTTP/HTTPS 地址");
+    }
+  };
 
   return (
     <div
@@ -52,6 +73,43 @@ export function SettingsModal({
             关闭
           </button>
         </div>
+
+        <label className="settings-field">
+          <span>后端地址</span>
+          <input
+            value={apiBaseDraft}
+            onChange={(event) => {
+              setApiBaseDraft(event.target.value);
+              setApiBaseError(null);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                saveApiBase(apiBaseDraft);
+              }
+            }}
+            placeholder={readApiBase()}
+          />
+        </label>
+        <div className="settings-actions">
+          <button type="button" onClick={() => saveApiBase(apiBaseDraft)}>
+            保存后端地址
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setApiBaseDraft("");
+              saveApiBase("");
+            }}
+          >
+            恢复默认
+          </button>
+        </div>
+        {apiBaseError && (
+          <p className="error settings-error" role="alert">
+            {apiBaseError}
+          </p>
+        )}
 
         <label className="settings-field">
           <span>项目名显示语言</span>

@@ -82,7 +82,7 @@ Copy `.env.example` to `.env`. Important variables:
 | `OPENAI_COMPAT_API_KEY` | API key for summarizer | `dev-local-key` |
 | `OPENAI_COMPAT_MODEL` | Model name | `local-summarizer` |
 | `BACKEND_PUBLISHED_PORT` | Host port for API | `8001` |
-| `VITE_API_BASE` | Frontend build-time API origin; leave empty for Docker nginx proxying, set `http://127.0.0.1:8000` for local Vite development | empty |
+| `VITE_API_BASE` | Frontend build-time fallback API origin; leave empty for Docker nginx proxying. Desktop builds can set the backend address at runtime in Settings. | empty |
 
 Agent tool configs are mounted from `~/.claude`, `~/.codex`, `~/.agents`, `~/.acpx` by default so in-container agents share your host credentials (adjust for your threat model).
 

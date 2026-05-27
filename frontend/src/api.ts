@@ -16,18 +16,11 @@ import type {
   VirtualWindow
 } from "./types";
 import type { SummaryOutputLanguage } from "./userPreferences";
+import { readApiBase } from "./apiBase";
 
 export type RetrySummaryPayload = {
   allow_title_folder_override: boolean;
 };
-
-type ApiWindow = Window & {
-  __WEB_TERMINAL_API_BASE?: string;
-};
-
-function readApiBase(): string {
-  return (window as ApiWindow).__WEB_TERMINAL_API_BASE || import.meta.env.VITE_API_BASE || window.location.origin;
-}
 
 function apiBaseUrl(): URL {
   const base = new URL(readApiBase());

@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { readApiBase } from "../apiBase";
 import type { BootstrapClientInput } from "../types";
 
 type BootstrapClientFormProps = {
@@ -13,12 +14,7 @@ function defaultServerUrl(): string {
   if (typeof configured === "string" && configured.trim() !== "") {
     return configured.trim();
   }
-  const url = new URL(window.location.href);
-  if (url.port === "5173") {
-    url.port = "8001";
-    return url.origin;
-  }
-  return window.location.origin;
+  return readApiBase();
 }
 
 export function BootstrapClientForm({ isSubmitting, onCancel, onSubmit }: BootstrapClientFormProps) {

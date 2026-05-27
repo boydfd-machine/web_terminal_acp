@@ -1153,6 +1153,18 @@ export default function App() {
                   role="menuitem"
                   className="terminal-controls-row"
                   onClick={() => {
+                    setSettingsOpen(true);
+                    setTerminalControlsOpen(false);
+                  }}
+                >
+                  <span>Settings</span>
+                  <strong>Alt+,</strong>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="terminal-controls-row"
+                  onClick={() => {
                     setDetailPanelOpen(true);
                     setTerminalControlsOpen(false);
                   }}

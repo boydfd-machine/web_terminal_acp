@@ -2176,8 +2176,20 @@ html.electron-app .terminal-immersive .workspace {
   font-size: 14px;
 }
 
-.settings-field select {
+.settings-field select,
+.settings-field input {
   width: 100%;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-error {
+  margin: -4px 0 0;
+  font-size: 12px;
 }
 
 .settings-hint {
