@@ -12,6 +12,7 @@ import tty
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 import logging
+from uuid import UUID
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -27,7 +28,12 @@ class ResizeControl:
     rows: int
 
 
-def parse_text_input(text: str) -> bytes | ResizeControl | None:
+@dataclass(frozen=True)
+class SelectWindowControl:
+    window_id: UUID
+
+
+def parse_text_input(text: str) -> bytes | ResizeControl | SelectWindowControl | None:
     try:
         payload = json.loads(text)
     except json.JSONDecodeError:
@@ -35,6 +41,15 @@ def parse_text_input(text: str) -> bytes | ResizeControl | None:
 
     if not isinstance(payload, dict):
         return text.encode()
+    if payload.get("type") == "select_window":
+        window_id = payload.get("window_id")
+        if not isinstance(window_id, str):
+            return None
+        try:
+            return SelectWindowControl(window_id=UUID(window_id))
+        except ValueError:
+            return None
+
     if payload.get("type") != "resize":
         return None
 

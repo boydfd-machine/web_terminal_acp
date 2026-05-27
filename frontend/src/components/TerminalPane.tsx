@@ -1,9 +1,19 @@
-import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 
 import { terminalWebSocketUrl } from "../api";
 import { createTerminalOutputBuffer } from "../terminalOutputBuffer";
+import {
+  fitTerminalToContainer,
+  isTerminalViewportFilled,
+  readTerminalCanvas,
+  terminalViewportNeedsRefit,
+} from "../terminalFit";
+import {
+  claimActiveTerminalView,
+  isTerminalViewLowPriority,
+  TERMINAL_VIEW_PRIORITY_CHANGED_EVENT,
+} from "../terminalViewPriority";
 
 type TerminalViewportMode = "desktop" | "phone" | "fixed";
 type TerminalConnectionStatus = "connecting" | "connected" | "reconnecting" | "unavailable" | "error";
@@ -14,10 +24,14 @@ type TerminalPaneProps = {
   viewportMode?: TerminalViewportMode;
   layoutVersion?: number;
   virtualKeysVisible?: boolean;
+  onTerminalSelection?: (windowId: string) => void;
+  onQuickInputOpenChange?: (open: boolean) => void;
 };
 
 export type TerminalPaneHandle = {
   focus: () => void;
+  refit: () => void;
+  openQuickInput: () => void;
 };
 
 type VirtualKey = {
@@ -45,17 +59,33 @@ const VIRTUAL_KEYS: VirtualKey[] = [
 ];
 
 const RECONNECT_DELAYS_MS = [500, 1000, 2000, 5000, 10000];
-
+const FIT_RETRY_DELAYS_MS = [80, 250, 600, 1200, 2000, 3000, 5000, 10000, 15000, 30000] as const;
+const FIT_UNTIL_FILLED_INTERVAL_MS = 150;
+const FIT_UNTIL_FILLED_MAX_MS = 60000;
+const UNDERSIZED_REFIT_INTERVAL_MS = 2000;
+const OUTPUT_REFIT_DEBOUNCE_MS = 50;
+const WRITE_PARSED_REFIT_DEBOUNCE_MS = 100;
+const RESIZE_OBSERVER_DEBOUNCE_MS = 50;
+const TERMINAL_OUTPUT_FLUSH_CHARACTERS = 4 * 1024;
+const OUTPUT_FLUSH_DEFER_AFTER_INPUT_MS = 32;
+const BACKGROUND_OUTPUT_FLUSH_DELAY_MS = 250;
+const BACKGROUND_OUTPUT_FLUSH_CHARACTERS = 1024;
+const LOW_PRIORITY_SOCKET_CLOSE_DELAY_MS = 1500;
+const VIEW_PRIORITY_RECONCILE_INTERVAL_MS = 750;
+const PENDING_INPUT_QUEUE_MAX_SIZE = 64;
+const QUICK_INPUT_DRAFT_STORAGE_PREFIX = "web-terminal-acp:terminal-quick-input:";
 type TerminalStatusMessage = {
   type?: unknown;
   status?: unknown;
   retry_after_ms?: unknown;
+  window_id?: unknown;
+  view_id?: unknown;
 };
 
 function parseTerminalStatusMessage(data: string): TerminalStatusMessage | null {
   try {
     const message = JSON.parse(data) as TerminalStatusMessage;
-    return message.type === "terminal_status" ? message : null;
+    return message.type === "terminal_status" || message.type === "terminal_selection" ? message : null;
   } catch {
     return null;
   }
@@ -74,6 +104,70 @@ function terminalStatusLabel(status: TerminalConnectionStatus): string {
     case "error":
       return "Terminal error";
   }
+}
+
+function quickInputDraftStorageKey(clientId: string, windowId: string): string {
+  return `${QUICK_INPUT_DRAFT_STORAGE_PREFIX}${encodeURIComponent(clientId)}:${encodeURIComponent(windowId)}`;
+}
+
+function readQuickInputDraft(storageKey: string): string {
+  try {
+    return window.localStorage.getItem(storageKey) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeQuickInputDraft(storageKey: string, draft: string): void {
+  try {
+    if (draft.length === 0) {
+      window.localStorage.removeItem(storageKey);
+      return;
+    }
+    window.localStorage.setItem(storageKey, draft);
+  } catch {
+    return;
+  }
+}
+
+function clearQuickInputDraft(storageKey: string): void {
+  try {
+    window.localStorage.removeItem(storageKey);
+  } catch {
+    return;
+  }
+}
+
+function isQuickInputShortcut(event: KeyboardEvent): boolean {
+  const key = event.key.toLocaleLowerCase();
+  return event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey
+    && (event.code === "KeyI" || key === "i" || event.keyCode === 73);
+}
+
+function isEditableShortcutTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (target.closest(".terminal-quick-input-panel") !== null) {
+    return false;
+  }
+
+  if (target.classList.contains("xterm-helper-textarea") || target.closest(".xterm") !== null) {
+    return false;
+  }
+
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable;
+}
+
+function resizeQuickInputTextarea(textarea: HTMLTextAreaElement | null): void {
+  if (textarea === null) {
+    return;
+  }
+
+  textarea.style.height = "auto";
+  textarea.style.height = `${textarea.scrollHeight}px`;
 }
 
 function decodeOsc52ClipboardPayload(data: string): string | null {
@@ -129,22 +223,94 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   viewportMode = "desktop",
   layoutVersion = 0,
   virtualKeysVisible = false,
+  onTerminalSelection,
+  onQuickInputOpenChange,
 }, ref) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const xtermHostRef = useRef<HTMLDivElement | null>(null);
+  const quickInputRef = useRef<HTMLTextAreaElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
-  const socketRef = useRef<WebSocket | null>(null);
+  const socketWorkerRef = useRef<Worker | null>(null);
+  const socketOpenRef = useRef(false);
+  const activeWindowIdRef = useRef<string | null>(null);
+  const initialWindowIdRef = useRef<string | null>(null);
+  const viewIdRef = useRef<string>(crypto.randomUUID());
+  const onTerminalSelectionRef = useRef<TerminalPaneProps["onTerminalSelection"]>(onTerminalSelection);
+  const onQuickInputOpenChangeRef = useRef<TerminalPaneProps["onQuickInputOpenChange"]>(onQuickInputOpenChange);
   const fitAndNotifyResizeRef = useRef<(() => void) | null>(null);
+  const claimActiveTerminalViewRef = useRef<(() => void) | null>(null);
+  const sendTerminalInputRef = useRef<((data: string) => void) | null>(null);
   const scheduledFitFramesRef = useRef<number[]>([]);
   const scheduledFitTimeoutsRef = useRef<number[]>([]);
   const connectionStatusRef = useRef<TerminalConnectionStatus>("connecting");
   const [pendingClipboardText, setPendingClipboardText] = useState<string | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<TerminalConnectionStatus>("connecting");
+  const [quickInputOpen, setQuickInputOpen] = useState(false);
+  const [quickInputDraft, setQuickInputDraft] = useState("");
+  const hasSelectedWindow = windowId !== null;
+  const quickInputStorageKey = clientId !== null && windowId !== null
+    ? quickInputDraftStorageKey(clientId, windowId)
+    : null;
+  const canSendQuickInput = quickInputDraft.length > 0 && connectionStatus === "connected";
 
   const updateConnectionStatus = useCallback((status: TerminalConnectionStatus) => {
     connectionStatusRef.current = status;
     setConnectionStatus(status);
   }, []);
+
+  useEffect(() => {
+    onTerminalSelectionRef.current = onTerminalSelection;
+  }, [onTerminalSelection]);
+
+  useEffect(() => {
+    onQuickInputOpenChangeRef.current = onQuickInputOpenChange;
+  }, [onQuickInputOpenChange]);
+
+  useEffect(() => {
+    onQuickInputOpenChangeRef.current?.(quickInputOpen);
+    return () => {
+      if (quickInputOpen) {
+        onQuickInputOpenChangeRef.current?.(false);
+      }
+    };
+  }, [quickInputOpen]);
+
+  useEffect(() => {
+    if (quickInputStorageKey === null) {
+      setQuickInputOpen(false);
+      setQuickInputDraft("");
+      return;
+    }
+
+    setQuickInputDraft(readQuickInputDraft(quickInputStorageKey));
+  }, [quickInputStorageKey]);
+
+  useLayoutEffect(() => {
+    if (!quickInputOpen) {
+      return;
+    }
+
+    resizeQuickInputTextarea(quickInputRef.current);
+  }, [quickInputDraft, quickInputOpen]);
+
+  useEffect(() => {
+    if (!quickInputOpen) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const textarea = quickInputRef.current;
+      if (textarea === null) {
+        return;
+      }
+
+      textarea.focus();
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      resizeQuickInputTextarea(textarea);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [quickInputOpen, quickInputStorageKey]);
 
   const clearScheduledFits = useCallback(() => {
     for (const frame of scheduledFitFramesRef.current) {
@@ -161,6 +327,10 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     fitAndNotifyResizeRef.current?.();
   }, []);
 
+  const claimTerminalViewPriority = useCallback(() => {
+    claimActiveTerminalViewRef.current?.();
+  }, []);
+
   const scheduleFitAndNotifyResize = useCallback(() => {
     clearScheduledFits();
     fitAndNotifyResize();
@@ -172,12 +342,13 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     });
     scheduledFitFramesRef.current.push(firstFrame);
 
-    for (const delay of [80, 250, 600, 1200]) {
+    for (const delay of FIT_RETRY_DELAYS_MS) {
       scheduledFitTimeoutsRef.current.push(window.setTimeout(fitAndNotifyResize, delay));
     }
   }, [clearScheduledFits, fitAndNotifyResize]);
 
   const focusTerminal = useCallback(() => {
+    claimTerminalViewPriority();
     const stage = stageRef.current;
     const scrollLeft = stage?.scrollLeft ?? 0;
     const scrollTop = stage?.scrollTop ?? 0;
@@ -186,48 +357,187 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
       stage.scrollLeft = scrollLeft;
       stage.scrollTop = scrollTop;
     }
-  }, []);
+  }, [claimTerminalViewPriority]);
 
-  useImperativeHandle(ref, () => ({
-    focus: focusTerminal
-  }), [focusTerminal]);
+  const openQuickInput = useCallback(() => {
+    if (clientId === null || windowId === null) {
+      return;
+    }
+    claimTerminalViewPriority();
+    setQuickInputOpen(true);
+  }, [claimTerminalViewPriority, clientId, windowId]);
 
-  const sendTerminalInput = (data: string) => {
-    const socket = socketRef.current;
-    if (socket?.readyState !== WebSocket.OPEN || connectionStatusRef.current !== "connected") {
+  const closeQuickInput = useCallback(() => {
+    setQuickInputOpen(false);
+    focusTerminal();
+  }, [focusTerminal]);
+
+  const toggleQuickInput = useCallback(() => {
+    if (clientId === null || windowId === null) {
       return;
     }
 
-    socket.send(new TextEncoder().encode(data));
+    if (quickInputOpen) {
+      closeQuickInput();
+      return;
+    }
+
+    claimTerminalViewPriority();
+    setQuickInputOpen(true);
+  }, [claimTerminalViewPriority, clientId, closeQuickInput, quickInputOpen, windowId]);
+
+  useImperativeHandle(ref, () => ({
+    focus: focusTerminal,
+    refit: scheduleFitAndNotifyResize,
+    openQuickInput,
+  }), [focusTerminal, openQuickInput, scheduleFitAndNotifyResize]);
+
+  const sendTerminalInput = (data: string) => {
+    claimTerminalViewPriority();
+    sendTerminalInputRef.current?.(data);
     focusTerminal();
   };
 
-  useEffect(() => {
-    if (clientId === null || windowId === null || containerRef.current === null) {
+  const submitQuickInput = useCallback(() => {
+    claimTerminalViewPriority();
+    if (quickInputDraft.length === 0 || connectionStatusRef.current !== "connected") {
       return;
     }
+
+    sendTerminalInputRef.current?.(quickInputDraft);
+    if (quickInputStorageKey !== null) {
+      clearQuickInputDraft(quickInputStorageKey);
+    }
+    setQuickInputDraft("");
+    setQuickInputOpen(false);
+    focusTerminal();
+  }, [claimTerminalViewPriority, focusTerminal, quickInputDraft, quickInputStorageKey]);
+
+  const sendSelectWindow = useCallback((nextWindowId: string) => {
+    const worker = socketWorkerRef.current;
+    if (worker === null || !socketOpenRef.current) {
+      return;
+    }
+
+    worker.postMessage({ type: "json", data: JSON.stringify({ type: "select_window", window_id: nextWindowId }) });
+  }, []);
+
+  useEffect(() => {
+    if (clientId === null || windowId === null) {
+      return;
+    }
+
+    const initialWindowId = windowId;
+    initialWindowIdRef.current = initialWindowId;
+    activeWindowIdRef.current = initialWindowId;
 
     const terminal = new Terminal({
       cursorBlink: true,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
     });
-    const fitAddon = new FitAddon();
-    const textEncoder = new TextEncoder();
     let closedByCleanup = false;
     let disposed = false;
+    let openFrame: number | null = null;
+    let escapeFocusFrame: number | null = null;
+    let canvasResizeObserver: ResizeObserver | null = null;
     const isActive = () => !closedByCleanup && !disposed;
 
-    terminal.loadAddon(fitAddon);
-    terminal.open(containerRef.current);
+    const resolveFitContainer = (): HTMLElement | null => {
+      return xtermHostRef.current ?? containerRef.current;
+    };
+
+    let fitUntilFilledTimer: number | null = null;
+    let outputRefitTimer: number | null = null;
+    let writeParsedRefitTimer: number | null = null;
+    let fitUntilFilledStartedAt = Date.now();
+    let reconnectAttempt = 0;
+    let reconnectTimer: number | null = null;
+    let lowPriorityCloseTimer: number | null = null;
+    let lastSentResize: { cols: number; rows: number } | null = null;
+    const pendingInputs: string[] = [];
+
+    const terminalViewLease = { viewId: viewIdRef.current, clientId, windowId: initialWindowId };
+    const isCurrentViewLowPriority = () => {
+      return document.hidden || isTerminalViewLowPriority(viewIdRef.current);
+    };
+    const claimCurrentTerminalView = () => {
+      claimActiveTerminalView(terminalViewLease);
+    };
+    const claimVisibleCurrentTerminalView = () => {
+      if (!document.hidden) {
+        claimCurrentTerminalView();
+      }
+    };
+    claimActiveTerminalViewRef.current = claimCurrentTerminalView;
+    claimVisibleCurrentTerminalView();
+
+    const focusCurrentTerminal = () => {
+      const stage = stageRef.current;
+      const scrollLeft = stage?.scrollLeft ?? 0;
+      const scrollTop = stage?.scrollTop ?? 0;
+      claimVisibleCurrentTerminalView();
+      terminal.focus();
+      if (stage) {
+        stage.scrollLeft = scrollLeft;
+        stage.scrollTop = scrollTop;
+      }
+    };
+
+    const restoreTerminalFocusAfterEscape = () => {
+      if (escapeFocusFrame !== null) {
+        window.cancelAnimationFrame(escapeFocusFrame);
+      }
+
+      escapeFocusFrame = window.requestAnimationFrame(() => {
+        escapeFocusFrame = null;
+        if (!isActive()) {
+          return;
+        }
+
+        focusCurrentTerminal();
+      });
+    };
+
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.key !== "Escape") {
+        return true;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      restoreTerminalFocusAfterEscape();
+      return true;
+    });
+
+    const clearFitUntilFilled = () => {
+      if (fitUntilFilledTimer !== null) {
+        window.clearTimeout(fitUntilFilledTimer);
+        fitUntilFilledTimer = null;
+      }
+    };
+
     const outputBuffer = createTerminalOutputBuffer({
-      write: (data) => terminal.write(data),
+      write: (data) => {
+        terminal.write(data);
+        if (outputRefitTimer !== null) {
+          return;
+        }
+        outputRefitTimer = window.setTimeout(() => {
+          outputRefitTimer = null;
+          if (!isActive()) {
+            return;
+          }
+          fitAndNotifyResizeRef.current?.();
+        }, OUTPUT_REFIT_DEBOUNCE_MS);
+      },
+      maxFlushCharacters: TERMINAL_OUTPUT_FLUSH_CHARACTERS,
+      isLowPriority: isCurrentViewLowPriority,
+      lowPriorityFlushDelayMs: BACKGROUND_OUTPUT_FLUSH_DELAY_MS,
+      lowPriorityMaxFlushCharacters: BACKGROUND_OUTPUT_FLUSH_CHARACTERS,
     });
     terminalRef.current = terminal;
     setPendingClipboardText(null);
     updateConnectionStatus("connecting");
-    let reconnectAttempt = 0;
-    let reconnectTimer: number | null = null;
-    let lastSentResize: { cols: number; rows: number } | null = null;
 
     const osc52Disposable = terminal.parser.registerOscHandler(52, async (data) => {
       if (!isActive()) {
@@ -252,27 +562,64 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
       return true;
     });
 
+    const sendSocketJson = (payload: unknown) => {
+      const worker = socketWorkerRef.current;
+      if (worker === null || !socketOpenRef.current) {
+        return;
+      }
+      worker.postMessage({ type: "json", data: JSON.stringify(payload) });
+    };
+
+    const sendInputNow = (data: string) => {
+      const worker = socketWorkerRef.current;
+      if (worker === null || !socketOpenRef.current || connectionStatusRef.current !== "connected") {
+        return false;
+      }
+
+      const encoded = new TextEncoder().encode(data);
+      worker.postMessage({ type: "input", data: encoded }, [encoded.buffer]);
+      return true;
+    };
+
+    const flushPendingInputs = () => {
+      while (pendingInputs.length > 0) {
+        const nextInput = pendingInputs[0];
+        if (!sendInputNow(nextInput)) {
+          return;
+        }
+        pendingInputs.shift();
+      }
+    };
+
+    const sendOrQueueInput = (data: string) => {
+      if (sendInputNow(data)) {
+        return;
+      }
+      pendingInputs.push(data);
+      while (pendingInputs.length > PENDING_INPUT_QUEUE_MAX_SIZE) {
+        pendingInputs.shift();
+      }
+      claimCurrentTerminalView();
+      reconcileViewPriority();
+    };
+    sendTerminalInputRef.current = sendOrQueueInput;
+
     const sendResize = () => {
-      const socket = socketRef.current;
-      if (socket === null) {
-        return;
-      }
-
-      if (socket.readyState !== WebSocket.OPEN) {
-        return;
-      }
-
       const nextResize = { cols: terminal.cols, rows: terminal.rows };
       if (lastSentResize?.cols === nextResize.cols && lastSentResize.rows === nextResize.rows) {
         return;
       }
 
-      socket.send(JSON.stringify({ type: "resize", ...nextResize }));
+      sendSocketJson({ type: "resize", ...nextResize });
       lastSentResize = nextResize;
     };
 
     const fitAndNotifyResize = () => {
-      const container = containerRef.current;
+      if (terminal.element === undefined) {
+        return;
+      }
+
+      const container = resolveFitContainer();
       if (container === null) {
         return;
       }
@@ -282,12 +629,69 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         return;
       }
 
-      fitAddon.fit();
+      if (!fitTerminalToContainer(terminal, container)) {
+        return;
+      }
+
       sendResize();
     };
     fitAndNotifyResizeRef.current = fitAndNotifyResize;
 
-    scheduleFitAndNotifyResize();
+    const scheduleFitUntilFilled = () => {
+      clearFitUntilFilled();
+      fitUntilFilledStartedAt = Date.now();
+      const tick = () => {
+        if (!isActive()) {
+          clearFitUntilFilled();
+          return;
+        }
+
+        const container = resolveFitContainer();
+        if (container !== null) {
+          fitAndNotifyResize();
+          if (isTerminalViewportFilled(terminal, container)) {
+            clearFitUntilFilled();
+            return;
+          }
+        }
+
+        if (Date.now() - fitUntilFilledStartedAt >= FIT_UNTIL_FILLED_MAX_MS) {
+          clearFitUntilFilled();
+          return;
+        }
+
+        fitUntilFilledTimer = window.setTimeout(tick, FIT_UNTIL_FILLED_INTERVAL_MS);
+      };
+      tick();
+    };
+
+    void document.fonts.ready.then(() => {
+      if (!isActive()) {
+        return;
+      }
+      fitAndNotifyResize();
+      scheduleFitUntilFilled();
+    });
+
+    const writeParsedDisposable = terminal.onWriteParsed(() => {
+      if (!isActive()) {
+        return;
+      }
+      if (writeParsedRefitTimer !== null) {
+        return;
+      }
+      writeParsedRefitTimer = window.setTimeout(() => {
+        writeParsedRefitTimer = null;
+        if (!isActive()) {
+          return;
+        }
+        const container = resolveFitContainer();
+        if (container === null || !terminalViewportNeedsRefit(terminal, container)) {
+          return;
+        }
+        fitAndNotifyResize();
+      }, WRITE_PARSED_REFIT_DEBOUNCE_MS);
+    });
 
     const clearReconnectTimer = () => {
       if (reconnectTimer !== null) {
@@ -296,8 +700,24 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
       }
     };
 
+    const clearLowPriorityCloseTimer = () => {
+      if (lowPriorityCloseTimer !== null) {
+        window.clearTimeout(lowPriorityCloseTimer);
+        lowPriorityCloseTimer = null;
+      }
+    };
+
+    const closeSocketWorker = (worker: Worker) => {
+      if (socketWorkerRef.current === worker) {
+        socketWorkerRef.current = null;
+        socketOpenRef.current = false;
+      }
+      worker.postMessage({ type: "close" });
+      worker.terminate();
+    };
+
     const scheduleReconnect = (retryAfterMs?: number) => {
-      if (!isActive() || reconnectTimer !== null) {
+      if (!isActive() || reconnectTimer !== null || isCurrentViewLowPriority()) {
         return;
       }
 
@@ -308,136 +728,364 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
       }
       reconnectTimer = window.setTimeout(() => {
         reconnectTimer = null;
-        connectSocket();
+        connectSocketWorker();
       }, retryAfterMs ?? fallbackDelay);
     };
 
-    const connectSocket = () => {
+    const connectSocketWorker = () => {
       if (!isActive()) {
         return;
       }
 
-      const socket = new WebSocket(terminalWebSocketUrl(clientId, windowId));
-      socket.binaryType = "arraybuffer";
-      socketRef.current = socket;
-      updateConnectionStatus(reconnectAttempt === 0 ? "connecting" : "reconnecting");
-
-      socket.onopen = () => {
-        if (!isActive() || socketRef.current !== socket) {
-          return;
-        }
-
-        lastSentResize = null;
-        scheduleFitAndNotifyResize();
-      };
-      socket.onmessage = (event) => {
-        if (!isActive() || socketRef.current !== socket) {
-          return;
-        }
-
-        if (event.data instanceof ArrayBuffer) {
-          if (connectionStatusRef.current !== "connected") {
-            reconnectAttempt = 0;
-            updateConnectionStatus("connected");
-          }
-          outputBuffer.enqueue(new Uint8Array(event.data));
-          return;
-        }
-
-        const data = String(event.data);
-        const statusMessage = parseTerminalStatusMessage(data);
-        if (statusMessage !== null) {
-          if (statusMessage.status === "connected") {
-            reconnectAttempt = 0;
-            updateConnectionStatus("connected");
-          } else if (statusMessage.status === "unavailable") {
-            updateConnectionStatus("unavailable");
-            const retryAfterMs = typeof statusMessage.retry_after_ms === "number"
-              ? statusMessage.retry_after_ms
-              : undefined;
-            socket.close();
-            scheduleReconnect(retryAfterMs);
-          } else if (statusMessage.status === "error") {
-            updateConnectionStatus("error");
-          } else if (statusMessage.status === "reconnecting") {
-            updateConnectionStatus("reconnecting");
-          }
-          return;
-        }
-
-        if (connectionStatusRef.current !== "connected") {
-          reconnectAttempt = 0;
-          updateConnectionStatus("connected");
-        }
-        outputBuffer.enqueue(data);
-      };
-      socket.onerror = () => {
-        if (!isActive() || socketRef.current !== socket) {
-          return;
-        }
-        socket.close();
-      };
-      socket.onclose = () => {
-        if (!isActive() || socketRef.current !== socket) {
-          return;
-        }
-
-        socketRef.current = null;
-        scheduleReconnect();
-      };
-    };
-
-    connectSocket();
-
-    const disposable = terminal.onData((data) => {
-      const socket = socketRef.current;
-      if (socket === null || connectionStatusRef.current !== "connected") {
+      if (isCurrentViewLowPriority()) {
         return;
       }
 
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(textEncoder.encode(data));
+      if (socketWorkerRef.current !== null) {
+        return;
       }
+
+      if (initialWindowId === null) {
+        return;
+      }
+
+      const worker = new Worker(new URL("../terminalSocketWorker.ts", import.meta.url), { type: "module" });
+      socketWorkerRef.current = worker;
+      socketOpenRef.current = false;
+      updateConnectionStatus(reconnectAttempt === 0 ? "connecting" : "reconnecting");
+
+      worker.onmessage = (event: MessageEvent<{
+        type?: unknown;
+        data?: unknown;
+        closedByCommand?: unknown;
+      }>) => {
+        if (!isActive() || socketWorkerRef.current !== worker) {
+          return;
+        }
+
+        if (event.data.type === "open") {
+          socketOpenRef.current = true;
+          lastSentResize = null;
+          scheduleFitAndNotifyResize();
+          scheduleFitUntilFilled();
+          const pendingWindowId = activeWindowIdRef.current;
+          if (pendingWindowId !== null && pendingWindowId !== initialWindowId) {
+            sendSocketJson({ type: "select_window", window_id: pendingWindowId });
+          }
+          return;
+        }
+        if (event.data.type === "output" && event.data.data instanceof Uint8Array) {
+          if (connectionStatusRef.current !== "connected") {
+            reconnectAttempt = 0;
+            updateConnectionStatus("connected");
+            scheduleFitUntilFilled();
+          }
+          flushPendingInputs();
+          outputBuffer.enqueue(event.data.data);
+          return;
+        }
+        if (event.data.type === "output" && typeof event.data.data === "string") {
+          const data = event.data.data;
+          const statusMessage = parseTerminalStatusMessage(data);
+          if (statusMessage !== null) {
+            if (
+              statusMessage.type === "terminal_selection"
+              && typeof statusMessage.window_id === "string"
+              && statusMessage.view_id === viewIdRef.current
+            ) {
+              activeWindowIdRef.current = statusMessage.window_id;
+              onTerminalSelectionRef.current?.(statusMessage.window_id);
+              return;
+            }
+            if (statusMessage.status === "connected") {
+              reconnectAttempt = 0;
+              updateConnectionStatus("connected");
+              scheduleFitUntilFilled();
+              flushPendingInputs();
+            } else if (statusMessage.status === "unavailable") {
+              updateConnectionStatus("unavailable");
+              const retryAfterMs = typeof statusMessage.retry_after_ms === "number"
+                ? statusMessage.retry_after_ms
+                : undefined;
+              closeSocketWorker(worker);
+              scheduleReconnect(retryAfterMs);
+            } else if (statusMessage.status === "error") {
+              updateConnectionStatus("error");
+            } else if (statusMessage.status === "reconnecting") {
+              updateConnectionStatus("reconnecting");
+            }
+            return;
+          }
+
+          if (connectionStatusRef.current !== "connected") {
+            reconnectAttempt = 0;
+            updateConnectionStatus("connected");
+            scheduleFitUntilFilled();
+          }
+          flushPendingInputs();
+          outputBuffer.enqueue(data);
+          return;
+        }
+        if (event.data.type === "error") {
+          closeSocketWorker(worker);
+          scheduleReconnect();
+          return;
+        }
+        if (event.data.type === "close") {
+          if (socketWorkerRef.current !== worker) {
+            return;
+          }
+          closeSocketWorker(worker);
+          if (event.data.closedByCommand !== true) {
+            scheduleReconnect();
+          }
+        }
+      };
+
+      worker.postMessage({ type: "connect", url: terminalWebSocketUrl(clientId, initialWindowId, viewIdRef.current) });
+    };
+
+    const reconcileViewPriority = () => {
+      if (!isActive()) {
+        return;
+      }
+
+      if (isCurrentViewLowPriority()) {
+        clearReconnectTimer();
+        outputBuffer.clear();
+        if (lowPriorityCloseTimer === null && socketWorkerRef.current !== null) {
+          lowPriorityCloseTimer = window.setTimeout(() => {
+            lowPriorityCloseTimer = null;
+            if (!isActive() || !isCurrentViewLowPriority()) {
+              return;
+            }
+            const worker = socketWorkerRef.current;
+            if (worker !== null) {
+              closeSocketWorker(worker);
+            }
+          }, LOW_PRIORITY_SOCKET_CLOSE_DELAY_MS);
+        }
+        return;
+      }
+
+      clearLowPriorityCloseTimer();
+      scheduleFitAndNotifyResize();
+      scheduleFitUntilFilled();
+      connectSocketWorker();
+      flushPendingInputs();
+    };
+
+    const handleTerminalVisibilityChange = () => {
+      if (!document.hidden) {
+        focusCurrentTerminal();
+      }
+      reconcileViewPriority();
+    };
+    const handleTerminalViewPriorityChange = () => {
+      reconcileViewPriority();
+    };
+    document.addEventListener("visibilitychange", handleTerminalVisibilityChange);
+    window.addEventListener("storage", handleTerminalViewPriorityChange);
+    window.addEventListener(TERMINAL_VIEW_PRIORITY_CHANGED_EVENT, handleTerminalViewPriorityChange);
+    const viewPriorityReconcileInterval = window.setInterval(
+      reconcileViewPriority,
+      VIEW_PRIORITY_RECONCILE_INTERVAL_MS,
+    );
+
+    const disposable = terminal.onData((data) => {
+      claimCurrentTerminalView();
+      reconcileViewPriority();
+      outputBuffer.deferFor(OUTPUT_FLUSH_DEFER_AFTER_INPUT_MS);
+      const worker = socketWorkerRef.current;
+      if (worker === null || !socketOpenRef.current || connectionStatusRef.current !== "connected") {
+        return;
+      }
+
+      const encoded = new TextEncoder().encode(data);
+      worker.postMessage({ type: "input", data: encoded }, [encoded.buffer]);
     });
 
-    const resizeObserver = new ResizeObserver(() => scheduleFitAndNotifyResize());
-    resizeObserver.observe(containerRef.current);
+    let resizeDebounceTimer: number | null = null;
+    const onResizeObserved = () => {
+      if (resizeDebounceTimer !== null) {
+        window.clearTimeout(resizeDebounceTimer);
+      }
+      resizeDebounceTimer = window.setTimeout(() => {
+        resizeDebounceTimer = null;
+        fitAndNotifyResize();
+      }, RESIZE_OBSERVER_DEBOUNCE_MS);
+    };
+
+    const resizeObserver = new ResizeObserver(onResizeObserved);
+    const pane = containerRef.current;
+    const host = xtermHostRef.current;
+    if (pane !== null) {
+      resizeObserver.observe(pane);
+    }
+    if (host !== null && host !== pane) {
+      resizeObserver.observe(host);
+    }
+    const stage = stageRef.current;
+    if (stage !== null && stage !== pane) {
+      resizeObserver.observe(stage);
+    }
+    const workspace = stage?.closest(".workspace");
+    if (workspace instanceof HTMLElement) {
+      resizeObserver.observe(workspace);
+    }
+
+    const attachRenderResizeObserver = () => {
+      const canvas = readTerminalCanvas(terminal);
+      const rowsElement = terminal.element?.querySelector(".xterm-rows");
+      if (canvas === null && !(rowsElement instanceof HTMLElement)) {
+        return false;
+      }
+
+      if (canvasResizeObserver === null) {
+        canvasResizeObserver = new ResizeObserver(() => {
+          if (!isActive()) {
+            return;
+          }
+          fitAndNotifyResize();
+        });
+      }
+
+      if (canvas !== null) {
+        canvasResizeObserver.observe(canvas);
+      }
+      if (rowsElement instanceof HTMLElement) {
+        canvasResizeObserver.observe(rowsElement);
+      }
+      return true;
+    };
+
+    const canvasObserver = new MutationObserver(() => {
+      if (!isActive()) {
+        return;
+      }
+      if (attachRenderResizeObserver()) {
+        fitAndNotifyResize();
+      }
+    });
+    if (pane !== null) {
+      canvasObserver.observe(pane, { childList: true, subtree: true });
+    }
+
+    const undersizedCheckInterval = window.setInterval(() => {
+      if (!isActive() || document.hidden) {
+        return;
+      }
+
+      const container = resolveFitContainer();
+      if (container === null || !terminalViewportNeedsRefit(terminal, container)) {
+        return;
+      }
+
+      fitAndNotifyResize();
+    }, UNDERSIZED_REFIT_INTERVAL_MS);
+
+    const openTerminalWhenReady = () => {
+      if (!isActive()) {
+        return;
+      }
+
+      const xtermHost = xtermHostRef.current;
+      if (xtermHost === null) {
+        openFrame = window.requestAnimationFrame(openTerminalWhenReady);
+        return;
+      }
+
+      if (xtermHost.clientWidth <= 0 || xtermHost.clientHeight <= 0) {
+        openFrame = window.requestAnimationFrame(openTerminalWhenReady);
+        return;
+      }
+
+      terminal.open(xtermHost);
+      attachRenderResizeObserver();
+      scheduleFitAndNotifyResize();
+      scheduleFitUntilFilled();
+      focusCurrentTerminal();
+      connectSocketWorker();
+    };
+
+    openTerminalWhenReady();
 
     return () => {
       closedByCleanup = true;
       disposed = true;
+      if (openFrame !== null) {
+        window.cancelAnimationFrame(openFrame);
+      }
+      if (escapeFocusFrame !== null) {
+        window.cancelAnimationFrame(escapeFocusFrame);
+      }
+      canvasResizeObserver?.disconnect();
       clearReconnectTimer();
+      clearLowPriorityCloseTimer();
+      clearFitUntilFilled();
+      if (outputRefitTimer !== null) {
+        window.clearTimeout(outputRefitTimer);
+      }
+      if (writeParsedRefitTimer !== null) {
+        window.clearTimeout(writeParsedRefitTimer);
+      }
+      if (resizeDebounceTimer !== null) {
+        window.clearTimeout(resizeDebounceTimer);
+      }
+      window.clearInterval(viewPriorityReconcileInterval);
+      window.clearInterval(undersizedCheckInterval);
       resizeObserver.disconnect();
+      canvasObserver.disconnect();
+      document.removeEventListener("visibilitychange", handleTerminalVisibilityChange);
+      window.removeEventListener("storage", handleTerminalViewPriorityChange);
+      window.removeEventListener(TERMINAL_VIEW_PRIORITY_CHANGED_EVENT, handleTerminalViewPriorityChange);
       disposable.dispose();
+      writeParsedDisposable.dispose();
       osc52Disposable.dispose();
       outputBuffer.dispose();
-      const socket = socketRef.current;
-      if (socket !== null) {
-        socket.onopen = null;
-        socket.onmessage = null;
-        socket.onerror = null;
-        socket.onclose = null;
-        socket.close();
-      }
+      const worker = socketWorkerRef.current;
+      worker?.postMessage({ type: "close" });
+      worker?.terminate();
       terminal.dispose();
       clearScheduledFits();
-      socketRef.current = null;
+      socketWorkerRef.current = null;
+      socketOpenRef.current = false;
       if (terminalRef.current === terminal) {
         terminalRef.current = null;
       }
       if (fitAndNotifyResizeRef.current === fitAndNotifyResize) {
         fitAndNotifyResizeRef.current = null;
       }
+      if (claimActiveTerminalViewRef.current === claimCurrentTerminalView) {
+        claimActiveTerminalViewRef.current = null;
+      }
+      if (sendTerminalInputRef.current === sendOrQueueInput) {
+        sendTerminalInputRef.current = null;
+      }
     };
   }, [
+    claimTerminalViewPriority,
     clearScheduledFits,
     clientId,
     scheduleFitAndNotifyResize,
     updateConnectionStatus,
-    windowId,
+    hasSelectedWindow,
   ]);
 
   useEffect(() => {
+    if (clientId === null || windowId === null) {
+      return;
+    }
+
+    if (activeWindowIdRef.current === windowId) {
+      return;
+    }
+
+    activeWindowIdRef.current = windowId;
+    sendSelectWindow(windowId);
+  }, [clientId, sendSelectWindow, windowId]);
+
+  useLayoutEffect(() => {
     const stage = stageRef.current;
     if (stage !== null) {
       stage.scrollLeft = 0;
@@ -468,6 +1116,21 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     };
   }, [clearScheduledFits, scheduleFitAndNotifyResize]);
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!isQuickInputShortcut(event) || event.defaultPrevented || isEditableShortcutTarget(event.target)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      toggleQuickInput();
+    };
+
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
+  }, [toggleQuickInput]);
+
   if (clientId === null || windowId === null) {
     return <div className="empty-terminal">Create or select a terminal.</div>;
   }
@@ -477,6 +1140,56 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
       {terminalStatusLabel(connectionStatus)}
     </div>
   );
+  const quickInputOverlay = quickInputOpen ? (
+    <form
+      className="terminal-quick-input-panel"
+      onMouseDown={(event) => event.stopPropagation()}
+      onTouchStart={(event) => event.stopPropagation()}
+      onSubmit={(event) => {
+        event.preventDefault();
+        submitQuickInput();
+      }}
+    >
+      <textarea
+        ref={quickInputRef}
+        aria-label="Quick terminal input"
+        value={quickInputDraft}
+        placeholder="输入内容，发送时一次性写入终端"
+        spellCheck={false}
+        rows={1}
+        onChange={(event) => {
+          const nextDraft = event.target.value;
+          setQuickInputDraft(nextDraft);
+          if (quickInputStorageKey !== null) {
+            writeQuickInputDraft(quickInputStorageKey, nextDraft);
+          }
+          resizeQuickInputTextarea(event.target);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            closeQuickInput();
+            return;
+          }
+
+          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+            event.preventDefault();
+            event.stopPropagation();
+            submitQuickInput();
+          }
+        }}
+      />
+      <div className="terminal-quick-input-actions">
+        <button type="button" onClick={closeQuickInput}>
+          Close
+        </button>
+        <button type="submit" disabled={!canSendQuickInput}>
+          Send
+        </button>
+      </div>
+    </form>
+  ) : null;
 
   return (
     <div
@@ -485,6 +1198,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         "terminal-stage",
         `terminal-stage-${viewportMode}`,
         virtualKeysVisible ? "terminal-stage-with-virtual-keys" : "",
+        quickInputOpen ? "terminal-stage-quick-input-open" : "",
       ].filter(Boolean).join(" ")}
       onMouseDown={focusTerminal}
       onTouchStart={focusTerminal}
@@ -511,7 +1225,10 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
           ))}
         </div>
       )}
-      <div ref={containerRef} className={`terminal-pane terminal-pane-${viewportMode}`} />
+      <div ref={containerRef} className={`terminal-pane terminal-pane-${viewportMode}`}>
+        <div ref={xtermHostRef} className="terminal-xterm-host" />
+      </div>
+      {quickInputOverlay}
       {connectionOverlay}
       {pendingClipboardText !== null && (
         <button

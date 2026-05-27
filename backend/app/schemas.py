@@ -78,9 +78,12 @@ class GitWorktreeRunOut(BaseModel):
     command_sequence: str
     agent_provider: str | None
     status: str
+    run_type: Literal["agent", "tracking"]
     worktree_root: str | None
     main_repo_root: str | None
     discovery_method: str | None
+    start_snapshot_json: dict[str, Any] | None
+    end_snapshot_json: dict[str, Any] | None
     session_diff_json: dict[str, Any] | None
     pending_commit: bool
     resolved_at: datetime | None
@@ -144,6 +147,7 @@ class FolderOut(BaseModel):
 class WindowCreateIn(BaseModel):
     cwd: WindowText | None = None
     shell_command: WindowText | None = None
+    folder_path: WindowText | None = None
 
 
 class WindowPatchIn(BaseModel):
@@ -249,6 +253,27 @@ class AgentChatRecordOut(BaseModel):
     messages_limit: int
     messages_offset: int
     messages_has_more: bool
+
+
+class CommandHistoryItemOut(BaseModel):
+    id: UUID
+    command: str
+    shell: str | None = None
+    cwd: str | None = None
+    sequence: int | str | None = None
+    exit_status: int | str | None = None
+    captured_at: datetime
+    finished_at: datetime | None = None
+    created_at: datetime
+
+
+class CommandHistoryOut(BaseModel):
+    window_id: UUID
+    commands: list[CommandHistoryItemOut]
+    commands_total: int
+    commands_limit: int
+    commands_offset: int
+    commands_has_more: bool
 
 
 class SummaryJobRetryIn(BaseModel):

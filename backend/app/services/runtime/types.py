@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
+from uuid import UUID
 
 TerminalSender = Callable[[bytes], Awaitable[None]]
 
@@ -35,7 +36,8 @@ class TerminalRuntime(Protocol):
         *,
         local_window_id: object | None = None,
         selection_callback: TerminalSelectionCallback | None = None,
-    ) -> None:
+        view_id: UUID | str | None = None,
+    ) -> RuntimeWindow | None:
         """Attach runtime output for a window to a sender."""
 
     async def detach(
@@ -43,6 +45,7 @@ class TerminalRuntime(Protocol):
         window: RuntimeWindow,
         *,
         local_window_id: object | None = None,
+        view_id: UUID | str | None = None,
     ) -> None:
         """Detach runtime output and clean up resources for a window."""
 
@@ -52,6 +55,7 @@ class TerminalRuntime(Protocol):
         data: bytes,
         *,
         local_window_id: object | None = None,
+        view_id: UUID | str | None = None,
     ) -> None:
         """Send terminal input bytes to a runtime window."""
 
@@ -62,5 +66,16 @@ class TerminalRuntime(Protocol):
         cols: int,
         rows: int,
         local_window_id: object | None = None,
+        view_id: UUID | str | None = None,
     ) -> None:
         """Resize a runtime window."""
+
+    async def select_window(
+        self,
+        current_window: RuntimeWindow,
+        next_window: RuntimeWindow,
+        *,
+        local_window_id: object,
+        view_id: UUID | str | None = None,
+    ) -> RuntimeWindow | None:
+        """Switch an existing runtime view to another window."""

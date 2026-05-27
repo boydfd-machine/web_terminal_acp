@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchProjectSummaries, summarizeProject } from "../api";
 import {
   buildTerminalSwitcherTree,
+  canCreateWindowAtGroupNode,
   findPathToSwitcherWindow,
+  type SwitcherGroupNode,
   type SwitcherNode,
   type TerminalGroupingMode
 } from "../terminalGrouping";
@@ -24,6 +26,9 @@ type FolderTreeProps = {
   hasUnreadNotification?: (windowId: string) => boolean;
   onSelectWindow: (window: TreeWindow) => void;
   onDeleteWindow: (window: TreeWindow) => void;
+  onCreateTerminalAtGroup?: (node: SwitcherGroupNode) => void;
+  creatingTerminal?: boolean;
+  createTerminalDisabled?: boolean;
 };
 
 type CollapsedState = {
@@ -158,7 +163,10 @@ function DisplayTreeNode({
   onSelectWindow,
   onDeleteWindow,
   onToggleGroup,
-  onSummarizeProject
+  onSummarizeProject,
+  onCreateTerminalAtGroup,
+  creatingTerminal,
+  createTerminalDisabled
 }: {
   node: SwitcherNode;
   collapsedKeys: Set<string>;
@@ -171,6 +179,9 @@ function DisplayTreeNode({
   onDeleteWindow: (window: TreeWindow) => void;
   onToggleGroup: (key: string) => void;
   onSummarizeProject?: (projectPath: string) => void;
+  onCreateTerminalAtGroup?: (node: SwitcherGroupNode) => void;
+  creatingTerminal?: boolean;
+  createTerminalDisabled?: boolean;
 }) {
   if (node.type === "window") {
     return (
@@ -186,8 +197,10 @@ function DisplayTreeNode({
   }
 
   const isExpanded = selectedPathKeys.has(node.key) || !collapsedKeys.has(node.key);
-  const showSummarize = node.projectPath !== undefined && onSummarizeProject !== undefined;
+  const showSummarize = node.projectPath !== undefined && !node.topicPath && onSummarizeProject !== undefined;
   const isSummarizing = showSummarize && summarizingProjectPath === node.projectPath;
+  const showCreateTerminal = onCreateTerminalAtGroup !== undefined && canCreateWindowAtGroupNode(node);
+  const createLabel = node.projectPath ?? node.label;
 
   return (
     <li className="folder-node">
@@ -197,7 +210,7 @@ function DisplayTreeNode({
           className="folder-label-button"
           aria-expanded={isExpanded}
           onClick={() => onToggleGroup(node.key)}
-          title={node.projectPath ?? node.label}
+          title={node.projectPath ?? node.topicPath ?? node.label}
         >
           <span className="disclosure" aria-hidden="true">{isExpanded ? "▾" : "▸"}</span>
           <span>{node.label}</span>
@@ -218,6 +231,21 @@ function DisplayTreeNode({
             {isSummarizing ? "…" : "总结"}
           </button>
         )}
+        {showCreateTerminal && (
+          <button
+            type="button"
+            className="switcher-create-terminal-button tree-create-terminal-button"
+            disabled={creatingTerminal || createTerminalDisabled}
+            aria-label={`在 ${createLabel} 新建终端`}
+            title={`在 ${createLabel} 新建终端`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onCreateTerminalAtGroup(node);
+            }}
+          >
+            +
+          </button>
+        )}
       </div>
       {isExpanded && (
         <ul>
@@ -235,6 +263,9 @@ function DisplayTreeNode({
               onDeleteWindow={onDeleteWindow}
               onToggleGroup={onToggleGroup}
               onSummarizeProject={onSummarizeProject}
+              onCreateTerminalAtGroup={onCreateTerminalAtGroup}
+              creatingTerminal={creatingTerminal}
+              createTerminalDisabled={createTerminalDisabled}
             />
           ))}
         </ul>
@@ -252,7 +283,10 @@ export function FolderTree({
   deletingWindowId,
   hasUnreadNotification,
   onSelectWindow,
-  onDeleteWindow
+  onDeleteWindow,
+  onCreateTerminalAtGroup,
+  creatingTerminal,
+  createTerminalDisabled
 }: FolderTreeProps) {
   const queryClient = useQueryClient();
   const [summarizingProjectPath, setSummarizingProjectPath] = useState<string | null>(null);
@@ -342,6 +376,9 @@ export function FolderTree({
                 ? (projectPath) => summarizeMutation.mutate(projectPath)
                 : undefined
             }
+            onCreateTerminalAtGroup={onCreateTerminalAtGroup}
+            creatingTerminal={creatingTerminal}
+            createTerminalDisabled={createTerminalDisabled}
           />
         ))}
       </ul>

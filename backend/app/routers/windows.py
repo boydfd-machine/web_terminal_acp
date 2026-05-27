@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import posixpath
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -23,6 +24,7 @@ from app.repositories.summary_jobs import (
     get_latest_summary_job,
 )
 from app.repositories.git_worktree import get_window_git_binding, list_git_worktree_runs
+from app.repositories.folders import get_or_create_folder_by_path
 from app.repositories.windows import (
     FolderNotFoundError,
     create_window,
@@ -38,6 +40,8 @@ from app.schemas import (
     AgentEventProjectionOut,
     AgentRecordOut,
     AgentSessionOut,
+    CommandHistoryItemOut,
+    CommandHistoryOut,
     GitWorktreeRunListOut,
     GitWorktreeRunOut,
     SummaryJobOut,
@@ -45,9 +49,10 @@ from app.schemas import (
     WindowCreateIn,
     WindowOut,
     WindowPatchIn,
-    WorkStatusOut,
 )
 from app.services.runtime.client_connections import ClientConnectionRegistry
+from app.services.git_worktree_agent_markers import materialize_agent_worktree_markers
+from app.services.git_worktree_coordinator import process_git_worktree_snapshot_refresh
 from app.services.runtime.remote import RemoteClientUnavailable, RemoteRuntime, RemoteTerminalError
 from app.services.terminal_work_status import (
     TerminalWorkStatus,
@@ -63,6 +68,8 @@ logger = logging.getLogger(__name__)
 
 AgentRecordLimit = Annotated[int, Query(ge=1, le=200)]
 AgentRecordOffset = Annotated[int, Query(ge=0)]
+CommandHistoryLimit = Annotated[int, Query(ge=1, le=200)]
+CommandHistoryOffset = Annotated[int, Query(ge=0)]
 _PROVIDER_ALIASES = {"claude": "claude_code"}
 
 
@@ -242,6 +249,53 @@ def _chat_message_out(event: Event, projection: AgentChatProjection) -> AgentCha
     )
 
 
+def _payload_datetime(event: Event, key: str) -> datetime | None:
+    value = event.payload_json.get(key)
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _payload_command(event: Event) -> str:
+    command = _string_value(event.payload_json.get("command"))
+    return command if command is not None else ""
+
+
+def _payload_sequence(event: Event) -> int | str | None:
+    sequence = event.payload_json.get("sequence")
+    return sequence if isinstance(sequence, (int, str)) else None
+
+
+def _payload_exit_status(event: Event) -> int | str | None:
+    exit_status = event.payload_json.get("exit_status")
+    return exit_status if isinstance(exit_status, (int, str)) else None
+
+
+def _payload_sequence_key(event: Event) -> str | None:
+    sequence = _payload_sequence(event)
+    return str(sequence) if sequence is not None else None
+
+
+def _command_history_item_out(event: Event, finished_by_sequence: dict[str, Event]) -> CommandHistoryItemOut:
+    sequence_key = _payload_sequence_key(event)
+    finished = finished_by_sequence.get(sequence_key) if sequence_key is not None else None
+    finished_at = _payload_datetime(finished, "captured_at") if finished is not None else None
+    return CommandHistoryItemOut(
+        id=event.id,
+        command=_payload_command(event),
+        shell=_string_value(event.payload_json.get("shell")),
+        cwd=_string_value(event.payload_json.get("cwd")),
+        sequence=_payload_sequence(event),
+        exit_status=_payload_exit_status(finished) if finished is not None else None,
+        captured_at=_payload_datetime(event, "captured_at") or event.created_at,
+        finished_at=finished_at,
+        created_at=event.created_at,
+    )
+
+
 def _dedupe_chat_messages(events: list[Event]) -> list[AgentChatMessageOut]:
     return [
         _chat_message_out(event, projection)
@@ -319,6 +373,24 @@ async def runtime_tags_for_window_out(session: AsyncSession, window: VirtualWind
     )
 
 
+async def _assign_window_folder_path(
+    session: AsyncSession,
+    client_id: UUID,
+    window: VirtualWindow,
+    folder_path: str | None,
+) -> None:
+    if not folder_path:
+        return
+
+    try:
+        folder = await get_or_create_folder_by_path(session, client_id, folder_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    window.folder_id = folder.id
+    window.folder_manually_overridden = True
+
+
 def _client_connection_registry(request: Request) -> ClientConnectionRegistry:
     registry = getattr(request.app.state, "client_connections", None)
     if registry is None:
@@ -351,6 +423,7 @@ async def _create_remote_virtual_window_for_client(
         window.remote_window_id = runtime_window.window_id
         window.cwd = runtime_window.cwd
         window.shell_command = runtime_window.shell_command
+        await _assign_window_folder_path(session, client_id, window, payload.folder_path)
         await session.commit()
         await session.refresh(window)
     except RemoteClientUnavailable as exc:
@@ -409,8 +482,18 @@ async def _create_virtual_window_for_client(
             tmux_session=tmux_target.session,
             tmux_window_id=tmux_target.window_id,
         )
+        await _assign_window_folder_path(session, client.id, window, payload.folder_path)
         await session.commit()
         await session.refresh(window)
+    except HTTPException:
+        with contextlib.suppress(Exception):
+            await session.rollback()
+        if tmux_target is not None:
+            try:
+                await tmux_manager.kill_window(tmux_target)
+            except Exception:
+                pass
+        raise
     except Exception as exc:
         with contextlib.suppress(Exception):
             await session.rollback()
@@ -580,6 +663,69 @@ async def read_window_agent_record_chat(
     )
 
 
+@router.get("/clients/{client_id}/windows/{window_id}/command-history", response_model=CommandHistoryOut)
+async def read_window_command_history(
+    client_id: UUID,
+    window_id: UUID,
+    commands_limit: CommandHistoryLimit = 100,
+    commands_offset: CommandHistoryOffset = 0,
+    session: AsyncSession = Depends(get_session),
+) -> CommandHistoryOut:
+    await _require_window_for_agent_record(session, client_id, window_id)
+    command_filters = (
+        Event.client_id == client_id,
+        Event.virtual_window_id == window_id,
+        Event.kind == "terminal_input_command",
+    )
+    commands_total = await session.scalar(select(func.count()).select_from(Event).where(*command_filters))
+    command_events = list(
+        await session.scalars(
+            select(Event)
+            .where(*command_filters)
+            .order_by(desc(Event.created_at), desc(Event.id))
+            .offset(commands_offset)
+            .limit(commands_limit)
+        )
+    )
+    sequence_keys = [
+        sequence_key
+        for event in command_events
+        if (sequence_key := _payload_sequence_key(event)) is not None
+    ]
+    finished_by_sequence: dict[str, Event] = {}
+    if sequence_keys:
+        finished_fingerprints = [
+            f"terminal_command_finished:{window_id}:{sequence_key}"
+            for sequence_key in sequence_keys
+        ]
+        finished_events = list(
+            await session.scalars(
+                select(Event)
+                .where(
+                    Event.client_id == client_id,
+                    Event.virtual_window_id == window_id,
+                    Event.kind == "terminal_command_finished",
+                    Event.fingerprint.in_(finished_fingerprints),
+                )
+                .order_by(desc(Event.created_at), desc(Event.id))
+            )
+        )
+        wanted = set(sequence_keys)
+        for event in finished_events:
+            sequence_key = _payload_sequence_key(event)
+            if sequence_key is not None and sequence_key in wanted and sequence_key not in finished_by_sequence:
+                finished_by_sequence[sequence_key] = event
+    raw_commands_total = int(commands_total or 0)
+    return CommandHistoryOut(
+        window_id=window_id,
+        commands=[_command_history_item_out(event, finished_by_sequence) for event in command_events],
+        commands_total=raw_commands_total,
+        commands_limit=commands_limit,
+        commands_offset=commands_offset,
+        commands_has_more=commands_offset + commands_limit < raw_commands_total,
+    )
+
+
 @router.get("/clients/{client_id}/windows/{window_id}/agent-record/detail", response_model=AgentRecordOut)
 async def read_window_agent_record_detail(
     client_id: UUID,
@@ -642,15 +788,19 @@ async def read_window_agent_record(
 
 
 def _to_git_worktree_run_out(run) -> GitWorktreeRunOut:
+    run_type = "tracking" if str(run.command_sequence).startswith("worktree:") else "agent"
     return GitWorktreeRunOut(
         id=run.id,
         virtual_window_id=run.virtual_window_id,
         command_sequence=run.command_sequence,
         agent_provider=run.agent_provider,
         status=run.status,
+        run_type=run_type,
         worktree_root=run.worktree_root,
         main_repo_root=run.main_repo_root,
         discovery_method=run.discovery_method,
+        start_snapshot_json=run.start_snapshot_json,
+        end_snapshot_json=run.end_snapshot_json,
         session_diff_json=run.session_diff_json,
         pending_commit=run.pending_commit,
         resolved_at=run.resolved_at,
@@ -664,6 +814,7 @@ def _to_git_worktree_run_out(run) -> GitWorktreeRunOut:
     response_model=GitWorktreeRunListOut,
 )
 async def read_window_git_runs(
+    request: Request,
     client_id: UUID,
     window_id: UUID,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
@@ -671,9 +822,37 @@ async def read_window_git_runs(
     session: AsyncSession = Depends(get_session),
 ) -> GitWorktreeRunListOut:
     await _require_window_for_agent_record(session, client_id, window_id)
+    registry = _client_connection_registry(request)
+    client_runtime = await session.scalar(select(Client.runtime).where(Client.id == client_id))
     binding = await get_window_git_binding(session, window_id)
     if binding is None:
+        materialized = await materialize_agent_worktree_markers(
+            session,
+            client_id=client_id,
+            window_ids=(window_id,),
+            registry=registry,
+        )
+        if materialized:
+            await process_git_worktree_snapshot_refresh(
+                session,
+                client_id=client_id,
+                window_id=window_id,
+                registry=registry,
+                client_runtime=client_runtime,
+            )
+            await session.commit()
+            binding = await get_window_git_binding(session, window_id)
+    if binding is None:
         return GitWorktreeRunListOut(supported=False, runs=[], total=0, limit=limit, offset=offset)
+    refreshed = await process_git_worktree_snapshot_refresh(
+        session,
+        client_id=client_id,
+        window_id=window_id,
+        registry=registry,
+        client_runtime=client_runtime,
+    )
+    if refreshed:
+        await session.commit()
     runs, total = await list_git_worktree_runs(session, window_id, limit=limit, offset=offset)
     return GitWorktreeRunListOut(
         supported=True,

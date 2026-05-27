@@ -14,6 +14,7 @@ from app.agent_tools.common import (
     string_value,
 )
 from app.agent_tools.types import AgentChatProjection, AgentEventProjection, AgentToolStorage
+from app.agent_tools.user_input import extract_real_user_input
 from app.models import Event, EventSourceType
 from app.services.ingest.normalizers import NormalizedEvent, normalize_codex_trace
 
@@ -156,6 +157,17 @@ class CodexAdapter:
             body = content_body or json_markdown(item)
             body_format = "markdown" if content_body else "json"
             if role == "user":
+                real_user_input = extract_real_user_input(content_body, provider=self.provider_id)
+                if real_user_input is None and content_body:
+                    return AgentEventProjection(
+                        tone="context",
+                        label=_EVENT_LABELS["context"],
+                        body=body,
+                        body_format=body_format,
+                        subtype=subtype,
+                    )
+                body = real_user_input or body
+                body_format = "markdown" if real_user_input is not None else body_format
                 return AgentEventProjection(
                     tone="user-input",
                     label=_EVENT_LABELS["user-input"],
@@ -217,10 +229,20 @@ class CodexAdapter:
             )
 
         if raw_type == "event_msg" and item_type == "user_message":
+            body = string_value(item.get("message")) or json_markdown(item)
+            real_user_input = extract_real_user_input(body, provider=self.provider_id)
+            if real_user_input is None:
+                return AgentEventProjection(
+                    tone="context",
+                    label=_EVENT_LABELS["context"],
+                    body=body,
+                    subtype=subtype,
+                )
+            body = real_user_input
             return AgentEventProjection(
                 tone="user-input",
                 label=_EVENT_LABELS["user-input"],
-                body=string_value(item.get("message")) or json_markdown(item),
+                body=body,
                 subtype=subtype,
             )
 
@@ -271,6 +293,9 @@ class CodexAdapter:
             role = string_value(item.get("role"))
             body = _content_text(item.get("content"))
             if role == "user" and body:
+                body = extract_real_user_input(body, provider=self.provider_id)
+                if body is None:
+                    return None
                 return AgentChatProjection(
                     role="user",
                     body=body,
@@ -291,6 +316,10 @@ class CodexAdapter:
                 return None
             semantic_role = "user" if item_type == "user_message" else "assistant"
             role = "user" if item_type == "user_message" else "agent"
+            if role == "user":
+                body = extract_real_user_input(body, provider=self.provider_id)
+                if body is None:
+                    return None
             return AgentChatProjection(
                 role=role,
                 body=body,

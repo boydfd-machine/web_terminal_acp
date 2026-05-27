@@ -8,8 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.client_agent.agent_work_presence import (
     _descendant_pids,
+    _parent_map_cache,
     _provider_from_cmdline,
     agent_command_tokens,
+    cached_parent_map,
 )
 from app.model_base import Base
 from app.models import Event, EventSourceType, VirtualWindow, WindowStatus
@@ -38,11 +40,33 @@ def test_provider_from_cmdline_detects_codex_and_acpx_wrapper() -> None:
     assert _provider_from_cmdline("acpx codex exec fix tests", tokens) == "codex"
     assert _provider_from_cmdline("claude -p hi", tokens) == "claude_code"
     assert _provider_from_cmdline("agent -p hi", tokens) == "cursor_cli"
+    assert _provider_from_cmdline("cursor-agent --resume chat-id", tokens) == "cursor_cli"
 
 
 def test_descendant_pids_includes_children() -> None:
     parent_map = {10: 1, 11: 10, 20: 2}
     assert _descendant_pids([10], parent_map) == {10, 11}
+
+
+def test_cached_parent_map_reuses_recent_proc_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    _parent_map_cache.parent_map = None
+    _parent_map_cache.expires_at = 0.0
+    calls = 0
+
+    def build_parent_map() -> dict[int, int]:
+        nonlocal calls
+        calls += 1
+        return {10: 1}
+
+    monkeypatch.setattr("app.client_agent.agent_work_presence._build_parent_map", build_parent_map)
+    monkeypatch.setattr("app.client_agent.agent_work_presence.time.monotonic", lambda: 100.0)
+
+    first = cached_parent_map(ttl_seconds=5.0)
+    second = cached_parent_map(ttl_seconds=5.0)
+
+    assert first == {10: 1}
+    assert second == {10: 1}
+    assert calls == 1
 
 
 def test_work_status_from_activity_treats_recent_presence_as_working() -> None:

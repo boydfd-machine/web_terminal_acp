@@ -7,11 +7,14 @@ import logging
 import os
 import pty
 import re
+import signal
 import struct
 import termios
 import tty
+from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from functools import partial
 from uuid import UUID
 
 from app.services.runtime.protocol import TerminalPayload
@@ -23,6 +26,8 @@ SelectionSender = Callable[[UUID], Awaitable[None]]
 logger = logging.getLogger(__name__)
 
 PTY_READ_CHUNK_BYTES = 65536
+PTY_OUTPUT_SEND_CHUNK_BYTES = 4 * 1024
+PTY_CONTROL_EXECUTOR_MAX_WORKERS = 8
 SELECTION_POLL_INTERVAL_SECONDS = 0.25
 # Maximum size of the in-memory coalescing buffer that decouples PTY reads from
 # the bulk-writer sender. When the downstream send path back-pressures (slow
@@ -33,15 +38,27 @@ SELECTION_POLL_INTERVAL_SECONDS = 0.25
 # triggers when the downstream is many MB behind, at which point the user can
 # refresh the window to recover the live frame from tmux.
 PTY_DRAIN_BUFFER_MAX_BYTES = 16 * 1024 * 1024
+PTY_CONTROL_EXECUTOR = ThreadPoolExecutor(
+    max_workers=PTY_CONTROL_EXECUTOR_MAX_WORKERS,
+    thread_name_prefix="web-terminal-pty-control",
+)
 
 
-def _shadow_session_name(window_id: str) -> str:
-    sanitized = re.sub(r"[^A-Za-z0-9_-]", "_", window_id)
+def _shadow_session_name(window_id: str, view_id: str | None = None) -> str:
+    value = view_id or window_id
+    sanitized = re.sub(r"[^A-Za-z0-9_-]", "_", value)
     return f"web_terminal_view_{sanitized}"
 
 
 def _apply_pty_resize(master_fd: int, *, cols: int, rows: int) -> None:
     fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+
+
+def _notify_process_window_change(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is not None:
+        return
+    with contextlib.suppress(ProcessLookupError):
+        process.send_signal(signal.SIGWINCH)
 
 
 def _configure_pty_slave(slave_fd: int) -> None:
@@ -52,10 +69,19 @@ def _attach_process_environment() -> dict[str, str]:
     return {**os.environ, "TERM": "xterm-256color"}
 
 
+async def _run_pty_control(func, /, *args, **kwargs):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        PTY_CONTROL_EXECUTOR,
+        partial(func, *args, **kwargs),
+    )
+
+
 @dataclass(frozen=True)
 class _RemoteTarget:
     remote_session_id: str
     remote_window_id: str
+    view_id: str | None = None
 
     @property
     def tmux_target(self) -> str:
@@ -63,13 +89,14 @@ class _RemoteTarget:
 
     @property
     def shadow_session(self) -> str:
-        return _shadow_session_name(self.remote_window_id)
+        return _shadow_session_name(self.remote_window_id, self.view_id)
 
 
 @dataclass
 class _AttachedTerminal:
     master_fd: int
     process: asyncio.subprocess.Process
+    shadow_session: str
     task: asyncio.Task[None] | None = None
     selection_task: asyncio.Task[None] | None = None
     cleanup_started: bool = False
@@ -82,6 +109,7 @@ class _AttachedTerminal:
     output_event: asyncio.Event = field(default_factory=asyncio.Event)
     output_eof: bool = False
     reader_task: asyncio.Task[None] | None = None
+    resize_task: asyncio.Task[None] | None = None
 
 
 class ClientTerminalMultiplexer:
@@ -89,6 +117,7 @@ class ClientTerminalMultiplexer:
         self._runner = runner
         self._windows: dict[str, _RemoteTarget] = {}
         self._attached: dict[str, _AttachedTerminal] = {}
+        self._attachment_windows: dict[str, str] = {}
         self._lock = asyncio.Lock()
 
     def is_registered(self, window_id: UUID | str) -> bool:
@@ -111,48 +140,98 @@ class ClientTerminalMultiplexer:
             remote_window_id=remote_window_id,
         )
 
-    async def send_input(self, window_id: UUID | str, data: bytes) -> None:
-        attached = self._attached_terminal_for(window_id)
+    def unregister_window(self, window_id: UUID | str) -> None:
+        self._windows.pop(str(window_id), None)
+
+    async def select_pool_window(self, window_id: UUID | str) -> None:
+        target = self._target_for(window_id)
+        await self._run(["tmux", "select-window", "-t", target.tmux_target])
+
+    async def send_input(
+        self,
+        window_id: UUID | str,
+        data: bytes,
+        *,
+        view_id: UUID | str | None = None,
+    ) -> None:
+        attached = self._attached_terminal_for(window_id, view_id=view_id)
         # PTY master read and write use independent kernel buffers, so writes here
         # remain responsive even while output drain is back-pressured by the bulk
         # writer queue.
-        await asyncio.to_thread(os.write, attached.master_fd, data)
+        await _run_pty_control(os.write, attached.master_fd, data)
 
-    async def resize(self, window_id: UUID | str, *, cols: int, rows: int) -> None:
-        attached = self._attached_terminal_for(window_id)
+    async def resize(
+        self,
+        window_id: UUID | str,
+        *,
+        cols: int,
+        rows: int,
+        view_id: UUID | str | None = None,
+    ) -> None:
+        attached = self._attached_terminal_for(window_id, view_id=view_id)
         size = (cols, rows)
         if attached.size == size:
             return
-        target = self._target_for(window_id)
-        await asyncio.to_thread(_apply_pty_resize, attached.master_fd, cols=cols, rows=rows)
-        await self._run([
-            "tmux",
-            "resize-window",
-            "-t",
-            f"{target.shadow_session}:{target.remote_window_id}",
-            "-x",
-            str(cols),
-            "-y",
-            str(rows),
-        ])
+        target = self._target_for(window_id, view_id=view_id)
+        await _run_pty_control(_apply_pty_resize, attached.master_fd, cols=cols, rows=rows)
+        _notify_process_window_change(attached.process)
         attached.size = size
+        previous_resize_task = attached.resize_task
+        if previous_resize_task is not None and not previous_resize_task.done():
+            previous_resize_task.cancel()
+        attached.resize_task = asyncio.create_task(
+            self._sync_shadow_window_size(target, cols=cols, rows=rows)
+        )
 
-    async def attach(self, window_id: UUID | str, sender: TerminalSender) -> None:
-        await self.attach_with_selection(window_id, sender)
+    async def select_window(
+        self,
+        window_id: UUID | str,
+        *,
+        view_id: UUID | str | None = None,
+    ) -> None:
+        attached = self._attached_terminal_for(window_id, view_id=view_id)
+        target = self._target_for(window_id, view_id=view_id)
+        if not await self._has_tmux_window(target):
+            raise RuntimeError(f"tmux window is missing: {target.tmux_target}")
+        await self._run(["tmux", "select-window", "-t", f"{target.shadow_session}:{target.remote_window_id}"])
+        await self.select_pool_window(window_id)
+        if attached.size is not None:
+            await self._run([
+                "tmux",
+                "resize-window",
+                "-t",
+                f"{target.shadow_session}:{target.remote_window_id}",
+                "-x",
+                str(attached.size[0]),
+                "-y",
+                str(attached.size[1]),
+            ])
+        self._attachment_windows[_attachment_key(window_id, view_id)] = str(window_id)
+
+    async def attach(
+        self,
+        window_id: UUID | str,
+        sender: TerminalSender,
+        *,
+        view_id: UUID | str | None = None,
+    ) -> None:
+        await self.attach_with_selection(window_id, sender, view_id=view_id)
 
     async def attach_with_selection(
         self,
         window_id: UUID | str,
         sender: TerminalSender,
         selection_sender: SelectionSender | None = None,
+        view_id: UUID | str | None = None,
     ) -> None:
-        key = str(window_id)
-        target = self._target_for(key)
+        key = _attachment_key(window_id, view_id)
+        target = self._target_for(window_id, view_id=view_id)
         async with self._lock:
             existing = self._attached.get(key)
             if existing is not None and existing.task is not None and not existing.task.done():
                 return
             self._attached.pop(key, None)
+            self._attachment_windows.pop(key, None)
 
             await self._ensure_shadow_session(target)
             master_fd, slave_fd = pty.openpty()
@@ -178,20 +257,35 @@ class ClientTerminalMultiplexer:
                 with contextlib.suppress(OSError):
                     os.close(slave_fd)
 
-            attached = _AttachedTerminal(master_fd=master_fd, process=process)
+            attached = _AttachedTerminal(
+                master_fd=master_fd,
+                process=process,
+                shadow_session=target.shadow_session,
+            )
             attached.task = asyncio.create_task(self._pipe_output(key, attached, sender))
             if selection_sender is not None:
                 attached.selection_task = asyncio.create_task(
-                    self._watch_active_window(target, selection_sender)
+                    self._watch_active_window(key, target, selection_sender)
                 )
             self._attached[key] = attached
+            self._attachment_windows[key] = str(window_id)
 
     async def remove_window(self, window_id: UUID | str) -> None:
-        await self.detach(window_id)
+        detached_keys = [
+            key
+            for key, attached_window_id in tuple(self._attachment_windows.items())
+            if attached_window_id == str(window_id)
+        ]
+        if not detached_keys:
+            detached_keys = [_attachment_key(window_id)]
+        for key in detached_keys:
+            await self._detach_attachment_key(key)
         self._windows.pop(str(window_id), None)
 
-    async def detach(self, window_id: UUID | str) -> None:
-        key = str(window_id)
+    async def detach(self, window_id: UUID | str, *, view_id: UUID | str | None = None) -> None:
+        await self._detach_attachment_key(_attachment_key(window_id, view_id))
+
+    async def _detach_attachment_key(self, key: str) -> None:
         async with self._lock:
             attached = self._attached.get(key)
         if attached is None:
@@ -206,19 +300,36 @@ class ClientTerminalMultiplexer:
                 await task
 
     async def close(self) -> None:
-        for window_id in tuple(self._attached):
-            await self.detach(window_id)
+        for key in tuple(self._attached):
+            await self._detach_attachment_key(key)
 
-    async def capture_output(self, window_id: UUID | str) -> TerminalPayload:
-        output = await self.capture_output_bytes(window_id)
+    async def capture_output(
+        self,
+        window_id: UUID | str,
+        *,
+        view_id: UUID | str | None = None,
+    ) -> TerminalPayload:
+        output = await self.capture_output_bytes(window_id, view_id=view_id)
         return TerminalPayload.from_bytes(UUID(str(window_id)), output)
 
-    async def capture_output_bytes(self, window_id: UUID | str) -> bytes:
-        target = self._target_for(window_id)
-        output = await self._run(["tmux", "capture-pane", "-p", "-t", target.tmux_target])
+    async def capture_output_bytes(
+        self,
+        window_id: UUID | str,
+        *,
+        view_id: UUID | str | None = None,
+    ) -> bytes:
+        target = self._target_for(window_id, view_id=view_id)
+        capture_target = (
+            f"{target.shadow_session}:{target.remote_window_id}"
+            if view_id is not None
+            else target.tmux_target
+        )
+        output = await self._run(["tmux", "capture-pane", "-p", "-t", capture_target])
         return output.encode("utf-8", errors="surrogateescape")
 
     async def _ensure_shadow_session(self, target: _RemoteTarget) -> None:
+        if not await self._has_tmux_window(target):
+            raise RuntimeError(f"tmux window is missing: {target.tmux_target}")
         try:
             await self._run(["tmux", "has-session", "-t", target.shadow_session])
         except RuntimeError:
@@ -236,11 +347,48 @@ class ClientTerminalMultiplexer:
         with contextlib.suppress(RuntimeError):
             await self._run(["tmux", "set-option", "-t", target.shadow_session, "window-size", "manual"])
         await self._run(["tmux", "select-window", "-t", f"{target.shadow_session}:{target.remote_window_id}"])
+        with contextlib.suppress(RuntimeError):
+            await self._run(
+                [
+                    "tmux",
+                    "set-option",
+                    "-p",
+                    "-t",
+                    f"{target.shadow_session}:{target.remote_window_id}",
+                    "allow-passthrough",
+                    "on",
+                ]
+            )
+
+    async def _has_tmux_window(self, target: _RemoteTarget) -> bool:
+        try:
+            window_id = (
+                await self._run(
+                    [
+                        "tmux",
+                        "display-message",
+                        "-p",
+                        "-t",
+                        target.tmux_target,
+                        "#{window_id}",
+                    ]
+                )
+            ).strip()
+        except RuntimeError:
+            return False
+        return window_id == target.remote_window_id
 
     async def _current_window_id(self, shadow_session: str) -> str:
         return (
             await self._run(
-                ["tmux", "display-message", "-p", "-t", shadow_session, "#{window_id}"]
+                [
+                    "tmux",
+                    "display-message",
+                    "-p",
+                    "-t",
+                    shadow_session,
+                    "#{window_id}",
+                ]
             )
         ).strip()
 
@@ -272,15 +420,75 @@ class ClientTerminalMultiplexer:
             raise RuntimeError(f"tmux command failed ({process.returncode}): {' '.join(args)}: {error_text}")
         return stdout.decode(errors="replace")
 
-    def _target_for(self, window_id: UUID | str) -> _RemoteTarget:
+    async def _sync_shadow_window_size(
+        self,
+        target: _RemoteTarget,
+        *,
+        cols: int,
+        rows: int,
+    ) -> None:
+        try:
+            await self._run([
+                "tmux",
+                "resize-window",
+                "-t",
+                f"{target.shadow_session}:{target.remote_window_id}",
+                "-x",
+                str(cols),
+                "-y",
+                str(rows),
+            ])
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "failed to resize client-agent shadow tmux window",
+                extra={
+                    "remote_session_id": target.remote_session_id,
+                    "remote_window_id": target.remote_window_id,
+                    "view_id": target.view_id,
+                    "cols": cols,
+                    "rows": rows,
+                },
+            )
+
+    async def _kill_shadow_session(self, shadow_session: str) -> None:
+        try:
+            await self._run(["tmux", "kill-session", "-t", shadow_session])
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "failed to kill client-agent shadow tmux session",
+                extra={"shadow_session": shadow_session},
+            )
+
+    def _target_for(
+        self,
+        window_id: UUID | str,
+        *,
+        view_id: UUID | str | None = None,
+    ) -> _RemoteTarget:
         key = str(window_id)
         try:
-            return self._windows[key]
+            target = self._windows[key]
         except KeyError as exc:
             raise KeyError(f"window is not registered with tmux multiplexer: {key}") from exc
+        if view_id is None:
+            return target
+        return _RemoteTarget(
+            remote_session_id=target.remote_session_id,
+            remote_window_id=target.remote_window_id,
+            view_id=str(view_id),
+        )
 
-    def _attached_terminal_for(self, window_id: UUID | str) -> _AttachedTerminal:
-        key = str(window_id)
+    def _attached_terminal_for(
+        self,
+        window_id: UUID | str,
+        *,
+        view_id: UUID | str | None = None,
+    ) -> _AttachedTerminal:
+        key = _attachment_key(window_id, view_id)
         attached = self._attached.get(key)
         if attached is None or attached.task is None or attached.task.done():
             raise RuntimeError(f"terminal window is not attached: {key}")
@@ -362,7 +570,8 @@ class ClientTerminalMultiplexer:
                     chunk = bytes(attached.output_buffer)
                     attached.output_buffer.clear()
                     try:
-                        await sender(chunk)
+                        for index in range(0, len(chunk), PTY_OUTPUT_SEND_CHUNK_BYTES):
+                            await sender(chunk[index : index + PTY_OUTPUT_SEND_CHUNK_BYTES])
                     except Exception:
                         return
                     continue
@@ -387,6 +596,7 @@ class ClientTerminalMultiplexer:
 
     async def _watch_active_window(
         self,
+        key: str,
         target: _RemoteTarget,
         selection_sender: SelectionSender,
     ) -> None:
@@ -405,6 +615,10 @@ class ClientTerminalMultiplexer:
                 active_window_id,
             )
             if local_window_id is not None:
+                async with self._lock:
+                    if key not in self._attached:
+                        return
+                    self._attachment_windows[key] = str(local_window_id)
                 await selection_sender(local_window_id)
 
     async def _cleanup_attachment(self, window_id: str, attached: _AttachedTerminal) -> None:
@@ -414,6 +628,7 @@ class ClientTerminalMultiplexer:
             attached.cleanup_started = True
             if self._attached.get(window_id) is attached:
                 self._attached.pop(window_id, None)
+                self._attachment_windows.pop(window_id, None)
 
         with contextlib.suppress(OSError):
             os.close(attached.master_fd)
@@ -431,3 +646,13 @@ class ClientTerminalMultiplexer:
             selection_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await selection_task
+        resize_task = attached.resize_task
+        if resize_task is not None and resize_task is not asyncio.current_task():
+            resize_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await resize_task
+        await self._kill_shadow_session(attached.shadow_session)
+
+
+def _attachment_key(window_id: UUID | str, view_id: UUID | str | None = None) -> str:
+    return str(view_id or window_id)

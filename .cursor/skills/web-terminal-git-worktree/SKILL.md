@@ -20,7 +20,8 @@ Copy and track progress:
 - [ ] Step 1: init-worktree (create + cd + register)
 - [ ] Step 2: do all edits and git operations inside the worktree
 - [ ] Step 3: git commit in the worktree when done
-- [ ] Step 4: remove-worktree after merge (optional, from main checkout)
+- [ ] Step 4: merge the agent branch back into main (required)
+- [ ] Step 5: remove-worktree after merge (optional, from main checkout)
 ```
 
 ### Step 1: Create worktree (required)
@@ -59,9 +60,24 @@ bash .cursor/skills/web-terminal-git-worktree/scripts/register-worktree.sh
 - All file edits and `git add` / `git commit` happen **inside the worktree**.
 - Web Terminal does not commit for you. Uncommitted changes show a red **G** on the terminal title until you commit.
 
-### Step 4: Cleanup (after task / merge)
+### Step 4: Merge back into `main` (required)
 
-From the **main checkout**:
+Worktree branches (`agent/<suffix>`) are **integration branches**, not the final destination. When the task is done (or the user asks to land the work), merge into `main` from the **main repository checkout** (`.git` is a directory):
+
+```bash
+cd /path/to/web_terminal_acp   # main checkout, not the worktree path
+git checkout main
+git pull                       # if your workflow uses a remote
+git merge agent/<suffix>       # e.g. agent/terminal-fit-fix
+```
+
+- Use fast-forward when possible; otherwise create an explicit merge commit.
+- **Do not** leave completed work only on `agent/*` — production and other agents expect `main` to contain landed changes.
+- After merge, `main` should include version bumps and any `.gitignore` updates from the worktree branch.
+
+### Step 5: Cleanup worktree (optional)
+
+From the **main checkout** (after Step 4):
 
 ```bash
 bash .cursor/skills/web-terminal-git-worktree/scripts/remove-worktree.sh
@@ -73,7 +89,8 @@ bash .cursor/skills/web-terminal-git-worktree/scripts/remove-worktree.sh
 |------|--------|
 | One terminal, one worktree | Use the path under `.web-terminal-acp/worktrees/$WEB_TERMINAL_WINDOW_ID` |
 | Register after `cd` | `init-worktree.sh` registers automatically; never skip registration |
-| No main-checkout edits | `.git` as a **directory** = main checkout — not tracked |
+| No main-checkout edits | `.git` as a **directory** = main checkout — do not develop feature code here; only merge and cleanup |
+| Merge to `main` when done | Land `agent/<suffix>` on `main` before considering the task complete |
 | Read-only platform git | Web Terminal only snapshots; it never runs commit/checkout for you |
 
 ## Scripts

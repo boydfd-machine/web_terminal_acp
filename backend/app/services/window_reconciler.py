@@ -30,11 +30,10 @@ async def mark_missing_tmux_windows_error(
                 TmuxTarget(session=window.tmux_session, window_id=window.tmux_window_id)
             )
             if not exists:
-                window.status = WindowStatus.error
-                marked_count += 1
+                continue
 
         await session.commit()
 
     if marked_count > 0:
-        logger.info("marked missing tmux windows as error", extra={"marked_count": marked_count})
+        logger.info("marked invalid tmux windows as error", extra={"marked_count": marked_count})
     return marked_count

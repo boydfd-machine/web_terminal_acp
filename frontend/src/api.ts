@@ -5,6 +5,7 @@ import type {
   BootstrapClientResult,
   Client,
   ClientUpdateResult,
+  CommandHistory,
   SearchResponse,
   ProjectSummary,
   TerminalRecent,
@@ -20,10 +21,16 @@ export type RetrySummaryPayload = {
   allow_title_folder_override: boolean;
 };
 
-const API_BASE = import.meta.env.VITE_API_BASE || window.location.origin;
+type ApiWindow = Window & {
+  __WEB_TERMINAL_API_BASE?: string;
+};
+
+function readApiBase(): string {
+  return (window as ApiWindow).__WEB_TERMINAL_API_BASE || import.meta.env.VITE_API_BASE || window.location.origin;
+}
 
 function apiBaseUrl(): URL {
-  const base = new URL(API_BASE);
+  const base = new URL(readApiBase());
   if (!base.pathname.endsWith("/")) {
     base.pathname = `${base.pathname}/`;
   }
@@ -61,8 +68,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export function terminalWebSocketUrl(clientId: string, windowId: string): string {
+export function terminalWebSocketUrl(clientId: string, windowId: string, viewId?: string): string {
   const url = new URL(apiUrl(`/api/clients/${pathSegment(clientId)}/terminal/${pathSegment(windowId)}`));
+  if (viewId !== undefined) {
+    url.searchParams.set("view_id", viewId);
+  }
   if (url.protocol === "http:") {
     url.protocol = "ws:";
   } else if (url.protocol === "https:") {
@@ -127,10 +137,20 @@ export function fetchGitRuns(clientId: string, windowId: string, limit = 50, off
   );
 }
 
-export function createWindow(clientId: string): Promise<VirtualWindow> {
+export type CreateWindowInput = {
+  cwd?: string | null;
+  shell_command?: string | null;
+  folder_path?: string | null;
+};
+
+export function createWindow(clientId: string, input: CreateWindowInput = {}): Promise<VirtualWindow> {
   return request<VirtualWindow>(`/api/clients/${pathSegment(clientId)}/windows`, {
     method: "POST",
-    body: JSON.stringify({ cwd: null, shell_command: null })
+    body: JSON.stringify({
+      cwd: input.cwd ?? null,
+      shell_command: input.shell_command ?? null,
+      folder_path: input.folder_path ?? null
+    })
   });
 }
 
@@ -159,6 +179,13 @@ export function fetchWindow(clientId: string, windowId: string): Promise<Virtual
   return request<VirtualWindow>(`/api/clients/${pathSegment(clientId)}/windows/${pathSegment(windowId)}`);
 }
 
+export function updateWindowTitle(clientId: string, windowId: string, title: string): Promise<VirtualWindow> {
+  return request<VirtualWindow>(`/api/clients/${pathSegment(clientId)}/windows/${pathSegment(windowId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title })
+  });
+}
+
 export function fetchAgentRecordChat(clientId: string, windowId: string, limit = 30, offset = 0): Promise<AgentChatRecord> {
   const params = new URLSearchParams({
     messages_limit: String(limit),
@@ -176,6 +203,16 @@ export function fetchAgentRecordDetail(clientId: string, windowId: string, limit
   });
   return request<AgentRecord>(
     `/api/clients/${pathSegment(clientId)}/windows/${pathSegment(windowId)}/agent-record/detail?${params.toString()}`
+  );
+}
+
+export function fetchCommandHistory(clientId: string, windowId: string, limit = 100, offset = 0): Promise<CommandHistory> {
+  const params = new URLSearchParams({
+    commands_limit: String(limit),
+    commands_offset: String(offset)
+  });
+  return request<CommandHistory>(
+    `/api/clients/${pathSegment(clientId)}/windows/${pathSegment(windowId)}/command-history?${params.toString()}`
   );
 }
 

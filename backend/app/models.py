@@ -131,6 +131,7 @@ class Folder(Base):
         UniqueConstraint("client_id", "path", name="uq_folders_client_id_path"),
         Index("ix_folders_client_id", "client_id"),
         Index("ix_folders_parent_id", "parent_id"),
+        Index("ix_folders_client_sort_name", "client_id", "sort_order", "name", "id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -171,6 +172,7 @@ class VirtualWindow(Base):
         Index("ix_virtual_windows_client_id", "client_id"),
         Index("ix_virtual_windows_folder_id", "folder_id"),
         Index("ix_virtual_windows_status", "status"),
+        Index("ix_virtual_windows_client_folder_created", "client_id", "folder_id", "created_at", "title", "id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -234,6 +236,7 @@ class AiSession(Base):
         UniqueConstraint("client_id", "provider", "source_id", name="uq_ai_sessions_client_id_provider_source_id"),
         Index("ix_ai_sessions_client_id", "client_id"),
         Index("ix_ai_sessions_virtual_window_id", "virtual_window_id"),
+        Index("ix_ai_sessions_client_window_updated", "client_id", "virtual_window_id", "updated_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -278,6 +281,7 @@ class Event(Base):
         Index("ix_events_source_type_source_id", "source_type", "source_id"),
         Index("ix_events_agent_record_window", "client_id", "virtual_window_id", "created_at", "id"),
         Index("ix_events_client_window_kind_created", "client_id", "virtual_window_id", "kind", "created_at"),
+        Index("ix_events_client_window_source_created", "client_id", "virtual_window_id", "source_type", "created_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -478,6 +482,7 @@ class WindowGitBinding(Base):
     __table_args__ = (
         UniqueConstraint("virtual_window_id", name="uq_window_git_bindings_virtual_window_id"),
         Index("ix_window_git_bindings_client_id", "client_id"),
+        Index("ix_window_git_bindings_window_client", "virtual_window_id", "client_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -508,6 +513,7 @@ class GitWorktreeRun(Base):
             name="uq_git_worktree_runs_window_sequence",
         ),
         Index("ix_git_worktree_runs_client_window_started", "client_id", "virtual_window_id", "started_at"),
+        Index("ix_git_worktree_runs_window_pending", "virtual_window_id", "pending_commit"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)

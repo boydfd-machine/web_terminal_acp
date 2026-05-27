@@ -33,8 +33,9 @@ class TmuxWindowTarget(Protocol):
     window_id: str
 
 
-def shadow_session_name(window_id: str) -> str:
-    sanitized = re.sub(r"[^A-Za-z0-9_-]", "_", window_id)
+def shadow_session_name(window_id: str, view_id: str | None = None) -> str:
+    value = view_id or window_id
+    sanitized = re.sub(r"[^A-Za-z0-9_-]", "_", value)
     return f"web_terminal_view_{sanitized}"
 
 
@@ -122,12 +123,16 @@ class TmuxManager:
             self.pool_session,
             ["tmux", "new-session", "-d", "-s", self.pool_session, self.default_shell],
         )
-        await self._ensure_manual_window_size(self.pool_session)
+        await self._ensure_terminal_session_options(self.pool_session)
         await self._ensure_clipboard_support()
 
-    async def _ensure_manual_window_size(self, session_name: str) -> None:
+    async def _ensure_terminal_session_options(self, session_name: str) -> None:
         with contextlib.suppress(TmuxCommandError):
             await self._run(["tmux", "set-option", "-t", session_name, "window-size", "manual"])
+
+    async def _ensure_pane_passthrough(self, tmux_target: str) -> None:
+        with contextlib.suppress(TmuxCommandError):
+            await self._run(["tmux", "set-option", "-p", "-t", tmux_target, "allow-passthrough", "on"])
 
     async def _ensure_clipboard_support(self) -> None:
         if self._clipboard_configured:
@@ -181,6 +186,8 @@ class TmuxManager:
             ).command
         command.append(shell)
         tmux_window_id = (await self._run(command)).strip()
+        await self._ensure_pane_passthrough(f"{self.pool_session}:{tmux_window_id}")
+        await self.select_window(TmuxTarget(session=self.pool_session, window_id=tmux_window_id))
         return TmuxTarget(
             session=self.pool_session,
             window_id=tmux_window_id,
@@ -188,28 +195,91 @@ class TmuxManager:
             shell_command=effective_shell,
         )
 
-    async def ensure_shadow_session(self, target: TmuxTarget) -> TmuxAttachTarget:
+    async def recreate_window(
+        self,
+        target: TmuxTarget,
+        *,
+        local_window_id: UUID | str,
+    ) -> TmuxTarget:
+        return await self.create_window(
+            target.cwd,
+            target.shell_command,
+            client_id=LOCAL_CLIENT_ID,
+            window_id=local_window_id,
+        )
+
+    async def select_window(self, target: TmuxWindowTarget) -> None:
+        session_name = (
+            getattr(target, "session", None)
+            or getattr(target, "session_id", None)
+            or self.pool_session
+        )
+        await self._run(["tmux", "select-window", "-t", f"{session_name}:{target.window_id}"])
+
+    async def ensure_shadow_session(
+        self,
+        target: TmuxTarget,
+        *,
+        view_id: str | None = None,
+    ) -> TmuxAttachTarget:
         await self.ensure_pool()
-        shadow_session = shadow_session_name(target.window_id)
+        shadow_session = shadow_session_name(target.window_id, view_id)
         await self._create_session_idempotently(
             shadow_session,
             ["tmux", "new-session", "-d", "-t", target.session, "-s", shadow_session],
         )
-        await self._ensure_manual_window_size(shadow_session)
+        await self._ensure_terminal_session_options(shadow_session)
         await self._run(["tmux", "select-window", "-t", f"{shadow_session}:{target.window_id}"])
+        await self._ensure_pane_passthrough(f"{shadow_session}:{target.window_id}")
         return TmuxAttachTarget(session=shadow_session)
 
-    async def resize_shadow_window(self, target: TmuxWindowTarget, *, cols: int, rows: int) -> None:
+    async def kill_shadow_session(
+        self,
+        target: TmuxWindowTarget,
+        *,
+        view_id: str | None = None,
+    ) -> None:
+        with contextlib.suppress(TmuxCommandError):
+            await self._run([
+                "tmux",
+                "kill-session",
+                "-t",
+                shadow_session_name(target.window_id, view_id),
+            ])
+
+    async def resize_shadow_window(
+        self,
+        target: TmuxWindowTarget,
+        *,
+        cols: int,
+        rows: int,
+        view_id: str | None = None,
+    ) -> None:
         await self._run([
             "tmux",
             "resize-window",
             "-t",
-            f"{shadow_session_name(target.window_id)}:{target.window_id}",
+            f"{shadow_session_name(target.window_id, view_id)}:{target.window_id}",
             "-x",
             str(cols),
             "-y",
             str(rows),
         ])
+
+    async def select_shadow_window(
+        self,
+        target: TmuxWindowTarget,
+        *,
+        view_id: str,
+    ) -> None:
+        await self._run(
+            [
+                "tmux",
+                "select-window",
+                "-t",
+                f"{shadow_session_name(target.window_id, view_id)}:{target.window_id}",
+            ]
+        )
 
     async def current_window_id(self, session_name: str) -> str:
         return (
@@ -220,20 +290,29 @@ class TmuxManager:
 
     async def has_window(self, target: TmuxTarget) -> bool:
         try:
-            await self._run([
-                "tmux",
-                "display-message",
-                "-p",
-                "-t",
-                f"{target.session}:{target.window_id}",
-                "#{window_id}",
-            ])
+            window_id = (
+                await self._run([
+                    "tmux",
+                    "display-message",
+                    "-p",
+                    "-t",
+                    f"{target.session}:{target.window_id}",
+                    "#{window_id}",
+                ])
+            ).strip()
         except TmuxCommandError:
             return False
-        return True
+        return window_id == target.window_id
 
     async def kill_window(self, target: TmuxTarget) -> None:
-        await self._run(["tmux", "kill-window", "-t", f"{target.session}:{target.window_id}"])
+        if not await self.has_window(target):
+            return
+        await self._run([
+            "tmux",
+            "kill-window",
+            "-t",
+            f"{target.session}:{target.window_id}",
+        ])
 
     async def capture_window(self, target: TmuxTarget) -> str:
         return await self._run([

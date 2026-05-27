@@ -8,7 +8,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from app.client_agent.agent_work_presence import (
@@ -24,6 +24,9 @@ from app.services.runtime.protocol import AgentMessage
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from app.client_agent.agent_idle import AgentIdleSupervisor
+
 ManagedEventSender = Callable[[AgentMessage], Awaitable[None]]
 PresenceEventSender = Callable[[AgentMessage], Awaitable[None]]
 
@@ -31,6 +34,11 @@ AGENT_WATCH_ACTIVE_INTERVAL_SECONDS = 0.5
 AGENT_WATCH_IDLE_INTERVAL_SECONDS = 2.0
 AGENT_WATCH_MAX_INTERVAL_SECONDS = 5.0
 AGENT_WATCH_SLOW_SCAN_SECONDS = 1.0
+AGENT_WATCH_DISCOVERY_INTERVAL_SECONDS = 30.0
+AGENT_WATCH_COLLECTION_CONCURRENCY = 2
+AGENT_WATCH_PROCESS_SCAN_INTERVAL_SECONDS = 30.0
+_WATCH_COLLECTION_SEMAPHORE: asyncio.Semaphore | None = None
+_WATCH_COLLECTION_SEMAPHORE_LOOP: asyncio.AbstractEventLoop | None = None
 
 
 def cursor_store_paths_for_window(window_id: UUID | str) -> list[Path]:
@@ -51,10 +59,22 @@ def iter_claude_code_jsonl_files(window_id: UUID | str) -> list[Path]:
     return sorted(path for path in root.rglob("*.jsonl") if path.is_file())
 
 
+def _initial_process_scan_delay(window_id: UUID, interval_seconds: float) -> float:
+    if interval_seconds <= 0:
+        return 0.0
+    interval_ms = max(1, int(interval_seconds * 1000))
+    stagger_seconds = (window_id.int % interval_ms) / 1000.0
+    return min(AGENT_WATCH_IDLE_INTERVAL_SECONDS, interval_seconds) + stagger_seconds
+
+
 @dataclass
 class AgentToolWatcherState:
     codex_offsets: dict[Path, int] = field(default_factory=dict)
+    codex_session_files: list[Path] = field(default_factory=list)
+    codex_session_files_refreshed_at: float = 0.0
     claude_code_offsets: dict[Path, int] = field(default_factory=dict)
+    claude_code_jsonl_files: list[Path] = field(default_factory=list)
+    claude_code_jsonl_files_refreshed_at: float = 0.0
     cursor_store_paths: list[Path] = field(default_factory=list)
     cursor_seen_blob_ids: dict[Path, set[str]] = field(default_factory=dict)
     cursor_last_rowids: dict[Path, int] = field(default_factory=dict)
@@ -67,6 +87,291 @@ AGENT_TOOL_COLLECTORS: tuple[tuple[str, str], ...] = (
 )
 
 
+@dataclass
+class AgentToolWatchWindow:
+    window_id: UUID
+    project_path: str | None
+    state: AgentToolWatcherState = field(default_factory=AgentToolWatcherState)
+    initialized: bool = False
+    sleep_seconds: float = AGENT_WATCH_IDLE_INTERVAL_SECONDS
+    next_event_scan_at: float = 0.0
+    next_process_scan_at: float = 0.0
+
+
+class UnifiedAgentToolWatcher:
+    def __init__(
+        self,
+        send_event: ManagedEventSender,
+        client_id: UUID,
+        *,
+        send_presence: PresenceEventSender | None = None,
+        terminal: ClientTerminalMultiplexer | None = None,
+        runtime: ClientTmuxRuntime | None = None,
+        idle_supervisor: AgentIdleSupervisor | None = None,
+    ) -> None:
+        self._send_event = send_event
+        self._client_id = client_id
+        self._send_presence = send_presence
+        self._terminal = terminal
+        self._runtime = runtime
+        self._idle_supervisor = idle_supervisor
+        self._windows: dict[UUID, AgentToolWatchWindow] = {}
+        self._wakeup = asyncio.Event()
+        self._task: asyncio.Task[None] | None = None
+        self._closed = False
+        self._process_scan_interval = max(
+            PRESENCE_SEND_INTERVAL_SECONDS,
+            AGENT_WATCH_PROCESS_SCAN_INTERVAL_SECONDS,
+        )
+
+    def start(self) -> None:
+        if self._closed:
+            raise RuntimeError("unified agent tool watcher is closed")
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._run())
+
+    def watch_window(self, window_id: UUID, project_path: str | None) -> None:
+        existing = self._windows.get(window_id)
+        if existing is not None:
+            existing.project_path = project_path
+            self._wakeup.set()
+            return
+
+        now = time.perf_counter()
+        self._windows[window_id] = AgentToolWatchWindow(
+            window_id=window_id,
+            project_path=project_path,
+            next_event_scan_at=now,
+            next_process_scan_at=now
+            + _initial_process_scan_delay(window_id, self._process_scan_interval),
+        )
+        self._wakeup.set()
+
+    def remove_window(self, window_id: UUID) -> None:
+        self._windows.pop(window_id, None)
+        self._wakeup.set()
+
+    async def close(self) -> None:
+        self._closed = True
+        self._wakeup.set()
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+
+    async def _run(self) -> None:
+        while True:
+            window = self._next_due_window()
+            if window is None:
+                await self._wait_for_due_window()
+                continue
+            try:
+                await self._scan_window(window)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "client-agent unified agent watcher scan failed",
+                    extra={
+                        "client_id": str(self._client_id),
+                        "window_id": str(window.window_id),
+                    },
+                )
+                if self._windows.get(window.window_id) is window:
+                    retry_at = time.perf_counter() + AGENT_WATCH_IDLE_INTERVAL_SECONDS
+                    window.next_event_scan_at = retry_at
+                    window.next_process_scan_at = max(window.next_process_scan_at, retry_at)
+
+    def _next_due_window(self) -> AgentToolWatchWindow | None:
+        if not self._windows:
+            return None
+        now = time.perf_counter()
+        due_windows = [
+            window
+            for window in self._windows.values()
+            if window.next_event_scan_at <= now or window.next_process_scan_at <= now
+        ]
+        if not due_windows:
+            return None
+        return min(due_windows, key=self._next_due_at)
+
+    def _next_due_at(self, window: AgentToolWatchWindow) -> float:
+        return min(window.next_event_scan_at, window.next_process_scan_at)
+
+    async def _wait_for_due_window(self) -> None:
+        self._wakeup.clear()
+        if not self._windows:
+            await self._wakeup.wait()
+            return
+        now = time.perf_counter()
+        timeout = max(0.0, min(self._next_due_at(window) for window in self._windows.values()) - now)
+        try:
+            await asyncio.wait_for(self._wakeup.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return
+
+    async def _scan_window(self, window: AgentToolWatchWindow) -> None:
+        window_id = window.window_id
+        started_at = time.perf_counter()
+        managed_sent_count = 0
+        presence_sent_count = 0
+
+        if not window.initialized:
+            await _run_watcher_scan(
+                initialize_agent_tool_watcher_state,
+                window.state,
+                window_id=window_id,
+            )
+            if self._windows.get(window_id) is not window:
+                return
+            window.initialized = True
+
+        now = time.perf_counter()
+        event_scan_due = now >= window.next_event_scan_at
+        process_scan_due = now >= window.next_process_scan_at
+
+        if event_scan_due:
+            managed_events = await _run_watcher_scan(
+                _collect_all_events,
+                window.state,
+                client_id=self._client_id,
+                window_id=window_id,
+                project_path=window.project_path,
+            )
+            if self._windows.get(window_id) is not window:
+                return
+            if self._idle_supervisor is not None and managed_events:
+                await self._idle_supervisor.observe_events(managed_events)
+        else:
+            managed_events = []
+
+        if self._windows.get(window_id) is not window:
+            return
+
+        now = time.perf_counter()
+        process_scan_due = now >= window.next_process_scan_at
+        if self._idle_supervisor is not None and process_scan_due:
+            await self._idle_supervisor.maybe_suspend_window(window_id)
+
+        if self._send_presence is not None and process_scan_due:
+            presence = await detect_agent_work_presence(
+                window_id,
+                terminal=self._terminal,
+                runtime=self._runtime,
+            )
+            if presence is not None:
+                await self._send_presence(
+                    AgentMessage(
+                        type="agent_work_presence",
+                        client_id=self._client_id,
+                        window_id=window_id,
+                        payload={
+                            "providers": list(presence.providers),
+                            "reasons": list(presence.reasons),
+                        },
+                    )
+                )
+                presence_sent_count += 1
+
+        if self._windows.get(window_id) is not window:
+            return
+
+        for event in managed_events:
+            if await enqueue_managed_ai_event(self._send_event, event):
+                managed_sent_count += 1
+
+        if self._windows.get(window_id) is not window:
+            return
+
+        if event_scan_due:
+            if managed_sent_count:
+                window.sleep_seconds = AGENT_WATCH_ACTIVE_INTERVAL_SECONDS
+            else:
+                window.sleep_seconds = min(
+                    AGENT_WATCH_MAX_INTERVAL_SECONDS,
+                    max(AGENT_WATCH_IDLE_INTERVAL_SECONDS, window.sleep_seconds * 1.5),
+                )
+            window.next_event_scan_at = time.perf_counter() + window.sleep_seconds
+
+        if process_scan_due:
+            window.next_process_scan_at = time.perf_counter() + self._process_scan_interval
+
+        elapsed = time.perf_counter() - started_at
+        if elapsed >= AGENT_WATCH_SLOW_SCAN_SECONDS:
+            logger.warning(
+                "client-agent unified agent watcher scan was slow",
+                extra={
+                    "client_id": str(self._client_id),
+                    "window_id": str(window_id),
+                    "managed_event_count": managed_sent_count,
+                    "presence_event_count": presence_sent_count,
+                    "elapsed_seconds": round(elapsed, 3),
+                },
+            )
+
+
+def initialize_agent_tool_watcher_state(state: AgentToolWatcherState, *, window_id: UUID) -> None:
+    state.codex_session_files = iter_codex_session_files(window_id)
+    state.codex_session_files_refreshed_at = time.monotonic()
+    for path in state.codex_session_files:
+        try:
+            state.codex_offsets[path] = path.stat().st_size
+        except FileNotFoundError:
+            state.codex_offsets.pop(path, None)
+
+    state.claude_code_jsonl_files = iter_claude_code_jsonl_files(window_id)
+    state.claude_code_jsonl_files_refreshed_at = time.monotonic()
+    for path in state.claude_code_jsonl_files:
+        try:
+            state.claude_code_offsets[path] = path.stat().st_size
+        except FileNotFoundError:
+            state.claude_code_offsets.pop(path, None)
+
+    state.cursor_store_paths = cursor_store_paths_for_window(window_id)
+    for path in state.cursor_store_paths:
+        state.cursor_last_rowids[path] = _cursor_store_max_rowid(path)
+        state.cursor_seen_blob_ids.setdefault(path, set())
+
+
+def _cursor_store_max_rowid(path: Path) -> int:
+    uri = f"file:{path}?mode=ro"
+    try:
+        conn = sqlite3.connect(uri, uri=True)
+    except sqlite3.DatabaseError:
+        return 0
+    try:
+        try:
+            row = conn.execute("select max(rowid) from blobs").fetchone()
+        except sqlite3.DatabaseError:
+            return 0
+        value = row[0] if row is not None else None
+        return int(value) if value is not None else 0
+    finally:
+        conn.close()
+
+
+def _cached_codex_session_files(state: AgentToolWatcherState, window_id: UUID) -> list[Path]:
+    now = time.monotonic()
+    if state.codex_session_files_refreshed_at == 0.0 or (
+        now - state.codex_session_files_refreshed_at >= AGENT_WATCH_DISCOVERY_INTERVAL_SECONDS
+    ):
+        state.codex_session_files = iter_codex_session_files(window_id)
+        state.codex_session_files_refreshed_at = now
+    return state.codex_session_files
+
+
+def _cached_claude_code_jsonl_files(state: AgentToolWatcherState, window_id: UUID) -> list[Path]:
+    now = time.monotonic()
+    if state.claude_code_jsonl_files_refreshed_at == 0.0 or (
+        now - state.claude_code_jsonl_files_refreshed_at >= AGENT_WATCH_DISCOVERY_INTERVAL_SECONDS
+    ):
+        state.claude_code_jsonl_files = iter_claude_code_jsonl_files(window_id)
+        state.claude_code_jsonl_files_refreshed_at = now
+    return state.claude_code_jsonl_files
+
+
 def collect_codex_watch_events(
     state: AgentToolWatcherState,
     *,
@@ -75,7 +380,7 @@ def collect_codex_watch_events(
     project_path: str | None,
 ) -> list[ManagedAiEvent]:
     events: list[ManagedAiEvent] = []
-    for path in iter_codex_session_files(window_id):
+    for path in _cached_codex_session_files(state, window_id):
         offset = state.codex_offsets.get(path, 0)
         try:
             if offset > path.stat().st_size:
@@ -115,7 +420,7 @@ def collect_claude_code_watch_events(
     project_path: str | None,
 ) -> list[ManagedAiEvent]:
     events: list[ManagedAiEvent] = []
-    for path in iter_claude_code_jsonl_files(window_id):
+    for path in _cached_claude_code_jsonl_files(state, window_id):
         offset = state.claude_code_offsets.get(path, 0)
         try:
             if offset > path.stat().st_size:
@@ -244,13 +549,16 @@ async def watch_agent_tool_events(
     send_presence: PresenceEventSender | None = None,
     terminal: ClientTerminalMultiplexer | None = None,
     runtime: ClientTmuxRuntime | None = None,
+    idle_supervisor: AgentIdleSupervisor | None = None,
 ) -> None:
     state = AgentToolWatcherState()
     sleep_seconds = AGENT_WATCH_IDLE_INTERVAL_SECONDS
-    last_presence_sent_at = 0.0
+    await _run_watcher_scan(initialize_agent_tool_watcher_state, state, window_id=window_id)
+    process_scan_interval = max(PRESENCE_SEND_INTERVAL_SECONDS, AGENT_WATCH_PROCESS_SCAN_INTERVAL_SECONDS)
+    next_process_scan_at = time.perf_counter() + _initial_process_scan_delay(window_id, process_scan_interval)
     while True:
         started_at = time.perf_counter()
-        managed_events = await asyncio.to_thread(
+        managed_events = await _run_watcher_scan(
             _collect_all_events,
             state,
             client_id=client_id,
@@ -258,32 +566,37 @@ async def watch_agent_tool_events(
             project_path=project_path,
         )
         sent_count = 0
+        if idle_supervisor is not None and managed_events:
+            await idle_supervisor.observe_events(managed_events)
         for event in managed_events:
             if await enqueue_managed_ai_event(send_event, event):
                 sent_count += 1
+        now = time.perf_counter()
+        process_scan_due = now >= next_process_scan_at
+        if idle_supervisor is not None and process_scan_due:
+            await idle_supervisor.maybe_suspend_window(window_id)
 
-        if send_presence is not None:
-            now = time.perf_counter()
-            if now - last_presence_sent_at >= PRESENCE_SEND_INTERVAL_SECONDS:
-                presence = await detect_agent_work_presence(
-                    window_id,
-                    terminal=terminal,
-                    runtime=runtime,
-                )
-                if presence is not None:
-                    await send_presence(
-                        AgentMessage(
-                            type="agent_work_presence",
-                            client_id=client_id,
-                            window_id=window_id,
-                            payload={
-                                "providers": list(presence.providers),
-                                "reasons": list(presence.reasons),
-                            },
-                        )
+        if send_presence is not None and process_scan_due:
+            presence = await detect_agent_work_presence(
+                window_id,
+                terminal=terminal,
+                runtime=runtime,
+            )
+            if presence is not None:
+                await send_presence(
+                    AgentMessage(
+                        type="agent_work_presence",
+                        client_id=client_id,
+                        window_id=window_id,
+                        payload={
+                            "providers": list(presence.providers),
+                            "reasons": list(presence.reasons),
+                        },
                     )
-                    last_presence_sent_at = now
-                    sent_count += 1
+                )
+                sent_count += 1
+        if process_scan_due:
+            next_process_scan_at = now + process_scan_interval
 
         elapsed = time.perf_counter() - started_at
         if elapsed >= AGENT_WATCH_SLOW_SCAN_SECONDS:
@@ -307,6 +620,19 @@ async def watch_agent_tool_events(
         await asyncio.sleep(sleep_seconds)
 
 
+def _watch_collection_semaphore() -> asyncio.Semaphore:
+    global _WATCH_COLLECTION_SEMAPHORE, _WATCH_COLLECTION_SEMAPHORE_LOOP
+
+    loop = asyncio.get_running_loop()
+    if _WATCH_COLLECTION_SEMAPHORE is None or _WATCH_COLLECTION_SEMAPHORE_LOOP is not loop:
+        _WATCH_COLLECTION_SEMAPHORE = asyncio.Semaphore(AGENT_WATCH_COLLECTION_CONCURRENCY)
+        _WATCH_COLLECTION_SEMAPHORE_LOOP = loop
+    return _WATCH_COLLECTION_SEMAPHORE
+
+
+async def _run_watcher_scan(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    async with _watch_collection_semaphore():
+        return await asyncio.to_thread(func, *args, **kwargs)
 
 
 def _collect_all_events(

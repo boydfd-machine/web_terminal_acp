@@ -10,7 +10,7 @@ from app.client_agent.ai_events import ManagedAiEvent
 from app.models import Event, VirtualWindow
 from app.repositories.ai_sessions import get_or_create_ai_session
 from app.repositories.events import insert_normalized_event
-from app.repositories.summary_jobs import enqueue_summary_job
+from app.services.summary_scheduler import schedule_summary_after_agent_activity
 from app.services.ingest.normalizers import normalize_codex_trace
 from app.services.search_index import index_ai_event
 
@@ -78,7 +78,9 @@ async def receive_codex_trace(
         virtual_window_id=row.virtual_window_id,
     )
     row.ai_session_id = ai_session.id
-    await enqueue_summary_job(session, row.virtual_window_id)
+    window = await session.get(VirtualWindow, row.virtual_window_id)
+    if window is not None:
+        await schedule_summary_after_agent_activity(session, window)
 
     await session.flush()
     return row

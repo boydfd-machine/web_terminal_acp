@@ -1,5 +1,8 @@
 import asyncio
+import base64
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
+import json
 from uuid import UUID
 
 import pytest
@@ -9,7 +12,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.db import get_session
 from app.main import app
-from app.models import AiSession, ClientRuntime, Event, EventSourceType, SummaryJob, SummaryJobStatus, VirtualWindow
+from app.models import (
+    AiSession,
+    ClientRuntime,
+    Event,
+    EventSourceType,
+    Folder,
+    GitWorktreeRun,
+    SummaryJob,
+    SummaryJobStatus,
+    VirtualWindow,
+    WindowGitBinding,
+)
 from app.repositories.clients import create_client, ensure_local_client
 from app.repositories.windows import create_window
 from app.routers import windows as windows_router
@@ -154,6 +168,27 @@ async def create_remote_client_id(db_client: DbClient, name: str = "remote-a") -
     return client_id
 
 
+def worktree_marker(
+    window_id: UUID,
+    *,
+    worktree_root: str = "/repo/.worktrees/feature",
+    main_repo_root: str = "/repo",
+    branch: str = "agent/feature",
+) -> str:
+    payload = {
+        "worktree_root": worktree_root,
+        "main_repo_root": main_repo_root,
+        "branch": branch,
+    }
+    encoded = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+    return f"\x1b]777;web-terminal-worktree;window_id={window_id};payload={encoded}\x07"
+
+
+def tracking_sequence(worktree_root: str) -> str:
+    digest = sha256(worktree_root.encode("utf-8")).hexdigest()[:16]
+    return f"worktree:{digest}"
+
+
 @pytest.mark.asyncio
 async def test_create_window_kills_tmux_window_when_database_commit_fails(db_client, monkeypatch):
     client_id = await get_local_client_id(db_client)
@@ -171,6 +206,39 @@ async def test_create_window_kills_tmux_window_when_database_commit_fails(db_cli
     assert len(FakeTmuxManager.killed_targets) == 1
     assert FakeTmuxManager.killed_targets[0].session == "test_pool"
     assert FakeTmuxManager.killed_targets[0].window_id == "@99"
+
+
+@pytest.mark.asyncio
+async def test_create_window_with_folder_path_assigns_topic_folder(db_client):
+    client_id = await get_local_client_id(db_client)
+    response = await db_client.post(
+        f"/api/clients/{client_id}/windows",
+        json={
+            "cwd": "/tmp/project",
+            "shell_command": "/bin/bash",
+            "folder_path": "/开发调试/后端摘要",
+        },
+    )
+    assert response.status_code == 200
+    created = response.json()
+
+    tree_response = await db_client.get(f"/api/clients/{client_id}/tree")
+    tree = tree_response.json()
+
+    def find_folder(nodes, path):
+        for node in nodes:
+            if node["path"] == path:
+                return node
+            child = find_folder(node["folders"], path)
+            if child is not None:
+                return child
+        return None
+
+    target_folder = find_folder(tree, "/开发调试/后端摘要")
+    assert target_folder is not None
+    assert any(window["id"] == created["id"] for window in target_folder["windows"])
+    assert created["folder_manually_overridden"] is True
+    assert created["cwd"] == "/tmp/project"
 
 
 @pytest.mark.asyncio
@@ -421,6 +489,102 @@ async def test_delete_window_kills_tmux_and_removes_record(db_client):
         for window in folder["windows"]
     ]
     assert window_id not in tree_window_ids
+
+
+@pytest.mark.asyncio
+async def test_delete_last_window_removes_empty_topic_branch_and_summary_jobs(db_client):
+    client_id = await get_local_client_id(db_client)
+    window_response = await db_client.post(
+        f"/api/clients/{client_id}/windows",
+        json={
+            "cwd": "/tmp/project",
+            "shell_command": "/bin/bash",
+            "folder_path": "/开发调试/后端摘要",
+        },
+    )
+    window_id = window_response.json()["id"]
+    cached_tree_response = await db_client.get(f"/api/clients/{client_id}/tree")
+    assert cached_tree_response.status_code == 200
+    assert _tree_contains_path(cached_tree_response.json(), "/开发调试/后端摘要")
+
+    async with db_client.session_factory() as session:
+        session.add(
+            SummaryJob(
+                virtual_window_id=UUID(window_id),
+                status=SummaryJobStatus.pending,
+            )
+        )
+        await session.commit()
+
+    delete_response = await db_client.delete(f"/api/clients/{client_id}/windows/{window_id}")
+
+    assert delete_response.status_code == 204
+
+    async with db_client.session_factory() as session:
+        assert await session.get(VirtualWindow, UUID(window_id)) is None
+        summary_jobs = list(await session.scalars(select(SummaryJob)))
+        folders = list(await session.scalars(select(Folder).order_by(Folder.path)))
+
+    assert summary_jobs == []
+    assert "/开发调试" not in [folder.path for folder in folders]
+    assert "/开发调试/后端摘要" not in [folder.path for folder in folders]
+
+    tree_response = await db_client.get(f"/api/clients/{client_id}/tree")
+    assert tree_response.status_code == 200
+    assert not _tree_contains_path(tree_response.json(), "/开发调试")
+    assert not _tree_contains_path(tree_response.json(), "/开发调试/后端摘要")
+
+
+@pytest.mark.asyncio
+async def test_delete_window_keeps_topic_when_another_terminal_remains(db_client):
+    client_id = await get_local_client_id(db_client)
+    first_response = await db_client.post(
+        f"/api/clients/{client_id}/windows",
+        json={
+            "cwd": "/tmp/first",
+            "shell_command": "/bin/bash",
+            "folder_path": "/开发调试/后端摘要",
+        },
+    )
+    second_response = await db_client.post(
+        f"/api/clients/{client_id}/windows",
+        json={
+            "cwd": "/tmp/second",
+            "shell_command": "/bin/bash",
+            "folder_path": "/开发调试/后端摘要",
+        },
+    )
+
+    delete_response = await db_client.delete(
+        f"/api/clients/{client_id}/windows/{first_response.json()['id']}"
+    )
+
+    assert delete_response.status_code == 204
+
+    tree_response = await db_client.get(f"/api/clients/{client_id}/tree")
+    tree = tree_response.json()
+
+    def find_folder(nodes, path):
+        for node in nodes:
+            if node["path"] == path:
+                return node
+            child = find_folder(node["folders"], path)
+            if child is not None:
+                return child
+        return None
+
+    target_folder = find_folder(tree, "/开发调试/后端摘要")
+    assert target_folder is not None
+    assert [window["id"] for window in target_folder["windows"]] == [second_response.json()["id"]]
+
+
+def _tree_contains_path(nodes, path):
+    for node in nodes:
+        if node["path"] == path:
+            return True
+        if _tree_contains_path(node["folders"], path):
+            return True
+    return False
 
 
 @pytest.mark.asyncio
@@ -712,6 +876,227 @@ async def test_get_window_agent_record_chat_returns_minimal_messages(db_client):
     assert body["messages_limit"] == 1
     assert body["messages_offset"] == 0
     assert body["messages_has_more"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_window_agent_record_chat_filters_agent_default_user_inputs(db_client):
+    client_id = await get_local_client_id(db_client)
+    window_response = await db_client.post(
+        f"/api/clients/{client_id}/windows",
+        json={"cwd": "/tmp/project", "shell_command": "/bin/bash"},
+    )
+    window_id = UUID(window_response.json()["id"])
+
+    async with db_client.session_factory() as session:
+        base_time = datetime.now(timezone.utc)
+        session.add_all(
+            [
+                Event(
+                    client_id=UUID(client_id),
+                    source_type=EventSourceType.agent_tool_record,
+                    source_id="cursor-session-1",
+                    kind="user_message",
+                    virtual_window_id=window_id,
+                    payload_json={
+                        "provider": "cursor_cli",
+                        "role": "user",
+                        "content": "<user_info>\nOS Version: linux\n</user_info>",
+                    },
+                    fingerprint="agent-record-chat-cursor-user-info",
+                    created_at=base_time,
+                ),
+                Event(
+                    client_id=UUID(client_id),
+                    source_type=EventSourceType.agent_tool_record,
+                    source_id="cursor-session-1",
+                    kind="user_message",
+                    virtual_window_id=window_id,
+                    payload_json={
+                        "provider": "cursor_cli",
+                        "role": "user",
+                        "content": "<user_query>\n修复 summary 输入过滤\n</user_query>",
+                    },
+                    fingerprint="agent-record-chat-cursor-query",
+                    created_at=base_time + timedelta(milliseconds=1),
+                ),
+                Event(
+                    client_id=UUID(client_id),
+                    source_type=EventSourceType.agent_tool_record,
+                    source_id="codex-session-1",
+                    kind="response_item",
+                    virtual_window_id=window_id,
+                    payload_json={
+                        "provider": "codex",
+                        "raw_type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_text",
+                                    "text": "# AGENTS.md instructions for /workspace\n\n<INSTRUCTIONS>...</INSTRUCTIONS>",
+                                }
+                            ],
+                        },
+                    },
+                    fingerprint="agent-record-chat-codex-context",
+                    created_at=base_time + timedelta(milliseconds=2),
+                ),
+                Event(
+                    client_id=UUID(client_id),
+                    source_type=EventSourceType.agent_tool_record,
+                    source_id="claude-session-1",
+                    kind="user_message",
+                    virtual_window_id=window_id,
+                    payload_json={
+                        "provider": "claude_code",
+                        "type": "user",
+                        "message": {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": "tool-1",
+                                    "content": "pytest output",
+                                }
+                            ],
+                        },
+                    },
+                    fingerprint="agent-record-chat-claude-tool-result",
+                    created_at=base_time + timedelta(milliseconds=3),
+                ),
+                Event(
+                    client_id=UUID(client_id),
+                    source_type=EventSourceType.agent_tool_record,
+                    source_id="codex-session-1",
+                    kind="response_item",
+                    virtual_window_id=window_id,
+                    payload_json={
+                        "provider": "codex",
+                        "raw_type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": "done"}],
+                        },
+                    },
+                    fingerprint="agent-record-chat-codex-agent",
+                    created_at=base_time + timedelta(milliseconds=4),
+                ),
+            ]
+        )
+        await session.commit()
+
+    response = await db_client.get(f"/api/clients/{client_id}/windows/{window_id}/agent-record/chat")
+
+    assert response.status_code == 200
+    assert [(item["role"], item["body"]) for item in response.json()["messages"]] == [
+        ("user", "修复 summary 输入过滤"),
+        ("agent", "done"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_window_command_history_returns_terminal_input_commands(db_client):
+    client_id = await get_local_client_id(db_client)
+    window_response = await db_client.post(
+        f"/api/clients/{client_id}/windows",
+        json={"cwd": "/tmp/project", "shell_command": "/bin/bash"},
+    )
+    window_id = UUID(window_response.json()["id"])
+    base_time = datetime(2026, 5, 22, 12, 0, tzinfo=timezone.utc)
+
+    async with db_client.session_factory() as session:
+        session.add_all(
+            [
+                Event(
+                    client_id=UUID(client_id),
+                    source_type=EventSourceType.terminal,
+                    source_id=str(window_id),
+                    kind="terminal_input_command",
+                    virtual_window_id=window_id,
+                    payload_json={
+                        "command": "npm test",
+                        "shell": "bash",
+                        "cwd": "/tmp/project",
+                        "captured_at": base_time.isoformat(),
+                        "sequence": 1,
+                    },
+                    fingerprint="command-history-1",
+                    created_at=base_time,
+                ),
+                Event(
+                    client_id=UUID(client_id),
+                    source_type=EventSourceType.terminal,
+                    source_id=str(window_id),
+                    kind="terminal_command_finished",
+                    virtual_window_id=window_id,
+                    payload_json={
+                        "command": "npm test",
+                        "shell": "bash",
+                        "cwd": "/tmp/project",
+                        "captured_at": (base_time + timedelta(seconds=2)).isoformat(),
+                        "sequence": 1,
+                        "exit_status": 0,
+                    },
+                    fingerprint=f"terminal_command_finished:{window_id}:1",
+                    created_at=base_time + timedelta(seconds=2),
+                ),
+                Event(
+                    client_id=UUID(client_id),
+                    source_type=EventSourceType.terminal,
+                    source_id=str(window_id),
+                    kind="terminal_output",
+                    virtual_window_id=window_id,
+                    payload_json={"text": "test output"},
+                    fingerprint="command-history-output",
+                    created_at=base_time + timedelta(seconds=3),
+                ),
+                Event(
+                    client_id=UUID(client_id),
+                    source_type=EventSourceType.terminal,
+                    source_id=str(window_id),
+                    kind="terminal_input_command",
+                    virtual_window_id=window_id,
+                    payload_json={
+                        "command": "git status",
+                        "shell": "zsh",
+                        "cwd": "/tmp/project",
+                        "captured_at": (base_time + timedelta(seconds=4)).isoformat(),
+                        "sequence": 2,
+                    },
+                    fingerprint="command-history-2",
+                    created_at=base_time + timedelta(seconds=4),
+                ),
+            ]
+        )
+        await session.commit()
+
+    response = await db_client.get(
+        f"/api/clients/{client_id}/windows/{window_id}/command-history?commands_limit=1"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["window_id"] == str(window_id)
+    assert body["commands_total"] == 2
+    assert body["commands_limit"] == 1
+    assert body["commands_offset"] == 0
+    assert body["commands_has_more"] is True
+    assert body["commands"][0]["command"] == "git status"
+
+    second_page = await db_client.get(
+        f"/api/clients/{client_id}/windows/{window_id}/command-history?commands_limit=1&commands_offset=1"
+    )
+    assert second_page.status_code == 200
+    command = second_page.json()["commands"][0]
+    assert command["command"] == "npm test"
+    assert command["shell"] == "bash"
+    assert command["cwd"] == "/tmp/project"
+    assert command["sequence"] == 1
+    assert command["exit_status"] == 0
+    assert command["captured_at"] == "2026-05-22T12:00:00Z"
+    assert command["finished_at"] == "2026-05-22T12:00:02Z"
 
 
 @pytest.mark.asyncio
@@ -1318,6 +1703,215 @@ async def test_get_window_returns_working_for_in_progress_agent_command(db_clien
     assert work_status["color"] == "orange"
     assert work_status["last_activity_at"] is not None
     assert work_status["last_working_activity_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_windows_activity_returns_git_worktree_activity_without_remote_probe(db_client):
+    client_id = await get_local_client_id(db_client)
+    async with db_client.session_factory() as session:
+        client = await ensure_local_client(session)
+        window = await create_window(session, client.id, cwd="/tmp", shell_command="/bin/bash")
+        session.add(
+            WindowGitBinding(
+                client_id=client.id,
+                virtual_window_id=window.id,
+                main_repo_root="/repo",
+                worktree_root="/repo/.worktrees/feature",
+                branch="feature",
+                discovery_method="command",
+            )
+        )
+        session.add(
+            GitWorktreeRun(
+                client_id=client.id,
+                virtual_window_id=window.id,
+                command_sequence="1",
+                status="completed",
+                pending_commit=True,
+            )
+        )
+        window_id = str(window.id)
+        await session.commit()
+
+    response = await db_client.get(f"/api/clients/{client_id}/windows/activity")
+
+    assert response.status_code == 200
+    activity_window = next(
+        item for item in response.json()["windows"] if item["window_id"] == window_id
+    )
+    assert activity_window["git_worktree"] == {
+        "worktree_root": "/repo/.worktrees/feature",
+        "main_repo_root": "/repo",
+        "branch": "feature",
+        "pending_commit": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_windows_activity_materializes_git_worktree_from_agent_record_marker(db_client):
+    client_id = await get_local_client_id(db_client)
+    async with db_client.session_factory() as session:
+        client = await ensure_local_client(session)
+        window = await create_window(session, client.id, cwd="/tmp", shell_command="/bin/bash")
+        session.add(
+            Event(
+                client_id=client.id,
+                source_type=EventSourceType.agent_tool_record,
+                source_id="codex-session-1",
+                kind="response_item",
+                virtual_window_id=window.id,
+                payload_json={
+                    "provider": "codex",
+                    "type": "function_call_output",
+                    "output": f"Registered worktree\n{worktree_marker(window.id)}",
+                },
+                fingerprint=f"agent_tool_record:{window.id}:worktree-marker",
+            )
+        )
+        window_id = str(window.id)
+        await session.commit()
+
+    response = await db_client.get(f"/api/clients/{client_id}/windows/activity")
+
+    assert response.status_code == 200
+    activity_window = next(
+        item for item in response.json()["windows"] if item["window_id"] == window_id
+    )
+    assert activity_window["git_worktree"] == {
+        "worktree_root": "/repo/.worktrees/feature",
+        "main_repo_root": "/repo",
+        "branch": "agent/feature",
+        "pending_commit": False,
+    }
+    async with db_client.session_factory() as session:
+        binding = await session.scalar(
+            select(WindowGitBinding).where(WindowGitBinding.virtual_window_id == UUID(window_id))
+        )
+        runs = list(
+            await session.scalars(
+                select(GitWorktreeRun).where(GitWorktreeRun.virtual_window_id == UUID(window_id))
+            )
+        )
+    assert binding is not None
+    assert binding.discovery_method == "osc"
+    assert len(runs) == 1
+    assert runs[0].worktree_root == "/repo/.worktrees/feature"
+
+
+@pytest.mark.asyncio
+async def test_window_git_runs_materializes_git_worktree_from_agent_record_marker(db_client):
+    client_id = await get_local_client_id(db_client)
+    async with db_client.session_factory() as session:
+        client = await ensure_local_client(session)
+        window = await create_window(session, client.id, cwd="/tmp", shell_command="/bin/bash")
+        session.add(
+            Event(
+                client_id=client.id,
+                source_type=EventSourceType.agent_tool_record,
+                source_id="codex-session-2",
+                kind="response_item",
+                virtual_window_id=window.id,
+                payload_json={
+                    "provider": "codex",
+                    "payload": {
+                        "type": "function_call_output",
+                        "output": f"Registered worktree\n{worktree_marker(window.id)}",
+                    },
+                },
+                fingerprint=f"agent_tool_record:{window.id}:worktree-git-runs",
+            )
+        )
+        window_id = window.id
+        await session.commit()
+
+    response = await db_client.get(f"/api/clients/{client_id}/windows/{window_id}/git-runs")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["supported"] is True
+    assert payload["total"] == 1
+    assert payload["runs"][0]["run_type"] == "tracking"
+    assert payload["runs"][0]["worktree_root"] == "/repo/.worktrees/feature"
+    assert payload["runs"][0]["main_repo_root"] == "/repo"
+    assert payload["runs"][0]["discovery_method"] == "osc"
+
+
+@pytest.mark.asyncio
+async def test_window_git_runs_returns_commit_file_diff_payload(db_client):
+    client_id = await get_local_client_id(db_client)
+    async with db_client.session_factory() as session:
+        client = await ensure_local_client(session)
+        window = await create_window(session, client.id, cwd="/tmp", shell_command="/bin/bash")
+        session.add(
+            WindowGitBinding(
+                client_id=client.id,
+                virtual_window_id=window.id,
+                main_repo_root="/repo",
+                worktree_root="/repo/.worktrees/feature",
+                branch="agent/feature",
+                discovery_method="osc",
+            )
+        )
+        session.add(
+                GitWorktreeRun(
+                    client_id=client.id,
+                    virtual_window_id=window.id,
+                    command_sequence=tracking_sequence("/repo/.worktrees/feature"),
+                status="completed",
+                main_repo_root="/repo",
+                worktree_root="/repo/.worktrees/feature",
+                discovery_method="osc",
+                start_snapshot_json={"head_sha": "base"},
+                end_snapshot_json={"head_sha": "feature"},
+                session_diff_json={
+                    "has_changes": True,
+                    "head_moved": True,
+                    "start_head": "base",
+                    "end_head": "feature",
+                    "commits": [
+                        {
+                            "sha": "feature",
+                            "short_sha": "feature",
+                            "subject": "Fix terminal reload autofocus reconnect",
+                            "author_name": "Open Claw",
+                            "author_email": "open@example.com",
+                            "authored_at": "2026-05-27T05:55:00+00:00",
+                            "files": [
+                                {
+                                    "path": "frontend/src/components/TerminalPane.tsx",
+                                    "old_path": None,
+                                    "status": "modified",
+                                    "additions": 12,
+                                    "deletions": 4,
+                                    "patch": "@@ -1 +1 @@\n-old\n+new\n",
+                                }
+                            ],
+                        }
+                    ],
+                    "files": [
+                        {
+                            "path": "frontend/src/components/TerminalPane.tsx",
+                            "old_path": None,
+                            "status": "modified",
+                            "additions": 12,
+                            "deletions": 4,
+                            "commits": ["feature"],
+                        }
+                    ],
+                },
+            )
+        )
+        window_id = window.id
+        await session.commit()
+
+    response = await db_client.get(f"/api/clients/{client_id}/windows/{window_id}/git-runs")
+
+    assert response.status_code == 200
+    diff = response.json()["runs"][0]["session_diff_json"]
+    assert diff["commits"][0]["subject"] == "Fix terminal reload autofocus reconnect"
+    assert diff["commits"][0]["files"][0]["path"] == "frontend/src/components/TerminalPane.tsx"
+    assert diff["commits"][0]["files"][0]["patch"] == "@@ -1 +1 @@\n-old\n+new\n"
+    assert diff["files"][0]["commits"] == ["feature"]
 
 
 @pytest.mark.asyncio

@@ -303,7 +303,9 @@ async def test_process_folder_split_job_creates_children_and_moves_windows(sessi
     assert terminal_zero["cwd"] == "/workspace/project-0"
     assert terminal_zero["created_at"] is not None
     assert terminal_zero["commands"][0]["command"] == "pytest backend/tests/integration/test_folder_split_worker.py"
-    assert terminal_zero["ai_events"][0]["source_type"] == "claude_jsonl"
+    assert terminal_zero["session_messages"] == [
+        {"role": "assistant", "content": "split worker context"}
+    ]
 
     async with session_factory() as session:
         folders = {folder.path: folder for folder in await session.scalars(select(Folder))}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -15,6 +16,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.db import SessionLocal
 from app.client_agent.ai_events import ManagedAiEvent, managed_event_from_payload
@@ -27,6 +29,7 @@ from app.services.agent_event_ingest import (
     persist_managed_agent_event,
 )
 from app.services.agent_work_presence import touch_agent_work_presence
+from app.services.git_worktree_agent_markers import extract_worktree_markers_from_agent_payload
 from app.services.runtime.client_connections import (
     ClientConnection,
     ClientConnectionClosed,
@@ -40,6 +43,9 @@ from app.services.terminal_command_marker import ParsedCommandMarker
 from app.services.terminal_stream_markers import TerminalStreamMarkerExtractor
 from app.services.terminal_worktree_marker import ParsedWorktreeMarker
 from app.services.git_worktree_coordinator import (
+    commands_need_git_worktree_tracking,
+    git_worktree_agent_run_sequences,
+    process_git_worktree_snapshot_refresh,
     process_terminal_commands_for_git,
     process_worktree_registration,
 )
@@ -53,6 +59,9 @@ router = APIRouter(tags=["client-agent"])
 logger = logging.getLogger(__name__)
 BACKGROUND_MESSAGE_QUEUE_MAX_SIZE = 5000
 BACKGROUND_MESSAGE_QUEUE_WARN_SECONDS = 1.0
+TERMINAL_OUTPUT_QUEUE_MAX_SIZE = BACKGROUND_MESSAGE_QUEUE_MAX_SIZE
+LOW_PRIORITY_BACKGROUND_QUEUE_MAX_SIZE = 0
+LOW_PRIORITY_BACKGROUND_QUEUE_WARN_SIZE = 10000
 
 
 @dataclass(frozen=True)
@@ -62,6 +71,14 @@ class _TerminalOutputRecordingJob:
     clean_data: bytes
     commands: tuple[ParsedCommandMarker, ...]
     worktree_markers: tuple[ParsedWorktreeMarker, ...]
+
+
+@dataclass(frozen=True)
+class _GitWorktreeTrackingJob:
+    client_id: UUID
+    window_id: UUID
+    commands: tuple[ParsedCommandMarker, ...] = ()
+    worktree_markers: tuple[ParsedWorktreeMarker, ...] = ()
 
 
 class _BackgroundMessageQueue(Protocol):
@@ -79,6 +96,7 @@ class _WindowFairMessageQueue:
         self._unfinished_count = 0
         self._window_queues: dict[UUID, deque[AgentMessage]] = {}
         self._windows: deque[UUID] = deque()
+        self._priority_windows: deque[UUID] = deque()
         self._condition = asyncio.Condition()
         self._join_event = asyncio.Event()
         self._join_event.set()
@@ -98,6 +116,8 @@ class _WindowFairMessageQueue:
                 self._window_queues[message.window_id] = queue
                 self._windows.append(message.window_id)
             queue.append(message)
+            if message.payload.get("input_priority") is True:
+                self._priority_windows.append(message.window_id)
             self._queued_count += 1
             self._unfinished_count += 1
             self._join_event.clear()
@@ -106,21 +126,46 @@ class _WindowFairMessageQueue:
     async def get(self) -> AgentMessage:
         async with self._condition:
             while True:
+                while self._priority_windows:
+                    window_id = self._priority_windows.popleft()
+                    message = self._get_for_window(
+                        window_id,
+                        priority_only=True,
+                        requeue=False,
+                    )
+                    if message is not None:
+                        return message
                 while self._windows:
                     window_id = self._windows.popleft()
-                    queue = self._window_queues.get(window_id)
-                    if not queue:
-                        self._window_queues.pop(window_id, None)
-                        continue
-                    message = queue.popleft()
-                    self._queued_count -= 1
-                    if queue:
-                        self._windows.append(window_id)
-                    else:
-                        self._window_queues.pop(window_id, None)
-                    self._condition.notify_all()
-                    return message
+                    message = self._get_for_window(window_id)
+                    if message is not None:
+                        return message
                 await self._condition.wait()
+
+    def _get_for_window(
+        self,
+        window_id: UUID,
+        *,
+        priority_only: bool = False,
+        requeue: bool = True,
+    ) -> AgentMessage | None:
+        queue = self._window_queues.get(window_id)
+        if not queue:
+            self._window_queues.pop(window_id, None)
+            return None
+        if priority_only:
+            message = _pop_first_input_priority_background_message(queue)
+            if message is None:
+                return None
+        else:
+            message = queue.popleft()
+        self._queued_count -= 1
+        if queue and requeue:
+            self._windows.append(window_id)
+        elif not queue:
+            self._window_queues.pop(window_id, None)
+        self._condition.notify_all()
+        return message
 
     def task_done(self) -> None:
         self._unfinished_count -= 1
@@ -132,6 +177,16 @@ class _WindowFairMessageQueue:
 
     async def join(self) -> None:
         await self._join_event.wait()
+
+
+def _pop_first_input_priority_background_message(
+    queue: deque[AgentMessage],
+) -> AgentMessage | None:
+    for index, message in enumerate(queue):
+        if message.payload.get("input_priority") is True:
+            del queue[index]
+            return message
+    return None
 
 
 def _bearer_token(authorization: str | None) -> str | None:
@@ -400,7 +455,7 @@ async def _handle_ai_event_message_with_ack_sender(
     send_ack_message,
     client_id: UUID,
     message: AgentMessage,
-) -> None:
+) -> bool:
     try:
         if message.window_id is None:
             raise ValueError("window_id is required")
@@ -417,8 +472,10 @@ async def _handle_ai_event_message_with_ack_sender(
             reason="ai_event",
         )
         await _send_ai_event_ack_message(send_ack_message, client_id, message, ok=True)
+        return True
     except ValueError as exc:
         await _send_ai_event_ack_message(send_ack_message, client_id, message, ok=False, error=str(exc))
+        return False
 
 
 async def _handle_ai_event_message(
@@ -443,6 +500,39 @@ async def _handle_ai_event_message(
                 "request_id": message.request_id,
             },
         )
+
+
+def _git_worktree_tracking_job_from_ai_event_message(
+    client_id: UUID,
+    message: AgentMessage,
+) -> _GitWorktreeTrackingJob | None:
+    if message.window_id is None:
+        return None
+    markers = extract_worktree_markers_from_agent_payload(message.payload)
+    if not markers and not _agent_payload_can_change_worktree(message.payload):
+        return None
+    return _GitWorktreeTrackingJob(
+        client_id=client_id,
+        window_id=message.window_id,
+        worktree_markers=markers,
+    )
+
+
+def _agent_payload_can_change_worktree(payload: Any) -> bool:
+    stack: list[tuple[Any, int]] = [(payload, 0)]
+    visited = 0
+    while stack and visited < 128:
+        value, depth = stack.pop()
+        visited += 1
+        if isinstance(value, dict):
+            payload_type = value.get("type")
+            if payload_type == "function_call_output":
+                return True
+            if depth < 6:
+                stack.extend((item, depth + 1) for item in value.values())
+        elif isinstance(value, list | tuple) and depth < 6:
+            stack.extend((item, depth + 1) for item in value)
+    return False
 
 
 async def _handle_agent_work_presence_message(
@@ -496,10 +586,26 @@ def _extract_terminal_output_bytes(
         clean_data, worktrees = extract_worktree_markers(clean_data)
     else:
         clean_data, commands, worktrees = marker_extractors.setdefault(
-            message.window_id,
+            _marker_extractor_key(message),
             TerminalStreamMarkerExtractor(),
         ).feed(data)
     return clean_data, tuple(commands), tuple(worktrees)
+
+
+def _marker_extractor_key(message: AgentMessage) -> UUID:
+    if message.window_id is None:
+        raise ValueError("window_id is required")
+    return _message_view_id(message) or message.window_id
+
+
+def _message_view_id(message: AgentMessage) -> UUID | None:
+    value = message.payload.get("view_id")
+    if value is None:
+        return None
+    try:
+        return UUID(str(value))
+    except ValueError:
+        return None
 
 
 async def _window_belongs_to_client(client_id: UUID, window_id: UUID) -> bool:
@@ -536,72 +642,50 @@ async def _display_terminal_output_message(
         return None
 
     clean_data, commands, worktree_markers = extracted
+    job = None
+    if message.payload.get("is_snapshot") is not True and (
+        clean_data or commands or worktree_markers
+    ):
+        job = _TerminalOutputRecordingJob(
+            client_id=client_id,
+            window_id=message.window_id,
+            clean_data=clean_data,
+            commands=commands,
+            worktree_markers=worktree_markers,
+        )
     if clean_data:
-        await _terminal_broker(websocket).publish_output(client_id, message.window_id, clean_data)
-
-    if message.payload.get("is_snapshot") is True:
-        return None
-    if not clean_data and not commands and not worktree_markers:
-        return None
-    return _TerminalOutputRecordingJob(
-        client_id=client_id,
-        window_id=message.window_id,
-        clean_data=clean_data,
-        commands=commands,
-        worktree_markers=worktree_markers,
-    )
+        try:
+            await _terminal_broker(websocket).publish_output(
+                client_id,
+                _message_view_id(message) or message.window_id,
+                clean_data,
+            )
+        except Exception:
+            logger.exception("terminal output publish failed")
+    return job
 
 
-async def _record_terminal_output_job(websocket: WebSocket, job: _TerminalOutputRecordingJob) -> None:
-    registry = _connection_registry(websocket)
+async def _record_terminal_output_job(
+    websocket: WebSocket,
+    job: _TerminalOutputRecordingJob,
+) -> _GitWorktreeTrackingJob | None:
     async with SessionLocal() as session:
         window = await get_window_for_client(session, job.client_id, job.window_id)
         if window is None:
-            return
+            return None
         command_events = await record_terminal_command_markers(
             session,
             job.client_id,
             job.window_id,
             list(job.commands),
         )
-        git_invalidated = False
-        for marker in job.worktree_markers:
-            if str(marker.get("window_id")) != str(job.window_id):
-                continue
-            await process_worktree_registration(
-                session,
-                client_id=job.client_id,
-                window_id=job.window_id,
-                marker=marker,
-                registry=registry,
-            )
-            git_invalidated = True
-        if job.commands:
-            await process_terminal_commands_for_git(
-                session,
-                client_id=job.client_id,
-                window_id=job.window_id,
-                commands=list(job.commands),
-                registry=registry,
-            )
-            git_invalidated = True
-        if git_invalidated:
-            await session.commit()
         if command_events:
             with contextlib.suppress(Exception):
                 await _ui_event_hub(websocket).publish_invalidation(
-                    ["agent_record", "window", "tree", "search"],
+                    ["agent_record", "command_history", "window", "tree", "search"],
                     client_id=job.client_id,
                     window_id=job.window_id,
                     reason="terminal_command",
-                )
-        if git_invalidated:
-            with contextlib.suppress(Exception):
-                await _ui_event_hub(websocket).publish_invalidation(
-                    ["window", "tree"],
-                    client_id=job.client_id,
-                    window_id=job.window_id,
-                    reason="git_worktree",
                 )
         output_event = None
         if job.clean_data:
@@ -622,6 +706,14 @@ async def _record_terminal_output_job(websocket: WebSocket, job: _TerminalOutput
                     reason="terminal_output",
                     delay_seconds=1.0,
                 )
+    if job.worktree_markers or commands_need_git_worktree_tracking(list(job.commands)):
+        return _GitWorktreeTrackingJob(
+            client_id=job.client_id,
+            window_id=job.window_id,
+            commands=job.commands,
+            worktree_markers=job.worktree_markers,
+        )
+    return None
 
 
 async def _handle_terminal_output_message(
@@ -648,14 +740,28 @@ async def _handle_terminal_selection_message(
 ) -> None:
     if message.window_id is None:
         return
+    view_id = _message_view_id(message)
 
     async with SessionLocal() as session:
         window = await get_window_for_client(session, client_id, message.window_id)
         if window is None:
             return
 
+    selection_message = {
+        "type": "terminal_selection",
+        "client_id": str(client_id),
+        "window_id": str(message.window_id),
+    }
+    if view_id is not None:
+        selection_message["view_id"] = str(view_id)
+        await _terminal_broker(websocket).publish_status(
+            client_id,
+            view_id,
+            json.dumps(selection_message, separators=(",", ":")),
+        )
+        return
+
     await _terminal_selection_hub(websocket).publish(client_id, message.window_id)
-    await _ui_event_hub(websocket).publish_terminal_selection(client_id, message.window_id)
 
 
 async def _handle_terminal_error_message(
@@ -691,6 +797,20 @@ async def _enqueue_terminal_output_recording_job(
                 "elapsed_seconds": round(elapsed, 3),
             },
         )
+    queue_size = queue.qsize()
+    if (
+        LOW_PRIORITY_BACKGROUND_QUEUE_WARN_SIZE > 0
+        and queue_size >= LOW_PRIORITY_BACKGROUND_QUEUE_WARN_SIZE
+        and queue_size % LOW_PRIORITY_BACKGROUND_QUEUE_WARN_SIZE == 0
+    ):
+        logger.warning(
+            "client-agent terminal output recording queue backlog is high",
+            extra={
+                "client_id": str(client_id),
+                "window_id": str(job.window_id),
+                "queue_size": queue_size,
+            },
+        )
 
 
 async def _enqueue_background_message(
@@ -713,6 +833,22 @@ async def _enqueue_background_message(
                 "window_id": str(message.window_id) if message.window_id else None,
                 "queue_size": queue.qsize(),
                 "elapsed_seconds": round(elapsed, 3),
+            },
+        )
+    queue_size = queue.qsize()
+    if (
+        LOW_PRIORITY_BACKGROUND_QUEUE_WARN_SIZE > 0
+        and queue_size >= LOW_PRIORITY_BACKGROUND_QUEUE_WARN_SIZE
+        and queue_size % LOW_PRIORITY_BACKGROUND_QUEUE_WARN_SIZE == 0
+    ):
+        logger.warning(
+            "client-agent background queue backlog is high",
+            extra={
+                "client_id": str(client_id),
+                "queue_name": queue_name,
+                "message_type": message.type,
+                "window_id": str(message.window_id) if message.window_id else None,
+                "queue_size": queue_size,
             },
         )
 
@@ -768,6 +904,30 @@ async def _terminal_output_recording_worker(
             queue.task_done()
 
 
+async def _git_worktree_tracking_worker(
+    *,
+    client_id: UUID,
+    queue: asyncio.Queue[_GitWorktreeTrackingJob],
+    handler,
+) -> None:
+    while True:
+        job = await queue.get()
+        try:
+            await handler(job)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "client-agent git worktree tracking handler failed",
+                extra={
+                    "client_id": str(client_id),
+                    "window_id": str(job.window_id),
+                },
+            )
+        finally:
+            queue.task_done()
+
+
 async def _wait_for_background_queues(
     *,
     client_id: UUID,
@@ -789,11 +949,14 @@ async def client_agent_bulk_websocket(websocket: WebSocket) -> None:
     known_windows: set[UUID] = set()
     send_lock = asyncio.Lock()
     ai_event_queue: asyncio.Queue[AgentMessage] = asyncio.Queue(
-        maxsize=BACKGROUND_MESSAGE_QUEUE_MAX_SIZE
+        maxsize=LOW_PRIORITY_BACKGROUND_QUEUE_MAX_SIZE
     )
-    terminal_output_queue = _WindowFairMessageQueue(maxsize=BACKGROUND_MESSAGE_QUEUE_MAX_SIZE)
+    terminal_output_queue = _WindowFairMessageQueue(maxsize=TERMINAL_OUTPUT_QUEUE_MAX_SIZE)
     terminal_output_recording_queue: asyncio.Queue[_TerminalOutputRecordingJob] = asyncio.Queue(
-        maxsize=BACKGROUND_MESSAGE_QUEUE_MAX_SIZE
+        maxsize=LOW_PRIORITY_BACKGROUND_QUEUE_MAX_SIZE
+    )
+    git_worktree_tracking_queue: asyncio.Queue[_GitWorktreeTrackingJob] = asyncio.Queue(
+        maxsize=LOW_PRIORITY_BACKGROUND_QUEUE_MAX_SIZE
     )
 
     async def send_message(message: AgentMessage) -> None:
@@ -804,7 +967,16 @@ async def client_agent_bulk_websocket(websocket: WebSocket) -> None:
         if message.type == "agent_work_presence":
             await _handle_agent_work_presence_message(websocket, client_id, message)
             return
-        await _handle_ai_event_message_with_ack_sender(websocket, send_message, client_id, message)
+        persisted = await _handle_ai_event_message_with_ack_sender(
+            websocket,
+            send_message,
+            client_id,
+            message,
+        )
+        if persisted:
+            git_tracking_job = _git_worktree_tracking_job_from_ai_event_message(client_id, message)
+            if git_tracking_job is not None:
+                await git_worktree_tracking_queue.put(git_tracking_job)
 
     async def handle_terminal_output(message: AgentMessage) -> None:
         job = await _handle_terminal_output_message(
@@ -822,7 +994,64 @@ async def client_agent_bulk_websocket(websocket: WebSocket) -> None:
             )
 
     async def handle_terminal_output_recording(job: _TerminalOutputRecordingJob) -> None:
-        await _record_terminal_output_job(websocket, job)
+        git_tracking_job = await _record_terminal_output_job(websocket, job)
+        if git_tracking_job is not None:
+            await git_worktree_tracking_queue.put(git_tracking_job)
+
+    async def handle_git_worktree_tracking(job: _GitWorktreeTrackingJob) -> None:
+        registry = _connection_registry(websocket)
+        changed = False
+        async with SessionLocal() as session:
+            window = await session.scalar(
+                select(VirtualWindow)
+                .options(selectinload(VirtualWindow.client))
+                .where(
+                    VirtualWindow.id == job.window_id,
+                    VirtualWindow.client_id == job.client_id,
+                )
+            )
+            if window is None:
+                return
+            for marker in job.worktree_markers:
+                if str(marker.get("window_id")) != str(job.window_id):
+                    continue
+                await process_worktree_registration(
+                    session,
+                    client_id=job.client_id,
+                    window_id=job.window_id,
+                    marker=marker,
+                    registry=registry,
+                    client_runtime=window.client.runtime if window.client is not None else None,
+                )
+                changed = True
+            if job.commands:
+                await process_terminal_commands_for_git(
+                    session,
+                    client_id=job.client_id,
+                    window_id=job.window_id,
+                    commands=list(job.commands),
+                    registry=registry,
+                    client_runtime=window.client.runtime if window.client is not None else None,
+                )
+                changed = True
+            changed = await process_git_worktree_snapshot_refresh(
+                session,
+                client_id=job.client_id,
+                window_id=job.window_id,
+                registry=registry,
+                client_runtime=window.client.runtime if window.client is not None else None,
+                command_sequences=git_worktree_agent_run_sequences(list(job.commands)) or None,
+            ) or changed
+            if changed:
+                await session.commit()
+        if changed:
+            with contextlib.suppress(Exception):
+                await _ui_event_hub(websocket).publish_invalidation(
+                    ["window", "tree", "git_runs"],
+                    client_id=job.client_id,
+                    window_id=job.window_id,
+                    reason="git_worktree",
+                )
 
     background_workers = []
 
@@ -862,6 +1091,13 @@ async def client_agent_bulk_websocket(websocket: WebSocket) -> None:
                     client_id=client_id,
                     queue=terminal_output_recording_queue,
                     handler=handle_terminal_output_recording,
+                )
+            ),
+            asyncio.create_task(
+                _git_worktree_tracking_worker(
+                    client_id=client_id,
+                    queue=git_worktree_tracking_queue,
+                    handler=handle_git_worktree_tracking,
                 )
             ),
         ]
@@ -945,6 +1181,7 @@ async def client_agent_bulk_websocket(websocket: WebSocket) -> None:
                 ("bulk_ai_event", ai_event_queue),
                 ("bulk_terminal_output", terminal_output_queue),
                 ("bulk_terminal_output_recording", terminal_output_recording_queue),
+                ("bulk_git_worktree_tracking", git_worktree_tracking_queue),
             ],
         )
         for worker in background_workers:

@@ -6,6 +6,7 @@ from typing import Any
 from app.agent_tools.common import content_text, fallback_projection, json_text, message_content, stable_hash, string_value
 from app.client_agent.cursor_watcher import read_cursor_store_events as read_cursor_store_events
 from app.agent_tools.types import AgentChatProjection, AgentEventProjection, AgentToolStorage
+from app.agent_tools.user_input import extract_real_user_input
 from app.models import Event, EventSourceType
 from app.services.ingest.normalizers import NormalizedEvent
 
@@ -103,6 +104,10 @@ class CursorCliAdapter:
         role = string_value(event.payload_json.get("role"))
         body = _message_text(event.payload_json)
         if body and role == "user":
+            real_user_input = extract_real_user_input(body, provider=self.provider_id)
+            if real_user_input is None:
+                return AgentEventProjection("context", "Context", body, subtype=event.kind)
+            body = real_user_input
             return AgentEventProjection("user-input", "User input", body, subtype=event.kind)
         if body and role == "assistant":
             return AgentEventProjection("agent", "Agent response", body, subtype=event.kind)
@@ -117,6 +122,9 @@ class CursorCliAdapter:
             return None
         source = str(event.ai_session_id or event.source_id)
         if role == "user":
+            body = extract_real_user_input(body, provider=self.provider_id)
+            if body is None:
+                return None
             return AgentChatProjection("user", body, dedupe_key=f"{source}:user:{body}")
         if role == "assistant":
             return AgentChatProjection("agent", body, dedupe_key=f"{source}:assistant:{body}")

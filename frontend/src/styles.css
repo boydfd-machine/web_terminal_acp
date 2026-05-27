@@ -743,6 +743,417 @@ h2 {
   word-break: break-word;
 }
 
+.window-title-header {
+  min-width: 0;
+  margin-bottom: 12px;
+}
+
+.window-title-display {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.window-title-display h2 {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.window-title-edit-button {
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.window-title-form {
+  display: grid;
+  gap: 8px;
+}
+
+.window-title-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.git-run-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.git-run-card {
+  display: grid;
+  gap: 12px;
+  overflow: hidden;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #0f172a;
+  padding: 12px;
+}
+
+.git-run-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.git-run-card-header strong {
+  min-width: 0;
+  color: #e2e8f0;
+  font-size: 14px;
+}
+
+.git-run-status {
+  flex: 0 0 auto;
+  border: 1px solid #475569;
+  border-radius: 999px;
+  color: #cbd5e1;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.git-run-status.pending {
+  border-color: #f97316;
+  color: #fdba74;
+}
+
+.git-run-meta {
+  grid-template-columns: 112px minmax(0, 1fr);
+}
+
+.git-run-head-range {
+  margin: 0;
+  color: #cbd5e1;
+}
+
+.git-commit-browser {
+  display: grid;
+  gap: 10px;
+}
+
+.git-commit-browser label {
+  display: grid;
+  gap: 4px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.git-commit-browser select {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #020617;
+  color: #e2e8f0;
+  padding: 8px;
+}
+
+.git-file-view-toggle {
+  justify-self: end;
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #020617;
+}
+
+.git-file-view-toggle button {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #94a3b8;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.git-file-view-toggle button.selected {
+  background: #0f766e;
+  color: #f8fafc;
+}
+
+.git-commit-list {
+  display: grid;
+  gap: 10px;
+}
+
+.git-commit-item {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid #1e293b;
+  padding-top: 10px;
+}
+
+.git-commit-item header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.git-commit-item header div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.git-commit-item header strong {
+  color: #e2e8f0;
+  font-size: 13px;
+}
+
+.git-commit-item header code,
+.git-commit-item header time {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.git-file-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.git-file-tree {
+  display: grid;
+  gap: 4px;
+}
+
+.git-file-tree-branch {
+  display: grid;
+  gap: 4px;
+}
+
+.git-file-tree-directory {
+  min-width: 0;
+  border-left: 1px solid #263244;
+  color: #94a3b8;
+  padding: 4px 8px 2px calc(8px + (var(--git-file-tree-depth) * 16px));
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.git-file-tree-directory span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-file-button {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid #263244;
+  border-radius: 6px;
+  background: #111827;
+  color: #cbd5e1;
+  padding: 7px 8px 7px calc(8px + (var(--git-file-tree-depth, 0) * 16px));
+  text-align: left;
+}
+
+.git-file-button:hover {
+  border-color: #3b82f6;
+  background: #0b1220;
+}
+
+.git-file-status {
+  color: #facc15;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.git-file-status.added {
+  color: #86efac;
+}
+
+.git-file-status.deleted {
+  color: #fca5a5;
+}
+
+.git-file-status.renamed {
+  color: #93c5fd;
+}
+
+.git-file-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-file-delta {
+  display: inline-flex;
+  gap: 6px;
+  justify-content: end;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.git-file-additions {
+  color: #86efac;
+}
+
+.git-file-deletions {
+  color: #fca5a5;
+}
+
+.git-diff-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.git-diff-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  border: 0;
+  border-radius: 0;
+  background: rgb(2 6 23 / 78%);
+  padding: 0;
+}
+
+.git-diff-modal-panel {
+  position: relative;
+  z-index: 1;
+  width: min(1120px, 100%);
+  max-height: min(820px, calc(100vh - 48px));
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 10px;
+  overflow: hidden;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #111827;
+  box-shadow: 0 24px 80px rgb(0 0 0 / 55%);
+  padding: 14px;
+}
+
+.git-diff-modal-panel.added {
+  border-color: #166534;
+}
+
+.git-diff-modal-panel.deleted {
+  border-color: #991b1b;
+}
+
+.git-diff-modal-panel header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+
+.git-diff-modal-panel header div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.git-diff-modal-panel header strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #e2e8f0;
+  font-size: 14px;
+}
+
+.git-diff-modal-panel header p {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.git-diff-modal-panel header button {
+  flex: 0 0 auto;
+}
+
+.git-diff-modal-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.git-diff-modal-meta span {
+  border: 1px solid #334155;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.git-diff-patch {
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  border-radius: 6px;
+  background: #020617;
+  color: #cbd5e1;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.git-diff-line {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  min-width: max-content;
+  border-left: 3px solid transparent;
+}
+
+.git-diff-line code {
+  display: block;
+  padding: 1px 10px;
+  color: inherit;
+  white-space: pre;
+}
+
+.git-diff-line-number {
+  border-right: 1px solid #1e293b;
+  color: #64748b;
+  padding: 1px 8px;
+  text-align: right;
+  user-select: none;
+}
+
+.git-diff-line.addition {
+  border-left-color: #22c55e;
+  background: rgb(20 83 45 / 38%);
+  color: #dcfce7;
+}
+
+.git-diff-line.deletion {
+  border-left-color: #ef4444;
+  background: rgb(127 29 29 / 42%);
+  color: #fee2e2;
+}
+
+.git-diff-line.hunk {
+  border-left-color: #38bdf8;
+  background: rgb(12 74 110 / 42%);
+  color: #bae6fd;
+}
+
+.git-diff-line.meta {
+  color: #94a3b8;
+}
+
+.git-diff-line.context {
+  color: #cbd5e1;
+}
+
 .detail-tags {
   display: flex;
   flex-wrap: wrap;
@@ -876,6 +1287,59 @@ h2 {
 .agent-record-pagination button {
   padding: 5px 8px;
   font-size: 12px;
+}
+
+.command-history-viewer {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+  border-top: 1px solid #1f2937;
+  padding-top: 16px;
+}
+
+.command-history-list {
+  display: grid;
+  gap: 10px;
+}
+
+.command-history-item {
+  display: grid;
+  gap: 10px;
+  overflow: hidden;
+  border: 1px solid #334155;
+  border-left: 4px solid #22c55e;
+  border-radius: 8px;
+  background: #0f172a;
+  padding: 10px;
+}
+
+.command-history-item header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.command-history-item header code {
+  min-width: 0;
+  overflow: auto;
+  border-radius: 6px;
+  background: #020617;
+  color: #e2e8f0;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.command-history-item time {
+  flex: 0 0 auto;
+  color: #94a3b8;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.command-history-meta {
+  grid-template-columns: 72px minmax(0, 1fr);
 }
 
 .agent-record-viewer h3,
@@ -1270,27 +1734,28 @@ h2 {
 }
 
 .terminal-stage {
-  flex: 1 1 auto;
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
   width: 100%;
-  height: 100%;
+  height: 0;
   min-height: 0;
+  overflow: hidden;
   background: #020617;
   position: relative;
 }
 
 .terminal-stage-desktop,
 .terminal-stage-phone {
-  display: flex;
   min-height: 0;
-  overflow: hidden;
 }
 
 .terminal-stage-desktop {
-  flex-direction: column;
   align-items: stretch;
 }
 
 .terminal-stage-phone {
+  align-items: center;
   justify-content: center;
 }
 
@@ -1310,9 +1775,20 @@ h2 {
 }
 
 .terminal-pane {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   padding: 8px;
+}
+
+.terminal-xterm-host {
+  flex: 1 1 0;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .terminal-stage-with-virtual-keys .terminal-pane {
@@ -1325,14 +1801,15 @@ h2 {
 }
 
 .terminal-pane-desktop {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   width: 100%;
-  height: 100%;
+  min-height: 0;
 }
 
 .terminal-pane-phone {
+  flex: 1 1 0;
   width: min(430px, 100%);
-  height: 100%;
+  min-height: 0;
 }
 
 .terminal-pane-fixed {
@@ -1376,6 +1853,63 @@ h2 {
   box-shadow: 0 8px 24px rgb(2 6 23 / 45%);
 }
 
+.terminal-stage-quick-input-open .terminal-clipboard-copy {
+  display: none;
+}
+
+.terminal-quick-input-panel {
+  position: absolute;
+  left: 50%;
+  bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  z-index: 18;
+  width: min(760px, calc(100% - 24px));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+  transform: translateX(-50%);
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: rgb(15 23 42 / 96%);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 55%);
+  padding: 8px;
+  backdrop-filter: blur(10px);
+}
+
+.terminal-quick-input-panel textarea {
+  min-height: 40px;
+  max-height: min(42vh, 340px);
+  overflow-y: auto;
+  resize: none;
+  border-color: #475569;
+  background: #020617;
+  padding: 10px 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.terminal-quick-input-panel textarea:focus {
+  border-color: #38bdf8;
+  outline: none;
+  box-shadow: 0 0 0 1px rgb(56 189 248 / 45%);
+}
+
+.terminal-quick-input-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.terminal-quick-input-actions button {
+  min-height: 40px;
+  white-space: nowrap;
+}
+
+.terminal-quick-input-actions button[type="submit"] {
+  border-color: #38bdf8;
+  background: #075985;
+}
+
 .terminal-connection-status {
   position: absolute;
   z-index: 11;
@@ -1412,9 +1946,27 @@ h2 {
   color: #64748b;
 }
 
-.xterm {
+.terminal-xterm-host .xterm,
+.terminal-pane .xterm {
   width: 100%;
   height: 100%;
+}
+
+.terminal-pane .xterm-viewport {
+  width: 100% !important;
+}
+
+html.electron-app,
+html.electron-app body,
+html.electron-app #root {
+  height: 100%;
+}
+
+html.electron-app .app-shell,
+html.electron-app .terminal-immersive,
+html.electron-app .terminal-immersive .workspace {
+  height: 100%;
+  min-height: 100%;
 }
 
 .terminal-mode-toggle {
@@ -1675,6 +2227,96 @@ h2 {
   font-size: 12px;
 }
 
+.project-terminal-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  display: grid;
+  align-items: start;
+  justify-items: center;
+  background: rgb(2 6 23 / 72%);
+  padding: 9vh 16px 16px;
+}
+
+.project-terminal-picker {
+  width: min(680px, 100%);
+  max-height: min(72vh, 680px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #0f172a;
+  box-shadow: 0 24px 80px rgb(0 0 0 / 45%);
+  padding: 14px;
+}
+
+.project-terminal-picker-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.project-terminal-picker-header h2 {
+  margin-bottom: 4px;
+  font-size: 18px;
+}
+
+.project-terminal-picker-header p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.project-terminal-picker-empty {
+  margin: 16px 0;
+  color: #94a3b8;
+  text-align: center;
+}
+
+.project-terminal-picker-results {
+  min-height: 0;
+  display: grid;
+  gap: 6px;
+  overflow: auto;
+  padding: 0 2px 0 0;
+  list-style: none;
+  margin: 0;
+}
+
+.project-terminal-picker-option {
+  width: 100%;
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  background: #111827;
+}
+
+.project-terminal-picker-option:hover:not(:disabled),
+.project-terminal-picker-option.active {
+  border-color: #38bdf8;
+  background: #082f49;
+}
+
+.project-terminal-picker-label,
+.project-terminal-picker-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-terminal-picker-label {
+  color: #e2e8f0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.project-terminal-picker-path {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
 .terminal-switcher-empty {
   margin: 16px 0;
   color: #94a3b8;
@@ -1761,6 +2403,27 @@ h2 {
 }
 
 .switcher-summarize-button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.switcher-create-terminal-button {
+  flex: 0 0 auto;
+  border: 1px solid #334155;
+  background: #0f172a;
+  color: #cbd5e1;
+  padding: 4px 10px;
+  font-size: 14px;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.switcher-create-terminal-button:hover:not(:disabled) {
+  border-color: #38bdf8;
+  color: #e2e8f0;
+}
+
+.switcher-create-terminal-button:disabled {
   opacity: 0.6;
   cursor: wait;
 }
@@ -2077,7 +2740,27 @@ h2 {
 
   .terminal-pane-phone {
     width: 100%;
-    height: 100%;
+    flex: 1 1 0;
+    min-height: 0;
+  }
+
+  .terminal-quick-input-panel {
+    bottom: max(8px, env(safe-area-inset-bottom, 0px));
+    width: calc(100% - 16px);
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+    padding: 7px;
+  }
+
+  .terminal-quick-input-panel textarea {
+    min-height: 42px;
+    max-height: min(48dvh, 300px);
+    padding: 9px 10px;
+    font-size: 16px;
+  }
+
+  .terminal-quick-input-actions {
+    justify-content: flex-end;
   }
 
   .detail-panel {

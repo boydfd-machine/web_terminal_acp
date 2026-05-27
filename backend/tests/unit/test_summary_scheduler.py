@@ -9,8 +9,12 @@ from app.config import Settings
 from app.model_base import Base
 from app.models import Event, EventSourceType, SummaryJob, SummaryJobStatus, VirtualWindow, WindowStatus
 from app.repositories.summary_jobs import claim_next_summary_job
-from app.services.summary_scheduler import schedule_summary_after_terminal_input
-from app.services.terminal_output_recorder import record_terminal_output_chunk
+from app.services.summary_scheduler import (
+    AGENT_IDLE_REASON,
+    schedule_summary_after_agent_activity,
+    schedule_summary_after_terminal_input,
+)
+from app.services.terminal_output_recorder import record_terminal_input_command
 
 
 @pytest.fixture
@@ -54,11 +58,56 @@ async def add_input_event(db_session, window, captured_at, sequence):
     return event
 
 
+async def add_shell_input(db_session, window, captured_at, sequence):
+    return await add_input_event(db_session, window, captured_at, sequence)
+
+
+async def add_agent_event(db_session, window, created_at, *, fingerprint: str, kind: str = "assistant_message"):
+    event = Event(
+        client_id=window.client_id,
+        source_type=EventSourceType.agent_tool_record,
+        source_id="agent-session-1",
+        kind=kind,
+        virtual_window_id=window.id,
+        payload_json={
+            "provider": "cursor_cli",
+            "role": "user" if kind == "user_message" else "assistant",
+            "content": "please summarize this work" if kind == "user_message" else "working",
+        },
+        fingerprint=fingerprint,
+        created_at=created_at,
+    )
+    db_session.add(event)
+    await db_session.flush()
+    return event
+
+
+async def add_agent_command_input(db_session, window, captured_at, sequence):
+    event = Event(
+        client_id=window.client_id,
+        source_type=EventSourceType.terminal,
+        source_id=str(window.id),
+        kind="terminal_input_command",
+        virtual_window_id=window.id,
+        payload_json={
+            "command": "codex",
+            "shell": "bash",
+            "captured_at": captured_at.isoformat(),
+            "sequence": sequence,
+        },
+        fingerprint=f"terminal_input_command:{window.id}:agent-{sequence}",
+        created_at=captured_at,
+    )
+    db_session.add(event)
+    await db_session.flush()
+    return event
+
+
 @pytest.mark.asyncio
 async def test_settings_include_terminal_summary_defaults(monkeypatch):
     settings = Settings(_env_file=None)
 
-    assert settings.terminal_summary_idle_seconds == 120
+    assert settings.terminal_summary_idle_seconds == 20
     assert settings.terminal_summary_initial_max_wait_seconds == 120
     assert settings.terminal_summary_repeat_seconds == 600
 
@@ -69,32 +118,40 @@ async def test_first_input_schedules_after_idle_window(db_session):
     first_input_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
     await add_input_event(db_session, window, first_input_at, 1)
 
-    job = await schedule_summary_after_terminal_input(
-        db_session,
-        window,
-        now=first_input_at + timedelta(seconds=1),
-    )
+    job = await schedule_summary_after_terminal_input(db_session, window)
 
     assert job is not None
     assert job.status == SummaryJobStatus.pending
-    assert job.run_after == first_input_at + timedelta(minutes=2)
+    assert job.run_after == first_input_at + timedelta(seconds=20)
     assert job.trigger_reason == "input_idle"
     assert job.input_generation == 1
+
+
+@pytest.mark.asyncio
+async def test_sustained_input_reschedules_to_latest_input_plus_idle(db_session):
+    window = await create_window(db_session)
+    first_input_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+    last_input_at = first_input_at + timedelta(seconds=10)
+    await add_input_event(db_session, window, first_input_at, 1)
+    await add_input_event(db_session, window, last_input_at, 2)
+
+    job = await schedule_summary_after_terminal_input(db_session, window)
+
+    assert job is not None
+    assert job.run_after == last_input_at + timedelta(seconds=20)
+    assert job.trigger_reason == "input_idle"
+    assert job.input_generation == 2
 
 
 @pytest.mark.asyncio
 async def test_sustained_input_uses_initial_max_wait(db_session):
     window = await create_window(db_session)
     first_input_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
-    last_input_at = first_input_at + timedelta(seconds=50)
+    last_input_at = first_input_at + timedelta(seconds=110)
     await add_input_event(db_session, window, first_input_at, 1)
     await add_input_event(db_session, window, last_input_at, 2)
 
-    job = await schedule_summary_after_terminal_input(
-        db_session,
-        window,
-        now=last_input_at,
-    )
+    job = await schedule_summary_after_terminal_input(db_session, window)
 
     assert job is not None
     assert job.run_after == first_input_at + timedelta(minutes=2)
@@ -117,15 +174,78 @@ async def test_repeat_after_succeeded_summary_uses_ten_minute_limit(db_session):
     )
     await add_input_event(db_session, window, last_input_at, 1)
 
-    job = await schedule_summary_after_terminal_input(
-        db_session,
-        window,
-        now=last_input_at,
-    )
+    job = await schedule_summary_after_terminal_input(db_session, window)
 
     assert job is not None
     assert job.run_after == last_summary_at + timedelta(seconds=600)
     assert job.trigger_reason == "input_repeat"
+
+
+@pytest.mark.asyncio
+async def test_plain_terminal_input_schedules_summary_job(db_session):
+    window = await create_window(db_session)
+    captured_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+    await db_session.commit()
+
+    await record_terminal_input_command(
+        db_session,
+        client_id=window.client_id,
+        window_id=window.id,
+        raw_command="echo hello",
+        shell="bash",
+        cwd="/workspace/project",
+        captured_at=captured_at,
+        sequence=1,
+    )
+
+    jobs = (await db_session.execute(select(SummaryJob))).scalars().all()
+    assert len(jobs) == 1
+    run_after = jobs[0].run_after
+    if run_after.tzinfo is None:
+        run_after = run_after.replace(tzinfo=timezone.utc)
+    assert run_after == captured_at + timedelta(seconds=20)
+    assert jobs[0].trigger_reason == "input_idle"
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_record_activity_does_not_extend_input_idle_window(db_session):
+    window = await create_window(db_session)
+    first_input_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+    agent_activity_at = first_input_at + timedelta(seconds=5)
+    await add_input_event(db_session, window, first_input_at, 1)
+    await add_agent_event(db_session, window, agent_activity_at, fingerprint="cursor-agent-activity")
+
+    job = await schedule_summary_after_terminal_input(db_session, window)
+
+    assert job is not None
+    assert job.run_after == first_input_at + timedelta(seconds=20)
+    assert job.trigger_reason == "input_idle"
+
+
+@pytest.mark.asyncio
+async def test_terminal_output_does_not_extend_input_idle_window(db_session):
+    window = await create_window(db_session)
+    first_input_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+    output_at = first_input_at + timedelta(seconds=5)
+    await add_input_event(db_session, window, first_input_at, 1)
+    db_session.add(
+        Event(
+            client_id=window.client_id,
+            source_type=EventSourceType.terminal,
+            source_id=str(window.id),
+            kind="terminal_output",
+            virtual_window_id=window.id,
+            payload_json={"text": "command output\n"},
+            fingerprint=f"terminal_output:{window.id}:1",
+            created_at=output_at,
+        )
+    )
+    await db_session.flush()
+
+    job = await schedule_summary_after_terminal_input(db_session, window)
+
+    assert job is not None
+    assert job.run_after == first_input_at + timedelta(seconds=20)
 
 
 @pytest.mark.asyncio
@@ -142,92 +262,114 @@ async def test_existing_pending_job_updates_run_after_reason_and_generation(db_s
     db_session.add(pending)
     await add_input_event(db_session, window, first_input_at, 1)
 
-    job = await schedule_summary_after_terminal_input(db_session, window, now=first_input_at)
+    job = await schedule_summary_after_terminal_input(db_session, window)
 
     assert job.id == pending.id
-    assert job.run_after == first_input_at + timedelta(minutes=2)
+    assert job.run_after == first_input_at + timedelta(seconds=20)
     assert job.trigger_reason == "input_idle"
     assert job.input_generation == 1
 
 
 @pytest.mark.asyncio
-async def test_no_input_command_does_not_schedule(db_session):
+async def test_first_agent_activity_after_idle_schedules_summary(db_session):
     window = await create_window(db_session)
+    agent_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+    await add_agent_event(db_session, window, agent_at, fingerprint="agent-1")
 
-    job = await schedule_summary_after_terminal_input(
-        db_session,
-        window,
-        now=datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc),
-    )
-
-    summary_jobs = (await db_session.execute(select(SummaryJob))).scalars().all()
-    assert job is None
-    assert summary_jobs == []
-
-
-@pytest.mark.asyncio
-async def test_terminal_output_only_does_not_create_summary_job(db_session):
-    window = await create_window(db_session)
-    await db_session.commit()
-
-    await record_terminal_output_chunk(db_session, window.client_id, window.id, b"output only\n")
-
-    summary_jobs = (await db_session.execute(select(SummaryJob))).scalars().all()
-    assert summary_jobs == []
-
-
-@pytest.mark.asyncio
-async def test_agent_command_defers_terminal_input_summary(db_session):
-    window = await create_window(db_session)
-    first_input_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
-    event = Event(
-        client_id=window.client_id,
-        source_type=EventSourceType.terminal,
-        source_id=str(window.id),
-        kind="terminal_input_command",
-        virtual_window_id=window.id,
-        payload_json={
-            "command": "agent -p 'fix tests'",
-            "shell": "bash",
-            "captured_at": first_input_at.isoformat(),
-            "sequence": 1,
-        },
-        fingerprint=f"terminal_input_command:{window.id}:agent",
-        created_at=first_input_at,
-    )
-    db_session.add(event)
-    await db_session.flush()
-
-    job = await schedule_summary_after_terminal_input(db_session, window, now=first_input_at)
-
-    assert job is None
-
-
-@pytest.mark.asyncio
-async def test_agent_tool_record_activity_extends_idle_window(db_session):
-    window = await create_window(db_session)
-    first_input_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
-    agent_activity_at = first_input_at + timedelta(seconds=30)
-    await add_input_event(db_session, window, first_input_at, 1)
-    db_session.add(
-        Event(
-            client_id=window.client_id,
-            source_type=EventSourceType.agent_tool_record,
-            source_id="cursor-session-1",
-            kind="assistant_message",
-            virtual_window_id=window.id,
-            payload_json={"provider": "cursor_cli", "role": "assistant", "content": "working"},
-            fingerprint="cursor-agent-activity",
-            created_at=agent_activity_at,
-        )
-    )
-    await db_session.flush()
-
-    job = await schedule_summary_after_terminal_input(db_session, window, now=agent_activity_at)
+    job = await schedule_summary_after_agent_activity(db_session, window)
 
     assert job is not None
-    assert job.run_after == first_input_at + timedelta(minutes=2)
-    assert job.trigger_reason == "input_initial_max_wait"
+    assert job.status == SummaryJobStatus.pending
+    assert job.run_after == agent_at + timedelta(seconds=20)
+    assert job.trigger_reason == AGENT_IDLE_REASON
+    assert job.input_generation == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_activity_without_prior_idle_does_not_schedule(db_session):
+    window = await create_window(db_session)
+    shell_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+    agent_at = shell_at + timedelta(minutes=2)
+    await add_shell_input(db_session, window, shell_at, 1)
+    await add_agent_event(db_session, window, agent_at, fingerprint="agent-1")
+
+    job = await schedule_summary_after_agent_activity(db_session, window)
+
+    assert job is None
+
+
+@pytest.mark.asyncio
+async def test_agent_user_message_after_agent_command_schedules_summary_after_idle(db_session):
+    window = await create_window(db_session)
+    command_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+    user_message_at = command_at + timedelta(seconds=2)
+    await add_agent_command_input(db_session, window, command_at, 1)
+    await add_agent_event(db_session, window, user_message_at, fingerprint="agent-user-1", kind="user_message")
+
+    job = await schedule_summary_after_agent_activity(db_session, window)
+
+    assert job is not None
+    assert job.status == SummaryJobStatus.pending
+    assert job.run_after == user_message_at + timedelta(seconds=20)
+    assert job.trigger_reason == AGENT_IDLE_REASON
+
+
+@pytest.mark.asyncio
+async def test_agent_user_message_after_recent_terminal_activity_schedules_summary_after_idle(db_session):
+    window = await create_window(db_session)
+    shell_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+    user_message_at = shell_at + timedelta(minutes=2)
+    await add_shell_input(db_session, window, shell_at, 1)
+    await add_agent_event(db_session, window, user_message_at, fingerprint="agent-user-1", kind="user_message")
+
+    job = await schedule_summary_after_agent_activity(db_session, window)
+
+    assert job is not None
+    assert job.run_after == user_message_at + timedelta(seconds=20)
+    assert job.trigger_reason == AGENT_IDLE_REASON
+
+
+@pytest.mark.asyncio
+async def test_repeat_agent_events_in_same_burst_do_not_reschedule_after_summary(db_session):
+    window = await create_window(db_session)
+    first_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+    second_at = first_at + timedelta(seconds=30)
+    db_session.add(
+        SummaryJob(
+            virtual_window_id=window.id,
+            status=SummaryJobStatus.succeeded,
+            updated_at=first_at + timedelta(minutes=3),
+            created_at=first_at + timedelta(minutes=3),
+        )
+    )
+    await add_agent_event(db_session, window, first_at, fingerprint="agent-1")
+    await add_agent_event(db_session, window, second_at, fingerprint="agent-2")
+
+    job = await schedule_summary_after_agent_activity(db_session, window)
+
+    assert job is None
+
+
+@pytest.mark.asyncio
+async def test_new_agent_burst_after_idle_schedules_again(db_session):
+    window = await create_window(db_session)
+    first_burst = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+    second_burst = first_burst + timedelta(minutes=10)
+    db_session.add(
+        SummaryJob(
+            virtual_window_id=window.id,
+            status=SummaryJobStatus.succeeded,
+            updated_at=first_burst + timedelta(minutes=3),
+            created_at=first_burst + timedelta(minutes=3),
+        )
+    )
+    await add_agent_event(db_session, window, first_burst, fingerprint="agent-1")
+    await add_agent_event(db_session, window, second_burst, fingerprint="agent-2")
+
+    job = await schedule_summary_after_agent_activity(db_session, window)
+
+    assert job is not None
+    assert job.run_after == second_burst + timedelta(seconds=20)
 
 
 @pytest.mark.asyncio
@@ -271,10 +413,10 @@ async def test_running_job_is_not_preempted_and_new_pending_job_can_follow(db_se
     db_session.add(running)
     await add_input_event(db_session, window, now, 2)
 
-    job = await schedule_summary_after_terminal_input(db_session, window, now=now)
+    job = await schedule_summary_after_terminal_input(db_session, window)
 
     assert job is not None
     assert job.id != running.id
     assert job.status == SummaryJobStatus.pending
-    assert job.run_after == now + timedelta(minutes=2)
+    assert job.run_after == now + timedelta(seconds=20)
     assert running.status == SummaryJobStatus.running

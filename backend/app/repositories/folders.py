@@ -4,12 +4,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
 
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import load_only
+from sqlalchemy.orm import aliased, load_only
 
-from app.models import Folder, VirtualWindow
+from app.models import Folder, FolderSplitJob, VirtualWindow
 
 
 @dataclass
@@ -174,6 +175,59 @@ async def count_direct_windows_in_folder(
     ) or 0
 
 
+async def prune_empty_folder_branch(
+    session: AsyncSession,
+    client_id: UUID,
+    folder_id: UUID,
+) -> int:
+    deleted_count = 0
+    current_id: UUID | None = folder_id
+
+    while current_id is not None:
+        folder = await session.get(Folder, current_id)
+        if folder is None or folder.client_id != client_id:
+            break
+
+        parent_id = folder.parent_id
+        if not await _delete_folder_if_empty(session, client_id, folder.id):
+            break
+
+        deleted_count += 1
+        current_id = parent_id
+
+    return deleted_count
+
+
+async def _delete_folder_if_empty(
+    session: AsyncSession,
+    client_id: UUID,
+    folder_id: UUID,
+) -> bool:
+    child_folder = aliased(Folder)
+    has_child_folder = select(child_folder.id).where(child_folder.parent_id == folder_id).exists()
+    has_direct_window = (
+        select(VirtualWindow.id)
+        .where(
+            VirtualWindow.client_id == client_id,
+            VirtualWindow.folder_id == folder_id,
+        )
+        .exists()
+    )
+    result = await session.execute(
+        sa_delete(Folder).where(
+            Folder.id == folder_id,
+            Folder.client_id == client_id,
+            ~has_child_folder,
+            ~has_direct_window,
+        )
+    )
+    if result.rowcount != 1:
+        return False
+
+    await session.execute(sa_delete(FolderSplitJob).where(FolderSplitJob.folder_id == folder_id))
+    return True
+
+
 async def folder_path_would_create_child_under_occupied_leaf(
     session: AsyncSession,
     client_id: UUID,
@@ -256,71 +310,56 @@ async def _direct_window_counts_by_folder(session: AsyncSession, client_id: UUID
 
 
 async def build_tree(session: AsyncSession, client_id: UUID) -> list[TreeFolder]:
-    folders = list(
-        await session.scalars(
-            select(Folder)
-            .options(
-                load_only(
-                    Folder.id,
-                    Folder.parent_id,
-                    Folder.name,
-                    Folder.path,
-                    Folder.sort_order,
-                )
-            )
+    folder_rows = list(
+        await session.execute(
+            select(Folder.id, Folder.parent_id, Folder.name, Folder.path)
             .where(Folder.client_id == client_id)
             .order_by(Folder.sort_order, Folder.name, Folder.id)
         )
     )
     nodes = {
-        folder.id: TreeFolder(
-            id=folder.id,
-            name=folder.name,
-            path=folder.path,
+        folder_id: TreeFolder(
+            id=folder_id,
+            name=name,
+            path=path,
         )
-        for folder in folders
+        for folder_id, _parent_id, name, path in folder_rows
     }
 
     roots: list[TreeFolder] = []
-    for folder in folders:
-        node = nodes[folder.id]
-        if folder.parent_id is not None and folder.parent_id in nodes:
-            nodes[folder.parent_id].folders.append(node)
+    for folder_id, parent_id, _name, _path in folder_rows:
+        node = nodes[folder_id]
+        if parent_id is not None and parent_id in nodes:
+            nodes[parent_id].folders.append(node)
         else:
             roots.append(node)
 
-    windows = list(
-        await session.scalars(
-            select(VirtualWindow)
-            .options(
-                load_only(
-                    VirtualWindow.id,
-                    VirtualWindow.folder_id,
-                    VirtualWindow.title,
-                    VirtualWindow.title_tags,
-                    VirtualWindow.status,
-                    VirtualWindow.created_at,
-                )
-            )
-            .where(
-                VirtualWindow.client_id == client_id,
-                VirtualWindow.folder_id.is_not(None),
-            )
-            .order_by(VirtualWindow.created_at, VirtualWindow.title, VirtualWindow.id)
+    window_rows = await session.execute(
+        select(
+            VirtualWindow.id,
+            VirtualWindow.folder_id,
+            VirtualWindow.title,
+            VirtualWindow.status,
+            VirtualWindow.created_at,
+            VirtualWindow.title_tags,
         )
+        .where(
+            VirtualWindow.client_id == client_id,
+            VirtualWindow.folder_id.is_not(None),
+        )
+        .order_by(VirtualWindow.created_at, VirtualWindow.title, VirtualWindow.id)
     )
-    for window in windows:
-        if window.folder_id not in nodes:
+    for window_id, folder_id, title, status, created_at, title_tags in window_rows:
+        if folder_id not in nodes:
             continue
-        nodes[window.folder_id].windows.append(
+        nodes[folder_id].windows.append(
             TreeWindow(
-                id=window.id,
-                title=window.title,
-                status=window.status.value,
-                created_at=window.created_at,
-                title_tags=window.title_tags,
+                id=window_id,
+                title=title,
+                status=status.value,
+                created_at=created_at,
+                title_tags=title_tags,
             )
         )
 
     return roots
-

@@ -3,7 +3,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchProjectSummaries, fetchTerminalRecents, summarizeProject } from "../api";
 import type { SummaryOutputLanguage } from "../userPreferences";
-import { buildTerminalSwitcherTree, type SwitcherNode } from "../terminalGrouping";
+import {
+  buildTerminalSwitcherTree,
+  canCreateWindowAtGroupNode,
+  type SwitcherGroupNode,
+  type SwitcherNode
+} from "../terminalGrouping";
 import type { TerminalGroupingMode } from "../userPreferences";
 import type { ProjectSummary, TerminalRecent, TreeFolder, TreeWindow } from "../types";
 import { GitPendingBadge } from "./GitPendingBadge";
@@ -35,6 +40,9 @@ type TerminalSwitcherProps = {
   hasUnreadNotification?: (windowId: string) => boolean;
   onClose: () => void;
   onSelectWindow: (windowId: string) => void;
+  onCreateTerminalAtGroup?: (node: SwitcherGroupNode) => void;
+  creatingTerminal?: boolean;
+  createTerminalDisabled?: boolean;
 };
 
 function isTerminalSwitcherShortcut(event: KeyboardEvent): boolean {
@@ -113,7 +121,10 @@ function SwitcherTreeNode({
   hasUnreadNotification,
   onSelectEntry,
   onToggleGroup,
-  onSummarizeProject
+  onSummarizeProject,
+  onCreateTerminalAtGroup,
+  creatingTerminal,
+  createTerminalDisabled
 }: {
   node: SwitcherNode;
   activeKey: string | null;
@@ -124,6 +135,9 @@ function SwitcherTreeNode({
   onSelectEntry: (entry: TerminalEntry) => void;
   onToggleGroup: (key: string) => void;
   onSummarizeProject?: (projectPath: string) => void;
+  onCreateTerminalAtGroup?: (node: SwitcherGroupNode) => void;
+  creatingTerminal?: boolean;
+  createTerminalDisabled?: boolean;
 }) {
   if (node.type === "window") {
     const isActive = node.key === activeKey;
@@ -151,8 +165,10 @@ function SwitcherTreeNode({
 
   const isExpanded = expandedKeys.has(node.key);
   const isActive = node.key === activeKey;
-  const showSummarize = node.projectPath !== undefined && onSummarizeProject !== undefined;
+  const showSummarize = node.projectPath !== undefined && !node.topicPath && onSummarizeProject !== undefined;
   const isSummarizing = showSummarize && summarizingProjectPath === node.projectPath;
+  const showCreateTerminal = onCreateTerminalAtGroup !== undefined && canCreateWindowAtGroupNode(node);
+  const createLabel = node.projectPath ?? node.label;
 
   return (
     <li className="switcher-folder-node" role="none">
@@ -164,7 +180,7 @@ function SwitcherTreeNode({
           aria-expanded={isExpanded}
           onClick={() => onToggleGroup(node.key)}
           role="treeitem"
-          title={node.projectPath ?? node.label}
+          title={node.projectPath ?? node.topicPath ?? node.label}
         >
           <span className="disclosure" aria-hidden="true">{isExpanded ? "▾" : "▸"}</span>
           <span>{node.label}</span>
@@ -185,6 +201,21 @@ function SwitcherTreeNode({
             {isSummarizing ? "…" : "总结"}
           </button>
         )}
+        {showCreateTerminal && (
+          <button
+            type="button"
+            className="switcher-create-terminal-button"
+            disabled={creatingTerminal || createTerminalDisabled}
+            aria-label={`在 ${createLabel} 新建终端`}
+            title={`在 ${createLabel} 新建终端`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onCreateTerminalAtGroup(node);
+            }}
+          >
+            +
+          </button>
+        )}
       </div>
       {isExpanded && (
         <ul role="group">
@@ -200,6 +231,9 @@ function SwitcherTreeNode({
               onSelectEntry={onSelectEntry}
               onToggleGroup={onToggleGroup}
               onSummarizeProject={onSummarizeProject}
+              onCreateTerminalAtGroup={onCreateTerminalAtGroup}
+              creatingTerminal={creatingTerminal}
+              createTerminalDisabled={createTerminalDisabled}
             />
           ))}
         </ul>
@@ -218,7 +252,10 @@ export function TerminalSwitcher({
   isOpen,
   hasUnreadNotification,
   onClose,
-  onSelectWindow
+  onSelectWindow,
+  onCreateTerminalAtGroup,
+  creatingTerminal,
+  createTerminalDisabled
 }: TerminalSwitcherProps) {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
@@ -622,6 +659,9 @@ export function TerminalSwitcher({
                     ? (projectPath) => summarizeMutation.mutate(projectPath)
                     : undefined
                 }
+                onCreateTerminalAtGroup={onCreateTerminalAtGroup}
+                creatingTerminal={creatingTerminal}
+                createTerminalDisabled={createTerminalDisabled}
               />
             ))}
           </ul>

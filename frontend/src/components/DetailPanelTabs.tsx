@@ -1,4 +1,4 @@
-export type DetailPanelTab = "overview" | "agent" | "git";
+export type DetailPanelTab = "overview" | "agent" | "history" | "git";
 
 type DetailPanelTabsProps = {
   activeTab: DetailPanelTab;
@@ -26,6 +26,15 @@ export function DetailPanelTabs({ activeTab, showGitTab, onTabChange }: DetailPa
         onClick={() => onTabChange("agent")}
       >
         Agent
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={activeTab === "history"}
+        className={activeTab === "history" ? "selected" : undefined}
+        onClick={() => onTabChange("history")}
+      >
+        History
       </button>
       {showGitTab && (
         <button

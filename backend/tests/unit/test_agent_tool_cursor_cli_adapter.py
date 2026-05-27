@@ -203,6 +203,50 @@ def test_cursor_projects_chat_and_detail() -> None:
     assert detail.body == "hello"
 
 
+def test_cursor_user_info_is_context_not_chat() -> None:
+    row = Event(
+        client_id=uuid4(),
+        source_type=EventSourceType.agent_tool_record,
+        source_id="cursor-agent-1",
+        kind="user_message",
+        payload_json={
+            "provider": "cursor_cli",
+            "role": "user",
+            "content": "<user_info>\nOS Version: linux\n</user_info>",
+        },
+        fingerprint=str(uuid4()),
+    )
+
+    adapter = CursorCliAdapter()
+    chat = adapter.project_chat(row)
+    detail = adapter.project_event(row)
+
+    assert chat is None
+    assert detail.tone == "context"
+    assert detail.label == "Context"
+
+
+def test_cursor_user_query_extracts_real_user_input() -> None:
+    row = Event(
+        client_id=uuid4(),
+        source_type=EventSourceType.agent_tool_record,
+        source_id="cursor-agent-1",
+        kind="user_message",
+        payload_json={
+            "provider": "cursor_cli",
+            "role": "user",
+            "content": "<user_query>\n通知点击后从通知中心移除\n</user_query>",
+        },
+        fingerprint=str(uuid4()),
+    )
+
+    chat = CursorCliAdapter().project_chat(row)
+
+    assert chat is not None
+    assert chat.role == "user"
+    assert chat.body == "通知点击后从通知中心移除"
+
+
 def test_cursor_store_incremental_read_uses_rowid_cursor(tmp_path: Path) -> None:
     store = tmp_path / "store.db"
     write_cursor_store(store)

@@ -47,6 +47,31 @@ class _CollectingBulkWriter:
         self.sent_messages.append(json.loads(encode_agent_message(message)))
 
 
+class _NoopIdleSupervisor:
+    def attach_view(self, view_id: UUID, window_id: UUID) -> None:
+        return None
+
+    def detach_view(self, view_id: UUID) -> None:
+        return None
+
+    def remove_window(self, window_id: UUID) -> None:
+        return None
+
+    def register_window(self, window_id: UUID, project_path: str | None) -> None:
+        return None
+
+    async def resume_window(self, window_id: UUID) -> None:
+        return None
+
+
+class _NoopAgentToolWatcher:
+    def watch_window(self, window_id: UUID, project_path: str | None) -> None:
+        return None
+
+    def remove_window(self, window_id: UUID) -> None:
+        return None
+
+
 def test_load_populates_required_fields_defaults_and_https_websocket_url(tmp_path: Path) -> None:
     config_path = tmp_path / "client-agent.json"
     _write_config(config_path, server_url="https://control.example.com/")
@@ -273,10 +298,10 @@ async def test_run_client_agent_handles_inventory_and_tmux_commands(monkeypatch)
         ) -> None:
             registered_windows.append((registered_window_id, remote_session_id, remote_window_id))
 
-        async def send_input(self, input_window_id: UUID, data: bytes) -> None:
+        async def send_input(self, input_window_id: UUID, data: bytes, *, view_id=None) -> None:
             inputs.append((input_window_id, data))
 
-        async def resize(self, resize_window_id: UUID, *, cols: int, rows: int) -> None:
+        async def resize(self, resize_window_id: UUID, *, cols: int, rows: int, view_id=None) -> None:
             resizes.append((resize_window_id, cols, rows))
 
         async def close(self) -> None:
@@ -585,7 +610,7 @@ async def test_terminal_attach_marks_initial_pty_output_as_snapshot() -> None:
         ) -> None:
             return None
 
-        async def attach_with_selection(self, attached_window_id: UUID, sender, selection_sender=None) -> None:
+        async def attach_with_selection(self, attached_window_id: UUID, sender, selection_sender=None, view_id=None) -> None:
             await sender(b"prompt$ ")
 
     control_writer = _CollectingControlWriter([])
@@ -603,7 +628,11 @@ async def test_terminal_attach_marks_initial_pty_output_as_snapshot() -> None:
         ),
         object(),
         FakeTerminalMultiplexer(),
+        _NoopIdleSupervisor(),
+        _NoopAgentToolWatcher(),
         {},
+        set(),
+        asyncio.Semaphore(1),
         {},
         AgentMessage(
             type="terminal_attach",
@@ -633,7 +662,7 @@ async def test_terminal_attach_keeps_later_pty_output_recordable() -> None:
         ) -> None:
             return None
 
-        async def attach_with_selection(self, attached_window_id: UUID, sender, selection_sender=None) -> None:
+        async def attach_with_selection(self, attached_window_id: UUID, sender, selection_sender=None, view_id=None) -> None:
             await sender(b"prompt$ ")
             await sender(b"real output\n")
 
@@ -652,7 +681,11 @@ async def test_terminal_attach_keeps_later_pty_output_recordable() -> None:
         ),
         object(),
         FakeTerminalMultiplexer(),
+        _NoopIdleSupervisor(),
+        _NoopAgentToolWatcher(),
         {},
+        set(),
+        asyncio.Semaphore(1),
         {},
         AgentMessage(
             type="terminal_attach",
@@ -684,11 +717,11 @@ async def test_silent_attach_snapshot_does_not_mark_later_pty_output_as_snapshot
         ) -> None:
             return None
 
-        async def attach_with_selection(self, attached_window_id: UUID, sender, selection_sender=None) -> None:
+        async def attach_with_selection(self, attached_window_id: UUID, sender, selection_sender=None, view_id=None) -> None:
             nonlocal captured_sender
             captured_sender = sender
 
-        async def capture_output_bytes(self, captured_window_id: UUID) -> bytes:
+        async def capture_output_bytes(self, captured_window_id: UUID, *, view_id=None) -> bytes:
             return b"prompt$ "
 
     control_writer = _CollectingControlWriter([])
@@ -707,8 +740,12 @@ async def test_silent_attach_snapshot_does_not_mark_later_pty_output_as_snapshot
         ),
         object(),
         FakeTerminalMultiplexer(),
-        {},
+        _NoopIdleSupervisor(),
+        _NoopAgentToolWatcher(),
         attach_snapshot_tasks,
+        set(),
+        asyncio.Semaphore(1),
+        {},
         AgentMessage(
             type="terminal_attach",
             client_id=client_id,
@@ -741,13 +778,13 @@ async def test_terminal_detach_cancels_pending_attach_snapshot() -> None:
         ) -> None:
             return None
 
-        async def attach_with_selection(self, attached_window_id: UUID, sender, selection_sender=None) -> None:
+        async def attach_with_selection(self, attached_window_id: UUID, sender, selection_sender=None, view_id=None) -> None:
             return None
 
-        async def detach(self, detached_window_id: UUID) -> None:
+        async def detach(self, detached_window_id: UUID, *, view_id=None) -> None:
             return None
 
-        async def capture_output_bytes(self, captured_window_id: UUID) -> bytes:
+        async def capture_output_bytes(self, captured_window_id: UUID, *, view_id=None) -> bytes:
             return b"prompt$ "
 
     control_writer = _CollectingControlWriter([])
@@ -768,8 +805,12 @@ async def test_terminal_detach_cancels_pending_attach_snapshot() -> None:
         config,
         object(),
         terminal,
-        {},
+        _NoopIdleSupervisor(),
+        _NoopAgentToolWatcher(),
         attach_snapshot_tasks,
+        set(),
+        asyncio.Semaphore(1),
+        {},
         AgentMessage(
             type="terminal_attach",
             client_id=client_id,
@@ -784,8 +825,12 @@ async def test_terminal_detach_cancels_pending_attach_snapshot() -> None:
         config,
         object(),
         terminal,
-        {},
+        _NoopIdleSupervisor(),
+        _NoopAgentToolWatcher(),
         attach_snapshot_tasks,
+        set(),
+        asyncio.Semaphore(1),
+        {},
         AgentMessage(type="terminal_detach", client_id=client_id, window_id=window_id),
     )
 
@@ -810,6 +855,24 @@ async def test_send_terminal_selection_uses_terminal_selection_message() -> None
             "payload": {},
         }
     ]
+
+
+async def test_send_terminal_selection_includes_view_id_when_present() -> None:
+    client_id = UUID("12345678-1234-5678-1234-567812345678")
+    window_id = UUID("87654321-4321-8765-4321-876543218765")
+    view_id = UUID("11111111-2222-3333-4444-555555555555")
+    sent_messages: list[dict[str, object]] = []
+
+    writer = _CollectingControlWriter(sent_messages)
+
+    await client_agent_runner._send_terminal_selection(
+        writer,
+        client_id,
+        window_id,
+        view_id=view_id,
+    )
+
+    assert sent_messages[0]["payload"] == {"view_id": str(view_id)}
 
 
 async def test_send_terminal_attach_result_uses_request_id() -> None:

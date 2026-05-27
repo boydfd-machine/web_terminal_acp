@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 from typing import Any
 
 _GIT_WORKTREE_ADD_RE = re.compile(r"\bgit\s+worktree\s+add\b", re.IGNORECASE)
@@ -10,7 +11,10 @@ def parse_git_worktree_add_path(command: str, cwd: str | None) -> str | None:
     if not _GIT_WORKTREE_ADD_RE.search(command):
         return None
 
-    tokens = command.split()
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
     path_tokens: list[str] = []
     skip_next = False
     for index, token in enumerate(tokens):
@@ -18,8 +22,8 @@ def parse_git_worktree_add_path(command: str, cwd: str | None) -> str | None:
             skip_next = False
             continue
         lower = token.lower()
-        if lower in {"-f", "--force", "-b", "--detach", "-q", "--quiet"}:
-            if lower in {"-b", "--detach"}:
+        if lower in {"-f", "--force", "-b", "-B", "--orphan", "--detach", "-q", "--quiet"}:
+            if lower in {"-b", "-B", "--orphan"}:
                 skip_next = True
             continue
         if lower in {"add", "git", "worktree"}:
@@ -55,6 +59,7 @@ def compute_session_diff(
     end_status = end_snapshot.get("status_porcelain") or ""
     dirty_at_end = bool(end_status.strip())
     status_changed = start_status != end_status
+    commits = _snapshot_commits(end_snapshot)
 
     has_changes = head_moved or dirty_at_end or status_changed
     return {
@@ -67,6 +72,8 @@ def compute_session_diff(
         "end_status_porcelain": end_status,
         "end_diff_stat": end_snapshot.get("diff_stat") or "",
         "end_staged_diff_stat": end_snapshot.get("staged_diff_stat") or "",
+        "commits": commits,
+        "files": _aggregate_commit_files(commits),
     }
 
 
@@ -79,3 +86,51 @@ def pending_commit_from_live_snapshot(snapshot: dict[str, Any]) -> bool:
         return False
     status = snapshot.get("status_porcelain") or ""
     return bool(status.strip())
+
+
+def _snapshot_commits(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    commits = snapshot.get("commits")
+    if not isinstance(commits, list):
+        return []
+    return [commit for commit in commits if isinstance(commit, dict)]
+
+
+def _aggregate_commit_files(commits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    files_by_key: dict[tuple[str, str | None], dict[str, Any]] = {}
+    for commit in commits:
+        commit_sha = commit.get("sha")
+        files = commit.get("files")
+        if not isinstance(commit_sha, str) or not isinstance(files, list):
+            continue
+        for file_change in files:
+            if not isinstance(file_change, dict):
+                continue
+            path = file_change.get("path")
+            old_path = file_change.get("old_path")
+            if not isinstance(path, str) or not path:
+                continue
+            normalized_old_path = old_path if isinstance(old_path, str) and old_path else None
+            key = (path, normalized_old_path)
+            aggregate = files_by_key.setdefault(
+                key,
+                {
+                    "path": path,
+                    "old_path": normalized_old_path,
+                    "status": file_change.get("status") or "modified",
+                    "additions": 0,
+                    "deletions": 0,
+                    "commits": [],
+                },
+            )
+            aggregate["additions"] += _safe_int(file_change.get("additions"))
+            aggregate["deletions"] += _safe_int(file_change.get("deletions"))
+            aggregate["status"] = file_change.get("status") or aggregate["status"]
+            aggregate["commits"].append(commit_sha)
+    return sorted(files_by_key.values(), key=lambda item: str(item.get("path") or ""))
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0

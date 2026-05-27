@@ -6,6 +6,7 @@ import {
   createWindow,
   deleteWindow,
   fetchClients,
+  fetchProjectSummaries,
   fetchTree,
   fetchWindowActivity,
   recordTerminalRecent,
@@ -14,6 +15,7 @@ import {
 import { BootstrapClientForm } from "./components/BootstrapClientForm";
 import { ClientList } from "./components/ClientList";
 import { FolderTree } from "./components/FolderTree";
+import { ProjectTerminalPicker } from "./components/ProjectTerminalPicker";
 import { SearchPanel } from "./components/SearchPanel";
 import { MobileShortcutFab } from "./components/MobileShortcutFab";
 import { NotificationBellButton, NotificationCenter } from "./components/NotificationCenter";
@@ -37,6 +39,11 @@ import {
   type TerminalNotification
 } from "./terminalNotifications";
 import {
+  collectCreatableProjectPaths,
+  createWindowInputForGroupNode,
+  type SwitcherGroupNode
+} from "./terminalGrouping";
+import {
   activityHasWorkingTerminal,
   mergeTreeWithActivity,
   windowActivityMap
@@ -55,6 +62,12 @@ type DeleteWindowVariables = {
   clientId: string;
   windowId: string;
   nextWindowId: string | null;
+};
+
+type CreateWindowVariables = {
+  clientId: string;
+  cwd?: string | null;
+  folder_path?: string | null;
 };
 
 function isTerminalViewportMode(value: string | null): value is TerminalViewportMode {
@@ -83,6 +96,11 @@ function isAgentRecordShortcut(event: KeyboardEvent): boolean {
 function isNewTerminalShortcut(event: KeyboardEvent): boolean {
   const key = event.key.toLocaleLowerCase();
   return event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && (event.code === "KeyN" || key === "n" || event.keyCode === 78);
+}
+
+function isNewTerminalByProjectShortcut(event: KeyboardEvent): boolean {
+  const key = event.key.toLocaleLowerCase();
+  return event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && (event.code === "KeyN" || key === "n" || event.keyCode === 78);
 }
 
 function isXtermInput(element: EventTarget | null): boolean {
@@ -227,6 +245,7 @@ export default function App() {
   const [updateFailed, setUpdateFailed] = useState(false);
   const [terminalSwitcherOpen, setTerminalSwitcherOpen] = useState(false);
   const [terminalSwitcherMode, setTerminalSwitcherMode] = useState<TerminalSwitcherMode>("recent");
+  const [projectTerminalPickerOpen, setProjectTerminalPickerOpen] = useState(false);
   const [mobileTerminalActive, setMobileTerminalActive] = useState(false);
   const [detailPanelOpen, setDetailPanelOpen] = useState(false);
   const [terminalViewportMode, setTerminalViewportMode] = useState<TerminalViewportMode>(readTerminalViewportMode);
@@ -242,6 +261,7 @@ export default function App() {
   );
   const [terminalControlsOpen, setTerminalControlsOpen] = useState(false);
   const [virtualKeysVisible, setVirtualKeysVisible] = useState(false);
+  const [terminalQuickInputOpen, setTerminalQuickInputOpen] = useState(false);
   const [terminalImmersive, setTerminalImmersive] = useState(false);
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
   const [agentRecordExpandSignal, setAgentRecordExpandSignal] = useState(0);
@@ -260,7 +280,10 @@ export default function App() {
   }, [queryClient]);
 
   const focusSelectedTerminal = useCallback(() => {
-    requestAnimationFrame(() => terminalPaneRef.current?.focus());
+    requestAnimationFrame(() => {
+      terminalPaneRef.current?.refit();
+      terminalPaneRef.current?.focus();
+    });
   }, []);
 
   const closeTerminalSwitcher = useCallback(() => {
@@ -276,7 +299,7 @@ export default function App() {
     refetchInterval: 10000
   });
   const needsRuntimeTags =
-    terminalGroupingMode === "project-topic" || terminalSwitcherOpen;
+    terminalGroupingMode === "project-topic" || terminalSwitcherOpen || projectTerminalPickerOpen;
   const windowActivityQuery = useQuery({
     queryKey: ["window-activity", selectedClientId, false],
     queryFn: () => fetchWindowActivity(selectedClientId as string),
@@ -296,10 +319,23 @@ export default function App() {
     () => mergeTreeWithActivity(treeQuery.data, windowActivityMap(windowActivityData)),
     [treeQuery.data, windowActivityData]
   );
+  const projectPaths = useMemo(
+    () => collectCreatableProjectPaths(treeFolders ?? []),
+    [treeFolders]
+  );
+  const projectSummariesQuery = useQuery({
+    queryKey: ["project-summaries", selectedClientId],
+    queryFn: () => fetchProjectSummaries(selectedClientId as string),
+    enabled: selectedClientId !== null && projectTerminalPickerOpen
+  });
   const selectedTreeWindow = findTreeWindow(treeFolders, selectedWindowId);
   const selectedWindowTitle = selectedTreeWindow?.title ?? null;
   const createMutation = useMutation({
-    mutationFn: (clientId: string) => createWindow(clientId),
+    mutationFn: (variables: CreateWindowVariables) =>
+      createWindow(variables.clientId, {
+        cwd: variables.cwd,
+        folder_path: variables.folder_path
+      }),
     onSuccess: (window) => {
       queryClient.invalidateQueries({ queryKey: ["tree", window.client_id] });
       queryClient.invalidateQueries({ queryKey: ["window-activity", window.client_id] });
@@ -308,6 +344,7 @@ export default function App() {
       setRouteSelectionRequest(null);
       writeTerminalRoute(window.client_id, window.id, "push");
       persistTerminalRecent(window.client_id, window.id, window.title);
+      setProjectTerminalPickerOpen(false);
     }
   });
   const deleteMutation = useMutation({
@@ -432,7 +469,53 @@ export default function App() {
       return;
     }
 
-    createMutation.mutate(selectedClientId);
+    createMutation.mutate({ clientId: selectedClientId });
+  }, [clientsQuery.data, createMutation, selectedClientId]);
+
+  const triggerNewTerminalByProjectShortcut = useCallback(() => {
+    if (selectedClientId === null || createMutation.isPending) {
+      return;
+    }
+
+    const client = clientsQuery.data?.find((candidate) => candidate.id === selectedClientId);
+    if (client?.runtime === "remote" && client.status !== "ONLINE") {
+      return;
+    }
+
+    setProjectTerminalPickerOpen(true);
+    setTerminalSwitcherOpen(false);
+  }, [clientsQuery.data, createMutation.isPending, selectedClientId]);
+
+  const handleCreateTerminalAtProjectPath = useCallback((projectPath: string) => {
+    if (selectedClientId === null || createMutation.isPending) {
+      return;
+    }
+
+    const client = clientsQuery.data?.find((candidate) => candidate.id === selectedClientId);
+    if (client?.runtime === "remote" && client.status !== "ONLINE") {
+      return;
+    }
+
+    createMutation.mutate({
+      clientId: selectedClientId,
+      cwd: projectPath
+    });
+  }, [clientsQuery.data, createMutation, selectedClientId]);
+
+  const handleCreateTerminalAtGroup = useCallback((node: SwitcherGroupNode) => {
+    if (selectedClientId === null || createMutation.isPending) {
+      return;
+    }
+
+    const client = clientsQuery.data?.find((candidate) => candidate.id === selectedClientId);
+    if (client?.runtime === "remote" && client.status !== "ONLINE") {
+      return;
+    }
+
+    createMutation.mutate({
+      clientId: selectedClientId,
+      ...createWindowInputForGroupNode(node)
+    });
   }, [clientsQuery.data, createMutation, selectedClientId]);
 
   const triggerAgentRecordExpand = useCallback(() => {
@@ -441,6 +524,17 @@ export default function App() {
     }
 
     setAgentRecordExpandSignal((signal) => signal + 1);
+  }, [selectedClientId, selectedWindowId]);
+
+  const triggerQuickInput = useCallback(() => {
+    if (selectedClientId === null || selectedWindowId === null) {
+      return;
+    }
+
+    setMobileTerminalActive(true);
+    requestAnimationFrame(() => {
+      terminalPaneRef.current?.openQuickInput();
+    });
   }, [selectedClientId, selectedWindowId]);
 
   const toggleSettings = useCallback(() => {
@@ -485,14 +579,16 @@ export default function App() {
       const target = event.target;
       const activeElement = document.activeElement;
       const focusedInXterm = isXtermInput(target) || isXtermInput(activeElement);
+      if (focusedInXterm) {
+        return;
+      }
+
       if (isBlockingTextInput(target) || isBlockingTextInput(activeElement)) {
         return;
       }
 
       if (selectedClientId !== null && selectedWindowId !== null) {
-        if (!focusedInXterm) {
-          event.preventDefault();
-        }
+        event.preventDefault();
         focusSelectedTerminal();
       }
     };
@@ -544,6 +640,13 @@ export default function App() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (isNewTerminalByProjectShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        triggerNewTerminalByProjectShortcut();
+        return;
+      }
+
       if (!isNewTerminalShortcut(event)) {
         return;
       }
@@ -563,10 +666,17 @@ export default function App() {
 
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [clientsQuery.data, createMutation, selectedClientId, triggerNewTerminalShortcut]);
+  }, [
+    clientsQuery.data,
+    createMutation,
+    selectedClientId,
+    triggerNewTerminalByProjectShortcut,
+    triggerNewTerminalShortcut
+  ]);
 
   useEffect(() => {
     setTerminalSwitcherOpen(false);
+    setProjectTerminalPickerOpen(false);
     setTerminalControlsOpen(false);
     setTerminalImmersive(false);
     setNotificationCenterOpen(false);
@@ -643,6 +753,28 @@ export default function App() {
   }, [terminalViewportMode]);
 
   useEffect(() => {
+    if (!isMobileLayout || selectedClientId === null || selectedWindowId === null) {
+      return;
+    }
+
+    const routeSelection = readTerminalRouteSelection();
+    if (routeSelection.clientId === selectedClientId && routeSelection.windowId === selectedWindowId) {
+      setMobileTerminalActive(true);
+    }
+  }, [isMobileLayout, selectedClientId, selectedWindowId]);
+
+  useEffect(() => {
+    if (selectedWindowId === null || !treeQuery.isSuccess) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      terminalPaneRef.current?.refit();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedWindowId, treeQuery.isSuccess, treeQuery.dataUpdatedAt, windowActivityData]);
+
+  useEffect(() => {
     if (!terminalControlsOpen) {
       return;
     }
@@ -689,6 +821,16 @@ export default function App() {
     writeTerminalRoute(selectedClientId, windowId, "push");
     focusSelectedTerminal();
   };
+
+  const handleTerminalPaneSelection = useCallback((windowId: string) => {
+    if (selectedClientId === null) {
+      return;
+    }
+
+    setRouteSelectionRequest(null);
+    setSelectedWindowId(windowId);
+    writeTerminalRoute(selectedClientId, windowId, "replace");
+  }, [selectedClientId]);
 
   useEffect(() => {
     if (selectedClientId === null || selectedWindowId === null || selectedWindowTitle === null) {
@@ -779,6 +921,20 @@ export default function App() {
         onPress: triggerNewTerminalShortcut
       },
       {
+        id: "new-terminal-project",
+        label: "按项目新建",
+        hint: "Shift+Alt+N",
+        disabled: selectedClientId === null || createMutation.isPending || selectedClientOffline,
+        onPress: triggerNewTerminalByProjectShortcut
+      },
+      {
+        id: "quick-input",
+        label: "快速输入",
+        hint: "Alt+I",
+        disabled: selectedClientId === null || selectedWindowId === null,
+        onPress: triggerQuickInput
+      },
+      {
         id: "expand-record",
         label: "展开 Agent 记录",
         hint: "Alt+R",
@@ -804,7 +960,9 @@ export default function App() {
       selectedClientOffline,
       selectedWindowId,
       triggerAgentRecordExpand,
+      triggerNewTerminalByProjectShortcut,
       triggerNewTerminalShortcut,
+      triggerQuickInput,
       triggerTerminalSwitcherShortcut,
       toggleNotificationCenter,
       toggleSettings,
@@ -846,7 +1004,7 @@ export default function App() {
               type="button"
               title="Alt+N"
               disabled={selectedClientId === null || createMutation.isPending || selectedClientOffline}
-              onClick={() => selectedClientId !== null && createMutation.mutate(selectedClientId)}
+              onClick={() => selectedClientId !== null && createMutation.mutate({ clientId: selectedClientId })}
             >
               New terminal
             </button>
@@ -893,6 +1051,9 @@ export default function App() {
             hasUnreadNotification={hasUnreadNotification}
             onSelectWindow={(window) => selectWindow(window.id)}
             onDeleteWindow={(window) => requestDeleteWindow(window.id, window.title)}
+            onCreateTerminalAtGroup={handleCreateTerminalAtGroup}
+            creatingTerminal={createMutation.isPending}
+            createTerminalDisabled={selectedClientOffline}
           />
         )}
         <div className="mobile-enter-terminal">
@@ -966,6 +1127,19 @@ export default function App() {
                   className="terminal-controls-row"
                   disabled={selectedClientId === null || selectedWindowId === null}
                   onClick={() => {
+                    triggerQuickInput();
+                    setTerminalControlsOpen(false);
+                  }}
+                >
+                  <span>Quick input</span>
+                  <strong>{terminalQuickInputOpen ? "Open" : "Alt+I"}</strong>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="terminal-controls-row"
+                  disabled={selectedClientId === null || selectedWindowId === null}
+                  onClick={() => {
                     setTerminalImmersive(true);
                     setDetailPanelOpen(false);
                     setTerminalControlsOpen(false);
@@ -1002,8 +1176,14 @@ export default function App() {
           ref={terminalPaneRef}
           clientId={selectedClientId}
           windowId={selectedWindowId}
+          onTerminalSelection={handleTerminalPaneSelection}
           viewportMode={terminalViewportMode}
-          layoutVersion={(mobileTerminalActive ? 1 : 0) + (terminalImmersive ? 2 : 0)}
+          onQuickInputOpenChange={setTerminalQuickInputOpen}
+          layoutVersion={
+            (mobileTerminalActive ? 1 : 0)
+            + (terminalImmersive ? 2 : 0)
+            + (detailPanelOpen ? 4 : 0)
+          }
           virtualKeysVisible={virtualKeysVisible}
         />
       </section>
@@ -1017,6 +1197,7 @@ export default function App() {
         <WindowDetail
           clientId={selectedClientId}
           windowId={selectedWindowId}
+          gitWorktree={selectedTreeWindow?.git_worktree ?? null}
           agentRecordExpandSignal={agentRecordExpandSignal}
         />
         <SearchPanel clientId={selectedClientId} onSelectWindowId={selectWindow} />
@@ -1042,6 +1223,22 @@ export default function App() {
         hasUnreadNotification={hasUnreadNotification}
         onClose={closeTerminalSwitcher}
         onSelectWindow={selectWindow}
+        onCreateTerminalAtGroup={handleCreateTerminalAtGroup}
+        creatingTerminal={createMutation.isPending}
+        createTerminalDisabled={selectedClientOffline}
+      />
+      <ProjectTerminalPicker
+        isOpen={projectTerminalPickerOpen}
+        projectPaths={projectPaths}
+        projectSummaries={projectSummariesQuery.data ?? []}
+        loadingProjects={treeQuery.isFetching || windowActivityTagsQuery.isFetching}
+        creatingTerminal={createMutation.isPending}
+        createTerminalDisabled={selectedClientOffline}
+        onClose={() => {
+          setProjectTerminalPickerOpen(false);
+          focusSelectedTerminal();
+        }}
+        onCreateTerminal={handleCreateTerminalAtProjectPath}
       />
       <SettingsModal
         isOpen={settingsOpen}
@@ -1063,9 +1260,11 @@ export default function App() {
         visible={
           isMobileLayout
           && !terminalSwitcherOpen
+          && !projectTerminalPickerOpen
           && !notificationCenterOpen
           && !settingsOpen
           && !showBootstrapForm
+          && !terminalQuickInputOpen
         }
         actions={mobileShortcutActions}
       />

@@ -1,3 +1,5 @@
+import base64
+import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -9,6 +11,11 @@ from app.model_base import Base
 from app.models import Event, SummaryJob, VirtualWindow, WindowStatus
 from app.services.search_index import TERMINAL_INDEX
 from app.services.terminal_output_recorder import record_terminal_input_command, record_terminal_output_chunk
+
+
+def _command_marker(window_id, payload: dict) -> bytes:
+    encoded = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+    return f"\x1b]777;web-terminal-command;window_id={window_id};payload={encoded}\x07".encode("ascii")
 
 
 class FakeElasticsearch:
@@ -125,3 +132,28 @@ async def test_agent_tui_terminal_output_does_not_enqueue_summary_job(db_session
 
     jobs = (await db_session.execute(select(SummaryJob))).scalars().all()
     assert jobs == []
+
+
+@pytest.mark.asyncio
+async def test_auto_resume_command_markers_are_not_persisted(db_session):
+    client_id = uuid4()
+    window = VirtualWindow(id=uuid4(), client_id=client_id, title="Terminal", status=WindowStatus.active)
+    db_session.add(window)
+    await db_session.commit()
+
+    marker = _command_marker(
+        window.id,
+        {
+            "phase": "started",
+            "command": "WEB_TERMINAL_AUTO_RESUME=1 claude --resume claude-session",
+            "shell": "zsh",
+            "cwd": "/workspace/project",
+            "captured_at": "2026-05-21T12:00:00+00:00",
+            "sequence": 7,
+        },
+    )
+    event = await record_terminal_output_chunk(db_session, client_id, window.id, marker)
+
+    rows = (await db_session.execute(select(Event))).scalars().all()
+    assert event is None
+    assert rows == []

@@ -156,7 +156,43 @@ async def test_attach_sends_remote_terminal_attach_request() -> None:
     assert message.payload == {
         "remote_session_id": "remote-session",
         "remote_window_id": "remote-window",
+        "view_id": str(window_id),
     }
+
+
+@pytest.mark.asyncio
+async def test_attach_returns_recreated_remote_runtime_window() -> None:
+    client_id = uuid4()
+    window_id = uuid4()
+    connection = FakeConnection(
+        AgentMessage(
+            type="terminal_attach_result",
+            client_id=client_id,
+            window_id=window_id,
+            request_id="attach-response",
+            payload={
+                "ok": True,
+                "remote_session_id": "remote-session",
+                "remote_window_id": "@9",
+                "cwd": "/remote/project",
+                "shell_command": "/bin/bash",
+            },
+        )
+    )
+    runtime = RemoteRuntime(client_id=client_id, registry=FakeRegistry(connection))
+    runtime_window = RuntimeWindow(session_id="remote-session", window_id="@7")
+
+    async def ignored_sender(data: bytes) -> None:
+        raise AssertionError("remote runtime does not call local sender directly")
+
+    attached_window = await runtime.attach(runtime_window, ignored_sender, local_window_id=window_id)
+
+    assert attached_window == RuntimeWindow(
+        session_id="remote-session",
+        window_id="@9",
+        cwd="/remote/project",
+        shell_command="/bin/bash",
+    )
 
 
 @pytest.mark.asyncio
@@ -200,6 +236,7 @@ async def test_detach_sends_remote_terminal_detach_request() -> None:
     assert message.payload == {
         "remote_session_id": "remote-session",
         "remote_window_id": "remote-window",
+        "view_id": str(window_id),
     }
 
 
@@ -221,6 +258,7 @@ async def test_send_input_sends_base64_terminal_payload() -> None:
     payload = TerminalPayload.model_validate(message.payload)
     assert payload.window_id == window_id
     assert payload.to_bytes() == b"whoami\n"
+    assert message.payload["view_id"] == str(window_id)
 
 
 @pytest.mark.asyncio
@@ -238,7 +276,7 @@ async def test_resize_sends_resize_message_with_browser_window_id() -> None:
     assert message.type == "terminal_resize"
     assert message.client_id == client_id
     assert message.window_id == window_id
-    assert message.payload == {"cols": 120, "rows": 40}
+    assert message.payload == {"cols": 120, "rows": 40, "view_id": str(window_id)}
 
 
 @pytest.mark.asyncio
@@ -254,6 +292,76 @@ async def test_resize_ignores_repeated_dimensions_for_same_window() -> None:
     await runtime.resize(runtime_window, cols=121, rows=40, local_window_id=window_id)
 
     assert [message.payload for message in connection.sent] == [
-        {"cols": 120, "rows": 40},
-        {"cols": 121, "rows": 40},
+        {"cols": 120, "rows": 40, "view_id": str(window_id)},
+        {"cols": 121, "rows": 40, "view_id": str(window_id)},
     ]
+
+
+@pytest.mark.asyncio
+async def test_select_window_sends_view_scoped_remote_request() -> None:
+    client_id = uuid4()
+    view_id = uuid4()
+    next_window_id = uuid4()
+    connection = FakeConnection(
+        AgentMessage(
+            type="terminal_attach_result",
+            client_id=client_id,
+            window_id=next_window_id,
+            request_id="select-response",
+            payload={"ok": True},
+        )
+    )
+    runtime = RemoteRuntime(client_id=client_id, registry=FakeRegistry(connection))
+
+    await runtime.select_window(
+        RuntimeWindow(session_id="remote-session", window_id="@1"),
+        RuntimeWindow(session_id="remote-session", window_id="@2"),
+        local_window_id=next_window_id,
+        view_id=view_id,
+    )
+
+    assert len(connection.requests) == 1
+    message, timeout = connection.requests[0]
+    assert timeout == 10.0
+    assert message.type == "terminal_select_window"
+    assert message.client_id == client_id
+    assert message.window_id == next_window_id
+    assert message.payload == {
+        "remote_session_id": "remote-session",
+        "remote_window_id": "@2",
+        "view_id": str(view_id),
+    }
+
+
+@pytest.mark.asyncio
+async def test_select_window_returns_recreated_remote_runtime_window() -> None:
+    client_id = uuid4()
+    view_id = uuid4()
+    next_window_id = uuid4()
+    connection = FakeConnection(
+        AgentMessage(
+            type="terminal_attach_result",
+            client_id=client_id,
+            window_id=next_window_id,
+            request_id="select-response",
+            payload={
+                "ok": True,
+                "remote_session_id": "remote-session",
+                "remote_window_id": "@9",
+            },
+        )
+    )
+    runtime = RemoteRuntime(client_id=client_id, registry=FakeRegistry(connection))
+
+    selected_window = await runtime.select_window(
+        RuntimeWindow(session_id="remote-session", window_id="@1"),
+        RuntimeWindow(session_id="remote-session", window_id="@2", cwd="/workspace/project"),
+        local_window_id=next_window_id,
+        view_id=view_id,
+    )
+
+    assert selected_window == RuntimeWindow(
+        session_id="remote-session",
+        window_id="@9",
+        cwd="/workspace/project",
+    )

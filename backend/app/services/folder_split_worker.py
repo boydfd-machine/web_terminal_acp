@@ -371,7 +371,7 @@ async def _index_moved_window_summaries(
 
 
 async def _terminal_split_context(session: AsyncSession, window: VirtualWindow) -> dict[str, Any]:
-    commands, ai_events = await collect_window_activity_context(session, window)
+    commands, session_messages = await collect_window_activity_context(session, window)
     return {
         "id": window.id,
         "title": window.title,
@@ -380,7 +380,7 @@ async def _terminal_split_context(session: AsyncSession, window: VirtualWindow) 
         "cwd": window.cwd,
         "created_at": window.created_at,
         "commands": commands,
-        "ai_events": ai_events,
+        "session_messages": session_messages,
     }
 
 

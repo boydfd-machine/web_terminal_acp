@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -95,6 +96,47 @@ async def test_persist_managed_cursor_event_links_session_window_project_without
     assert ai_session.virtual_window_id == window.id
     assert summary_jobs[0].virtual_window_id == window.id
     assert es_client.indexed_documents == []
+
+
+@pytest.mark.asyncio
+async def test_persist_managed_user_event_schedules_summary_even_after_recent_terminal_activity(db_session):
+    client, window = await create_client_and_window(db_session)
+    terminal_activity_at = datetime.now(timezone.utc) - timedelta(minutes=2)
+    db_session.add(
+        Event(
+            client_id=client.id,
+            source_type=EventSourceType.terminal,
+            source_id=str(window.id),
+            kind="terminal_input_command",
+            virtual_window_id=window.id,
+            payload_json={"command": "echo recent", "shell": "bash", "sequence": 1},
+            fingerprint=f"terminal_input_command:{window.id}:recent",
+            created_at=terminal_activity_at,
+        )
+    )
+    payload = {
+        "client_id": str(client.id),
+        "virtual_window_id": str(window.id),
+        "agentId": "cursor-agent-1",
+        "blob_id": "blob-user-1",
+        "role": "user",
+        "text": "please fix this bug",
+    }
+    event = managed_event_from_payload(client.id, window.id, "cursor_cli", payload)
+    assert event is not None
+
+    row = await persist_managed_agent_event(db_session, event)
+
+    summary_job = (await db_session.execute(select(SummaryJob))).scalar_one()
+    run_after = summary_job.run_after
+    row_created_at = row.created_at
+    if run_after.tzinfo is None:
+        run_after = run_after.replace(tzinfo=timezone.utc)
+    if row_created_at.tzinfo is None:
+        row_created_at = row_created_at.replace(tzinfo=timezone.utc)
+    assert summary_job.virtual_window_id == window.id
+    assert summary_job.trigger_reason == "agent_idle"
+    assert run_after == row_created_at + timedelta(seconds=20)
 
 
 @pytest.mark.asyncio

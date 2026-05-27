@@ -16,6 +16,7 @@ def test_build_client_update_package_contains_checksum_and_updater_file():
     files = package["files"]
 
     assert isinstance(files, dict)
+    assert "client_agent/agent_commands.py" in files
     assert "client_agent/updater.py" in files
     assert package["checksum"] == package_checksum(files, package["requirements"])
 

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
 from app.agent_tools import agent_activity_source_types, get_agent_tool_registry
+from app.agent_tools.types import AgentChatProjection
 from app.config import get_settings
 from app.models import Event, EventSourceType, SummaryJob, SummaryJobStatus, VirtualWindow
 from app.repositories.folders import build_topic_tree_context
@@ -24,6 +25,14 @@ MAX_SUMMARY_JOB_ERROR_LENGTH = 2000
 MAX_SUMMARY_JOB_ATTEMPTS = 3
 SUMMARY_JOB_RETRY_DELAY_SECONDS = 30
 _PROVIDER_ALIASES = {"claude": "claude_code"}
+_ASK_USER_TOOL_NAME_MARKERS = (
+    "request_user_input",
+    "ask_user",
+    "ask_question",
+    "user_question",
+    "clarifying_question",
+)
+_ASK_USER_QUESTION_KEYS = ("question", "prompt", "message")
 
 
 def _canonical_provider(provider: str) -> str:
@@ -176,9 +185,9 @@ async def mark_summary_job_retryable(session: AsyncSession, job: SummaryJob, err
 
 async def collect_summary_context(session: AsyncSession, window: VirtualWindow) -> list[dict[str, Any]]:
     topic_tree = await build_topic_tree_context(session, window.client_id)
-    commands, ai_events = await collect_window_activity_context(session, window)
+    commands, session_messages = await collect_window_activity_context(session, window)
 
-    return [_build_terminal_input_context(window, topic_tree, commands, ai_events)]
+    return [_build_terminal_input_context(window, topic_tree, commands, session_messages)]
 
 
 async def collect_window_activity_context(
@@ -208,8 +217,12 @@ async def collect_window_activity_context(
             .limit(MAX_SUMMARY_CONTEXT_EVENTS)
         )
     )
-    ai_events = [_ai_event_from_event(event) for event in reversed(ai_event_rows)]
-    return commands, ai_events
+    session_messages = [
+        session_message
+        for event in reversed(ai_event_rows)
+        for session_message in _session_messages_from_event(event)
+    ]
+    return commands, session_messages
 
 
 def _command_from_event(event: Event, window: VirtualWindow) -> dict[str, Any]:
@@ -227,16 +240,143 @@ def _command_from_event(event: Event, window: VirtualWindow) -> dict[str, Any]:
     }
 
 
-def _ai_event_from_event(event: Event) -> dict[str, Any]:
+def _session_messages_from_event(event: Event) -> list[dict[str, Any]]:
+    session_messages: list[dict[str, Any]] = []
+    chat = _ai_event_chat(event)
+    if chat is not None:
+        role = "assistant" if chat.role == "agent" else chat.role
+        if role in {"user", "assistant"}:
+            session_messages.append({"role": role, "content": _bounded_text(chat.body)})
+
+    ask_user_question = _ask_user_question_from_tool_call(event)
+    if ask_user_question is not None:
+        session_messages.append(ask_user_question)
+    return session_messages
+
+
+def _ask_user_question_from_tool_call(event: Event) -> dict[str, Any] | None:
+    tool_name = _tool_call_name(event)
+    if tool_name is None or not _is_ask_user_tool_name(tool_name):
+        return None
+
+    question_text = _ask_user_question_text(_tool_call_arguments(event))
+    if question_text is None:
+        return None
     return {
-        "source_type": event.source_type.value,
-        "provider": _ai_event_provider(event),
-        "source_id": event.source_id,
-        "kind": event.kind,
-        "role": _ai_event_role(event),
-        "text": _bounded_event_text(event),
-        "created_at": event.created_at.isoformat() if event.created_at is not None else None,
+        "role": "tool_call",
+        "name": tool_name,
+        "content": _bounded_text(question_text),
     }
+
+
+def _tool_call_name(event: Event) -> str | None:
+    payload = event.payload_json
+    item = _nested_payload_item(payload)
+    content_block = _first_tool_use_content_block(payload)
+    candidates = (
+        item.get("name"),
+        item.get("tool_name"),
+        item.get("tool"),
+        content_block.get("name") if content_block is not None else None,
+        payload.get("name"),
+        payload.get("tool_name"),
+        payload.get("tool"),
+    )
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+
+    span = payload.get("span")
+    if isinstance(span, dict):
+        attributes = span.get("attributes")
+        if isinstance(attributes, dict):
+            for key in ("tool", "tool_name", "name"):
+                value = attributes.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    return None
+
+
+def _tool_call_arguments(event: Event) -> Any:
+    payload = event.payload_json
+    item = _nested_payload_item(payload)
+    for key in ("arguments", "input", "args", "parameters"):
+        if key in item:
+            return item[key]
+    content_block = _first_tool_use_content_block(payload)
+    if content_block is not None:
+        for key in ("arguments", "input", "args", "parameters"):
+            if key in content_block:
+                return content_block[key]
+    for key in ("arguments", "input", "args", "parameters"):
+        if key in payload:
+            return payload[key]
+
+    span = payload.get("span")
+    if isinstance(span, dict):
+        attributes = span.get("attributes")
+        if isinstance(attributes, dict):
+            for key in ("arguments", "input", "args", "parameters"):
+                if key in attributes:
+                    return attributes[key]
+    return {}
+
+
+def _nested_payload_item(payload: dict[str, Any]) -> dict[str, Any]:
+    nested = payload.get("payload")
+    return nested if isinstance(nested, dict) else payload
+
+
+def _first_tool_use_content_block(payload: dict[str, Any]) -> dict[str, Any] | None:
+    message = payload.get("message")
+    if isinstance(message, dict) and "content" in message:
+        content = message.get("content")
+    else:
+        content = payload.get("content")
+
+    if isinstance(content, dict):
+        block_type = content.get("type")
+        return content if block_type == "tool_use" else None
+    if not isinstance(content, list):
+        return None
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "tool_use":
+            return block
+    return None
+
+
+def _is_ask_user_tool_name(name: str) -> bool:
+    normalized = "".join(character.lower() if character.isalnum() else "_" for character in name)
+    return any(marker in normalized for marker in _ASK_USER_TOOL_NAME_MARKERS)
+
+
+def _ask_user_question_text(arguments: Any) -> str | None:
+    if isinstance(arguments, str):
+        try:
+            parsed_arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            stripped = arguments.strip()
+            return stripped or None
+        return _ask_user_question_text(parsed_arguments)
+
+    if isinstance(arguments, dict):
+        for key in _ASK_USER_QUESTION_KEYS:
+            value = arguments.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        questions = arguments.get("questions")
+        if isinstance(questions, list):
+            parts = [_ask_user_question_text(question) for question in questions]
+            joined = "\n\n".join(part for part in parts if part)
+            return joined or None
+        return None
+
+    if isinstance(arguments, list):
+        parts = [_ask_user_question_text(item) for item in arguments]
+        joined = "\n\n".join(part for part in parts if part)
+        return joined or None
+
+    return None
 
 
 def _ai_event_provider(event: Event) -> str:
@@ -261,32 +401,18 @@ def _legacy_provider_for_source_type(source_type: EventSourceType) -> str | None
     return None
 
 
-def _ai_event_role(event: Event) -> str:
-    kind = event.kind.lower()
-    payload_role = event.payload_json.get("role")
-    payload_type = event.payload_json.get("type")
-    if kind in {"user", "user_message"} or payload_role == "user" or payload_type == "user":
-        return "user"
-    if (
-        kind in {"assistant", "assistant_message"}
-        or payload_role == "assistant"
-        or payload_type == "assistant"
-    ):
-        return "assistant"
-    if "tool" in kind:
-        return "tool"
-    return "event"
-
-
-def _bounded_event_text(event: Event) -> str:
+def _ai_event_chat(event: Event) -> AgentChatProjection | None:
     try:
         adapter = get_agent_tool_registry().by_source_type(
             event.source_type,
             provider=_adapter_provider_for_event(event),
         )
-        text = adapter.summary_text(event)
+        return adapter.project_chat(event)
     except Exception:
-        text = json.dumps(event.payload_json, sort_keys=True, ensure_ascii=False)
+        return None
+
+
+def _bounded_text(text: str) -> str:
     if len(text.encode("utf-8")) <= MAX_SUMMARY_CONTEXT_PAYLOAD_BYTES:
         return text
     encoded = text.encode("utf-8")[:MAX_SUMMARY_CONTEXT_PAYLOAD_BYTES]
@@ -308,52 +434,52 @@ def _build_terminal_input_context(
     window: VirtualWindow,
     topic_tree: list[dict[str, object]],
     commands: list[dict[str, Any]],
-    ai_events: list[dict[str, Any]],
+    session_messages: list[dict[str, Any]],
 ) -> dict[str, Any]:
     budget_bytes = get_settings().terminal_summary_input_context_max_bytes
     included_commands = list(commands)
-    included_ai_events = list(ai_events)
+    included_session_messages = list(session_messages)
     total_commands = len(commands)
-    total_ai_events = len(ai_events)
+    total_session_messages = len(session_messages)
     commands_truncated = False
-    ai_events_truncated = False
+    session_messages_truncated = False
 
     while True:
         item = _terminal_input_context_item(
             window,
             topic_tree,
             included_commands,
-            included_ai_events,
+            included_session_messages,
             total_commands=total_commands,
-            total_ai_events=total_ai_events,
+            total_session_messages=total_session_messages,
             commands_truncated=commands_truncated,
-            ai_events_truncated=ai_events_truncated,
+            session_messages_truncated=session_messages_truncated,
             budget_bytes=budget_bytes,
         )
         if _serialized_size(item) <= budget_bytes:
             return item
-        trimmed_ai_events = _without_oldest_non_user_ai_event(included_ai_events)
-        if len(trimmed_ai_events) < len(included_ai_events):
-            included_ai_events = trimmed_ai_events
-            ai_events_truncated = True
+        trimmed_session_messages = _without_oldest_non_user_session_message(included_session_messages)
+        if len(trimmed_session_messages) < len(included_session_messages):
+            included_session_messages = trimmed_session_messages
+            session_messages_truncated = True
             continue
         if included_commands:
             included_commands = included_commands[1:]
             commands_truncated = True
             continue
-        if included_ai_events:
-            included_ai_events = included_ai_events[1:]
-            ai_events_truncated = True
+        if included_session_messages:
+            included_session_messages = included_session_messages[1:]
+            session_messages_truncated = True
             continue
         return _terminal_input_context_item_with_pruned_topic_tree(
             window,
             topic_tree,
             included_commands,
-            included_ai_events,
+            included_session_messages,
             total_commands=total_commands,
-            total_ai_events=total_ai_events,
+            total_session_messages=total_session_messages,
             commands_truncated=commands_truncated,
-            ai_events_truncated=ai_events_truncated,
+            session_messages_truncated=session_messages_truncated,
             budget_bytes=budget_bytes,
         )
 
@@ -362,12 +488,12 @@ def _terminal_input_context_item_with_pruned_topic_tree(
     window: VirtualWindow,
     topic_tree: list[dict[str, object]],
     commands: list[dict[str, Any]],
-    ai_events: list[dict[str, Any]],
+    session_messages: list[dict[str, Any]],
     *,
     total_commands: int,
-    total_ai_events: int,
+    total_session_messages: int,
     commands_truncated: bool,
-    ai_events_truncated: bool,
+    session_messages_truncated: bool,
     budget_bytes: int,
 ) -> dict[str, Any]:
     pruned_topic_tree: list[dict[str, object]] = []
@@ -377,11 +503,11 @@ def _terminal_input_context_item_with_pruned_topic_tree(
             window,
             pruned_topic_tree,
             commands,
-            ai_events,
+            session_messages,
             total_commands=total_commands,
-            total_ai_events=total_ai_events,
+            total_session_messages=total_session_messages,
             commands_truncated=commands_truncated,
-            ai_events_truncated=ai_events_truncated,
+            session_messages_truncated=session_messages_truncated,
             budget_bytes=budget_bytes,
             topic_tree_truncated=True,
         )
@@ -443,23 +569,25 @@ def _topic_tree_node_children(node: dict[str, object]) -> list[dict[str, object]
     return [child for child in children if isinstance(child, dict)]
 
 
-def _without_oldest_non_user_ai_event(ai_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    for index, event in enumerate(ai_events):
-        if event.get("role") != "user":
-            return ai_events[:index] + ai_events[index + 1 :]
-    return ai_events
+def _without_oldest_non_user_session_message(
+    session_messages: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    for index, message in enumerate(session_messages):
+        if message.get("role") != "user":
+            return session_messages[:index] + session_messages[index + 1 :]
+    return session_messages
 
 
 def _terminal_input_context_item(
     window: VirtualWindow,
     topic_tree: list[dict[str, object]],
     commands: list[dict[str, Any]],
-    ai_events: list[dict[str, Any]],
+    session_messages: list[dict[str, Any]],
     *,
     total_commands: int,
-    total_ai_events: int,
+    total_session_messages: int,
     commands_truncated: bool,
-    ai_events_truncated: bool,
+    session_messages_truncated: bool,
     budget_bytes: int,
     topic_tree_truncated: bool = False,
     today: Any | None = None,
@@ -492,17 +620,18 @@ def _terminal_input_context_item(
             },
             "summary_output_language": get_settings().summary_output_language,
             "commands": commands,
-            "ai_events": ai_events,
+            "session_messages": session_messages,
             "truncation": {
                 "total_commands": total_commands,
                 "included_commands": len(commands),
                 "truncated": commands_truncated or len(commands) < total_commands,
                 "budget_bytes": budget_bytes,
             },
-            "ai_event_truncation": {
-                "total_events": total_ai_events,
-                "included_events": len(ai_events),
-                "truncated": ai_events_truncated or len(ai_events) < total_ai_events,
+            "session_message_truncation": {
+                "total_messages": total_session_messages,
+                "included_messages": len(session_messages),
+                "truncated": session_messages_truncated
+                or len(session_messages) < total_session_messages,
                 "budget_bytes": budget_bytes,
             },
         },

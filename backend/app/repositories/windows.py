@@ -3,11 +3,23 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Folder, VirtualWindow, WindowStatus
-from app.repositories.folders import ensure_default_folder
+from app.models import (
+    AiSession,
+    Event,
+    Folder,
+    GitWorktreeRun,
+    SummaryJob,
+    TerminalRecentUsage,
+    VirtualWindow,
+    WindowGitBinding,
+    WindowStatus,
+)
+from app.repositories.folders import ensure_default_folder, prune_empty_folder_branch
 
 
 class FolderNotFoundError(Exception):
@@ -127,13 +139,77 @@ async def patch_window(
     return window
 
 
+async def patch_runtime_window(
+    session: AsyncSession,
+    client_id: UUID,
+    window_id: UUID,
+    *,
+    tmux_session: str | None | object = _UNSET,
+    tmux_window_id: str | None | object = _UNSET,
+    remote_session_id: str | None | object = _UNSET,
+    remote_window_id: str | None | object = _UNSET,
+    cwd: str | None | object = _UNSET,
+    shell_command: str | None | object = _UNSET,
+) -> VirtualWindow | None:
+    window = await get_window_for_client(session, client_id, window_id)
+    if window is None:
+        return None
+
+    if tmux_session is not _UNSET:
+        window.tmux_session = tmux_session
+    if tmux_window_id is not _UNSET:
+        window.tmux_window_id = tmux_window_id
+    if remote_session_id is not _UNSET:
+        window.remote_session_id = remote_session_id
+    if remote_window_id is not _UNSET:
+        window.remote_window_id = remote_window_id
+    if cwd is not _UNSET:
+        window.cwd = cwd
+    if shell_command is not _UNSET:
+        window.shell_command = shell_command
+
+    await session.flush()
+    return window
+
+
 async def delete_window(
     session: AsyncSession, client_id: UUID, window_id: UUID
 ) -> bool:
     window = await get_window_for_client(session, client_id, window_id)
     if window is None:
         return False
-    await session.delete(window)
+    folder_id = window.folder_id
+
+    await session.execute(sa_delete(SummaryJob).where(SummaryJob.virtual_window_id == window_id))
+    await session.execute(
+        sa_delete(TerminalRecentUsage).where(TerminalRecentUsage.window_id == window_id)
+    )
+    await session.execute(
+        sa_delete(WindowGitBinding).where(WindowGitBinding.virtual_window_id == window_id)
+    )
+    await session.execute(
+        sa_delete(GitWorktreeRun).where(GitWorktreeRun.virtual_window_id == window_id)
+    )
+    await session.execute(
+        sa_update(AiSession)
+        .where(AiSession.virtual_window_id == window_id)
+        .values(virtual_window_id=None)
+    )
+    await session.execute(
+        sa_update(Event)
+        .where(Event.virtual_window_id == window_id)
+        .values(virtual_window_id=None)
+    )
+    result = await session.execute(
+        sa_delete(VirtualWindow).where(
+            VirtualWindow.id == window_id,
+            VirtualWindow.client_id == client_id,
+        )
+    )
+    if result.rowcount != 1:
+        return False
+    if folder_id is not None:
+        await prune_empty_folder_branch(session, client_id, folder_id)
     await session.flush()
     return True
 

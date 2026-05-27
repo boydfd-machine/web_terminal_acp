@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     openai_compat_api_key: str = "dev-local-key"
     openai_compat_model: str = "local-summarizer"
     openai_compat_timeout_seconds: float = 60.0
-    terminal_summary_idle_seconds: int = 120
+    terminal_summary_idle_seconds: int = 20
     terminal_summary_initial_max_wait_seconds: int = 120
     terminal_summary_repeat_seconds: int = 600
     terminal_summary_input_context_max_bytes: int = 32768

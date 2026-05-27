@@ -66,6 +66,38 @@ async def test_window_fair_message_queue_rotates_between_terminal_windows() -> N
 
 
 @pytest.mark.asyncio
+async def test_window_fair_message_queue_prioritizes_input_response_output() -> None:
+    queue = _WindowFairMessageQueue(maxsize=10)
+    busy_1 = AgentMessage(type="terminal_output", client_id=CLIENT_ID, window_id=WINDOW_ID)
+    busy_2 = AgentMessage(type="terminal_output", client_id=CLIENT_ID, window_id=WINDOW_ID)
+    other_stale = AgentMessage(
+        type="terminal_output",
+        client_id=CLIENT_ID,
+        window_id=OTHER_WINDOW_ID,
+    )
+    input_response = AgentMessage(
+        type="terminal_output",
+        client_id=CLIENT_ID,
+        window_id=OTHER_WINDOW_ID,
+        payload={"input_priority": True},
+    )
+
+    await queue.put(busy_1)
+    await queue.put(busy_2)
+    await queue.put(other_stale)
+    await queue.put(input_response)
+
+    assert await queue.get() is input_response
+    queue.task_done()
+    assert await queue.get() is busy_1
+    queue.task_done()
+    assert await queue.get() is other_stale
+    queue.task_done()
+    assert await queue.get() is busy_2
+    queue.task_done()
+
+
+@pytest.mark.asyncio
 async def test_ai_event_enqueue_waits_when_queue_is_full_without_dropping() -> None:
     queue: asyncio.Queue[AgentMessage] = asyncio.Queue(maxsize=1)
     oldest = AgentMessage(type="ai_event", client_id=CLIENT_ID, window_id=WINDOW_ID)

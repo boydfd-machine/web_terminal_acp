@@ -1,19 +1,25 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
+import threading
 from pathlib import Path
 from uuid import UUID
 
 import pytest
 
+import app.client_agent.agent_tool_watchers as watchers
 from app.client_agent.agent_tool_watchers import (
     AGENT_TOOL_COLLECTORS,
     AgentToolWatcherState,
+    UnifiedAgentToolWatcher,
     collect_claude_code_watch_events,
     collect_codex_watch_events,
     collect_cursor_watch_events,
     enqueue_managed_ai_event,
+    initialize_agent_tool_watcher_state,
+    watch_agent_tool_events,
 )
 from app.services.runtime.protocol import AgentMessage
 
@@ -53,6 +59,16 @@ def write_cursor_store(path: Path) -> None:
         ("assistant-blob", json.dumps({"role": "assistant", "content": "hello"}).encode("utf-8")),
     )
     conn.execute("insert into blobs (id, data) values (?, ?)", ("binary-blob", b"\x0a\x02hi"))
+    conn.commit()
+    conn.close()
+
+
+def append_cursor_blob(path: Path, blob_id: str, role: str, text: str) -> None:
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "insert into blobs (id, data) values (?, ?)",
+        (blob_id, json.dumps({"role": role, "content": text}).encode("utf-8")),
+    )
     conn.commit()
     conn.close()
 
@@ -101,6 +117,100 @@ def test_collect_codex_watch_events_preserves_payload_shape_and_project_attribut
     assert event.payload["virtual_window_id"] == str(WINDOW_ID)
     assert event.payload["project_path"] == "/workspace/project"
     assert state.codex_offsets[session_file] == session_file.stat().st_size
+
+
+def test_initialize_agent_tool_watcher_state_starts_jsonl_collectors_at_eof(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codex_session = tmp_path / "rollout-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl"
+    codex_session.write_text(
+        json.dumps(
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "old codex"}],
+                },
+                "timestamp": "2026-05-23T00:00:00Z",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    claude_session = tmp_path / "claude-session.jsonl"
+    claude_session.write_text(
+        json.dumps({"type": "assistant", "message": {"role": "assistant", "content": "old claude"}}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "app.client_agent.agent_tool_watchers.iter_codex_session_files",
+        lambda window_id: [codex_session],
+    )
+    monkeypatch.setattr(
+        "app.client_agent.agent_tool_watchers.iter_claude_code_jsonl_files",
+        lambda window_id: [claude_session],
+    )
+    state = AgentToolWatcherState()
+
+    initialize_agent_tool_watcher_state(state, window_id=WINDOW_ID)
+
+    assert collect_codex_watch_events(
+        state,
+        client_id=CLIENT_ID,
+        window_id=WINDOW_ID,
+        project_path="/workspace/project",
+    ) == []
+    assert collect_claude_code_watch_events(
+        state,
+        client_id=CLIENT_ID,
+        window_id=WINDOW_ID,
+        project_path="/workspace/project",
+    ) == []
+
+    codex_new_offset = codex_session.stat().st_size
+    codex_session.write_text(
+        codex_session.read_text(encoding="utf-8")
+        + json.dumps(
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "new codex"}],
+                },
+                "timestamp": "2026-05-23T00:00:01Z",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    claude_new_offset = claude_session.stat().st_size
+    claude_session.write_text(
+        claude_session.read_text(encoding="utf-8")
+        + json.dumps({"type": "assistant", "message": {"role": "assistant", "content": "new claude"}})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    codex_events = collect_codex_watch_events(
+        state,
+        client_id=CLIENT_ID,
+        window_id=WINDOW_ID,
+        project_path="/workspace/project",
+    )
+    claude_events = collect_claude_code_watch_events(
+        state,
+        client_id=CLIENT_ID,
+        window_id=WINDOW_ID,
+        project_path="/workspace/project",
+    )
+
+    assert [event.offset for event in codex_events] == [codex_new_offset]
+    assert codex_events[0].payload["payload"]["content"][0]["text"] == "new codex"
+    assert [event.offset for event in claude_events] == [claude_new_offset]
+    assert claude_events[0].payload["message"]["content"] == "new claude"
 
 
 def test_collect_codex_watch_events_resets_offset_after_truncation(
@@ -194,6 +304,77 @@ def test_collect_claude_code_watch_events_reads_managed_home_and_tracks_offsets(
     assert state.claude_code_offsets[session_file] == session_file.stat().st_size
 
 
+def test_collect_codex_watch_events_reuses_discovered_paths_until_refresh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_file = tmp_path / "rollout-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl"
+    session_file.write_text(
+        json.dumps(
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "done"}],
+                },
+                "timestamp": "2026-05-23T00:00:00Z",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    calls: list[UUID] = []
+
+    def discover(window_id: UUID) -> list[Path]:
+        calls.append(window_id)
+        return [session_file]
+
+    monkeypatch.setattr("app.client_agent.agent_tool_watchers.iter_codex_session_files", discover)
+    state = AgentToolWatcherState()
+
+    collect_codex_watch_events(
+        state,
+        client_id=CLIENT_ID,
+        window_id=WINDOW_ID,
+        project_path="/workspace/project",
+    )
+    collect_codex_watch_events(
+        state,
+        client_id=CLIENT_ID,
+        window_id=WINDOW_ID,
+        project_path="/workspace/project",
+    )
+
+    assert calls == [WINDOW_ID]
+
+
+def test_collect_codex_watch_events_caches_empty_discovery_results(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[UUID] = []
+
+    def discover(window_id: UUID) -> list[Path]:
+        calls.append(window_id)
+        return []
+
+    monkeypatch.setattr("app.client_agent.agent_tool_watchers.iter_codex_session_files", discover)
+    state = AgentToolWatcherState()
+
+    assert collect_codex_watch_events(
+        state,
+        client_id=CLIENT_ID,
+        window_id=WINDOW_ID,
+        project_path="/workspace/project",
+    ) == []
+    assert collect_codex_watch_events(
+        state,
+        client_id=CLIENT_ID,
+        window_id=WINDOW_ID,
+        project_path="/workspace/project",
+    ) == []
+
+    assert calls == [WINDOW_ID]
+
+
 def test_collect_cursor_watch_events_finds_window_stores_and_tracks_seen_blobs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -230,6 +411,38 @@ def test_collect_cursor_watch_events_finds_window_stores_and_tracks_seen_blobs(
     assert all(event.payload["project_path"] == "/workspace/project" for event in first)
 
 
+def test_initialize_agent_tool_watcher_state_starts_cursor_collector_after_existing_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    store = home / ".web-terminal-acp" / "cursor-homes" / str(WINDOW_ID) / "state" / "store.db"
+    store.parent.mkdir(parents=True)
+    write_cursor_store(store)
+    monkeypatch.setattr(Path, "home", lambda: home)
+    state = AgentToolWatcherState()
+
+    initialize_agent_tool_watcher_state(state, window_id=WINDOW_ID)
+
+    assert collect_cursor_watch_events(
+        state,
+        client_id=CLIENT_ID,
+        window_id=WINDOW_ID,
+        project_path="/workspace/project",
+    ) == []
+
+    append_cursor_blob(store, "new-assistant-blob", "assistant", "new cursor")
+    events = collect_cursor_watch_events(
+        state,
+        client_id=CLIENT_ID,
+        window_id=WINDOW_ID,
+        project_path="/workspace/project",
+    )
+
+    assert [event.payload["blob_id"] for event in events] == ["new-assistant-blob"]
+    assert events[0].payload["text"] == "new cursor"
+
+
 def test_collect_cursor_watch_events_discovers_store_created_after_initial_scan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -258,6 +471,298 @@ def test_collect_cursor_watch_events_discovers_store_created_after_initial_scan(
 
     assert [event.payload["blob_id"] for event in events] == ["user-blob", "assistant-blob"]
     assert state.cursor_store_paths == [store]
+
+
+@pytest.mark.asyncio
+async def test_watch_agent_tool_events_notifies_idle_supervisor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_file = tmp_path / "rollout-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl"
+    session_file.write_text(
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {"id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "app.client_agent.agent_tool_watchers.iter_codex_session_files",
+        lambda window_id: [session_file],
+    )
+    monkeypatch.setattr(
+        "app.client_agent.agent_tool_watchers.initialize_agent_tool_watcher_state",
+        lambda state, *, window_id: None,
+    )
+
+    supervisor = FakeIdleSupervisor()
+    sent: list[object] = []
+
+    async def send_event(message):
+        sent.append(message)
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await watch_agent_tool_events(
+            send_event,
+            CLIENT_ID,
+            WINDOW_ID,
+            "/workspace/project",
+            idle_supervisor=supervisor,
+        )
+
+    assert len(supervisor.observed_batches) == 1
+    assert supervisor.observed_batches[0][0].provider == "codex"
+
+
+@pytest.mark.asyncio
+async def test_watch_agent_tool_events_defers_idle_and_presence_checks_on_startup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.client_agent.agent_tool_watchers.initialize_agent_tool_watcher_state",
+        lambda state, *, window_id: None,
+    )
+    monkeypatch.setattr("app.client_agent.agent_tool_watchers._collect_all_events", lambda *args, **kwargs: [])
+    presence_calls: list[UUID] = []
+
+    async def detect_presence(window_id, *, terminal, runtime):
+        presence_calls.append(window_id)
+        return None
+
+    async def send_presence(_message):
+        raise AssertionError("presence should not be sent during the first watcher loop")
+
+    async def stop_after_first_loop(_seconds):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr("app.client_agent.agent_tool_watchers.detect_agent_work_presence", detect_presence)
+    monkeypatch.setattr("app.client_agent.agent_tool_watchers.asyncio.sleep", stop_after_first_loop)
+
+    supervisor = FakeIdleSupervisor()
+
+    with pytest.raises(asyncio.CancelledError):
+        await watch_agent_tool_events(
+            lambda _message: asyncio.sleep(0),
+            CLIENT_ID,
+            WINDOW_ID,
+            "/workspace/project",
+            send_presence=send_presence,
+            idle_supervisor=supervisor,
+        )
+
+    assert supervisor.checked_windows == []
+    assert presence_calls == []
+
+
+@pytest.mark.asyncio
+async def test_watch_agent_tool_events_sends_presence_when_staggered_scan_is_due(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.client_agent.agent_tool_watchers.initialize_agent_tool_watcher_state",
+        lambda state, *, window_id: None,
+    )
+    monkeypatch.setattr("app.client_agent.agent_tool_watchers._collect_all_events", lambda *args, **kwargs: [])
+    monkeypatch.setattr("app.client_agent.agent_tool_watchers._initial_process_scan_delay", lambda window_id, interval: 0.0)
+
+    class Signal:
+        providers = ("codex",)
+        reasons = ("process",)
+
+    async def detect_presence(window_id, *, terminal, runtime):
+        assert window_id == WINDOW_ID
+        return Signal()
+
+    sent_presence: list[AgentMessage] = []
+
+    async def send_presence(message: AgentMessage):
+        sent_presence.append(message)
+
+    async def stop_after_first_loop(_seconds):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr("app.client_agent.agent_tool_watchers.detect_agent_work_presence", detect_presence)
+    monkeypatch.setattr("app.client_agent.agent_tool_watchers.asyncio.sleep", stop_after_first_loop)
+
+    supervisor = FakeIdleSupervisor()
+
+    with pytest.raises(asyncio.CancelledError):
+        await watch_agent_tool_events(
+            lambda _message: asyncio.sleep(0),
+            CLIENT_ID,
+            WINDOW_ID,
+            "/workspace/project",
+            send_presence=send_presence,
+            idle_supervisor=supervisor,
+        )
+
+    assert supervisor.checked_windows == [WINDOW_ID]
+    assert len(sent_presence) == 1
+    assert sent_presence[0].type == "agent_work_presence"
+    assert sent_presence[0].payload == {"providers": ["codex"], "reasons": ["process"]}
+
+
+@pytest.mark.asyncio
+async def test_watcher_scans_are_concurrency_limited(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(watchers, "AGENT_WATCH_COLLECTION_CONCURRENCY", 1)
+    monkeypatch.setattr(watchers, "_WATCH_COLLECTION_SEMAPHORE", None)
+    monkeypatch.setattr(watchers, "_WATCH_COLLECTION_SEMAPHORE_LOOP", None)
+    entered: list[str] = []
+    first_entered = threading.Event()
+    release_first = threading.Event()
+
+    def blocking_scan(name: str) -> str:
+        entered.append(name)
+        if name == "first":
+            first_entered.set()
+            release_first.wait(timeout=2)
+        return name
+
+    first = asyncio.create_task(watchers._run_watcher_scan(blocking_scan, "first"))
+    assert await asyncio.to_thread(first_entered.wait, 1)
+    second = asyncio.create_task(watchers._run_watcher_scan(blocking_scan, "second"))
+
+    await asyncio.sleep(0.05)
+    assert entered == ["first"]
+
+    release_first.set()
+    assert await first == "first"
+    assert await second == "second"
+    assert entered == ["first", "second"]
+
+
+@pytest.mark.asyncio
+async def test_unified_agent_tool_watcher_manages_multiple_windows_with_one_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.client_agent.agent_tool_watchers.initialize_agent_tool_watcher_state",
+        lambda state, *, window_id: None,
+    )
+    monkeypatch.setattr("app.client_agent.agent_tool_watchers._collect_all_events", lambda *args, **kwargs: [])
+
+    scanned_windows: list[UUID] = []
+    original_scan_window = UnifiedAgentToolWatcher._scan_window
+
+    async def scan_once(self, window):
+        scanned_windows.append(window.window_id)
+        if len(scanned_windows) >= 2:
+            raise asyncio.CancelledError
+        await original_scan_window(self, window)
+
+    monkeypatch.setattr(UnifiedAgentToolWatcher, "_scan_window", scan_once)
+
+    watcher = UnifiedAgentToolWatcher(lambda _message: asyncio.sleep(0), CLIENT_ID)
+    watcher.start()
+    first_task = watcher._task
+    other_window_id = UUID("11111111-2222-3333-4444-555555555555")
+    watcher.watch_window(WINDOW_ID, "/workspace/one")
+    watcher.watch_window(other_window_id, "/workspace/two")
+    assert watcher._task is first_task
+
+    with pytest.raises(asyncio.CancelledError):
+        await first_task
+
+    assert scanned_windows == [WINDOW_ID, other_window_id]
+
+
+@pytest.mark.asyncio
+async def test_unified_agent_tool_watcher_sends_presence_before_agent_records(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.client_agent.agent_tool_watchers.initialize_agent_tool_watcher_state",
+        lambda state, *, window_id: None,
+    )
+    monkeypatch.setattr("app.client_agent.agent_tool_watchers._initial_process_scan_delay", lambda window_id, interval: 0.0)
+
+    from app.client_agent.ai_events import ManagedAiEvent
+
+    event = ManagedAiEvent(
+        provider="cursor_cli",
+        client_id=CLIENT_ID,
+        window_id=WINDOW_ID,
+        source_path="/tmp/store.db",
+        offset=None,
+        cursor="root-1",
+        project_path="/workspace/project",
+        payload={
+            "client_id": str(CLIENT_ID),
+            "virtual_window_id": str(WINDOW_ID),
+            "agentId": "cursor-agent-1",
+            "blob_id": "assistant-blob",
+            "role": "assistant",
+            "text": "hello",
+        },
+    )
+    monkeypatch.setattr("app.client_agent.agent_tool_watchers._collect_all_events", lambda *args, **kwargs: [event])
+
+    class Signal:
+        providers = ("cursor_cli",)
+        reasons = ("process",)
+
+    async def detect_presence(window_id, *, terminal, runtime):
+        return Signal()
+
+    monkeypatch.setattr("app.client_agent.agent_tool_watchers.detect_agent_work_presence", detect_presence)
+
+    sent: list[AgentMessage] = []
+
+    async def send(message: AgentMessage):
+        sent.append(message)
+        if len(sent) == 2:
+            raise asyncio.CancelledError
+
+    watcher = UnifiedAgentToolWatcher(send, CLIENT_ID, send_presence=send)
+    watcher.watch_window(WINDOW_ID, "/workspace/project")
+
+    with pytest.raises(asyncio.CancelledError):
+        await watcher._run()
+
+    assert [message.type for message in sent] == ["agent_work_presence", "ai_event"]
+
+
+@pytest.mark.asyncio
+async def test_unified_agent_tool_watcher_keeps_running_after_window_scan_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.client_agent.agent_tool_watchers.AGENT_WATCH_IDLE_INTERVAL_SECONDS", 0.01)
+    scanned_windows: list[UUID] = []
+    other_window_id = UUID("11111111-2222-3333-4444-555555555555")
+
+    async def scan_window(self, window):
+        scanned_windows.append(window.window_id)
+        if window.window_id == WINDOW_ID:
+            raise RuntimeError("boom")
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(UnifiedAgentToolWatcher, "_scan_window", scan_window)
+    monkeypatch.setattr("app.client_agent.agent_tool_watchers.time.perf_counter", lambda: 100.0)
+
+    watcher = UnifiedAgentToolWatcher(lambda _message: asyncio.sleep(0), CLIENT_ID)
+    watcher.watch_window(WINDOW_ID, "/workspace/one")
+    watcher.watch_window(other_window_id, "/workspace/two")
+
+    with pytest.raises(asyncio.CancelledError):
+        await watcher._run()
+
+    assert scanned_windows == [WINDOW_ID, other_window_id]
+
+
+class FakeIdleSupervisor:
+    def __init__(self) -> None:
+        self.observed_batches: list[list[object]] = []
+        self.checked_windows: list[UUID] = []
+
+    async def observe_events(self, events):
+        self.observed_batches.append(events)
+
+    async def maybe_suspend_window(self, window_id: UUID) -> None:
+        self.checked_windows.append(window_id)
 
 
 def test_collect_cursor_watch_events_finds_managed_cursor_data_dir_store(

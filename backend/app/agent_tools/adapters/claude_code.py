@@ -13,6 +13,7 @@ from app.agent_tools.common import (
     string_value,
 )
 from app.agent_tools.types import AgentChatProjection, AgentEventProjection, AgentToolStorage
+from app.agent_tools.user_input import extract_real_user_input
 from app.models import Event, EventSourceType
 from app.services.ingest.normalizers import NormalizedEvent, normalize_claude_jsonl
 
@@ -72,6 +73,15 @@ def _chat_body_text(payload: dict[str, Any]) -> str | None:
         if text:
             parts.append(text)
     return "\n".join(parts) or None
+
+
+def _has_tool_result_content(payload: dict[str, Any]) -> bool:
+    content = _raw_content(payload)
+    if isinstance(content, dict):
+        return string_value(content.get("type")) == "tool_result"
+    if not isinstance(content, list):
+        return False
+    return any(isinstance(block, dict) and string_value(block.get("type")) == "tool_result" for block in content)
 
 
 def _content_blocks(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -156,6 +166,20 @@ class ClaudeCodeAdapter:
             body = json_markdown(payload)
             body_format = "json"
         if role == "user" or event.kind == "user_message":
+            real_user_input = extract_real_user_input(body if body_format == "markdown" else None, provider=self.provider_id)
+            if real_user_input is None and (body_format == "markdown" or _has_tool_result_content(payload)):
+                label = "Tool response" if _has_tool_result_content(payload) else "Context"
+                tone = "tool-result" if _has_tool_result_content(payload) else "context"
+                return AgentEventProjection(
+                    tone=tone,
+                    label=label,
+                    body=body,
+                    body_format=body_format,
+                    subtype=event.kind,
+                )
+            if real_user_input is not None:
+                body = real_user_input
+                body_format = "markdown"
             return AgentEventProjection(
                 tone="user-input",
                 label="User input",
@@ -180,6 +204,9 @@ class ClaudeCodeAdapter:
             return None
         source = str(event.ai_session_id or event.source_id)
         if role == "user":
+            body = extract_real_user_input(body, provider=self.provider_id)
+            if body is None:
+                return None
             return AgentChatProjection("user", body, dedupe_key=f"{source}:user:{body}")
         if role == "assistant":
             return AgentChatProjection("agent", body, dedupe_key=f"{source}:assistant:{body}")

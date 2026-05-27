@@ -15,9 +15,21 @@ from starlette.websockets import WebSocketDisconnect
 from app.db import Base
 from app.main import app
 from app.routers import client_agent as client_agent_router
-from app.models import AiSession, ClientRuntime, ClientStatus, Event, EventSourceType, VirtualWindow, WindowStatus
+from app.models import (
+    AiSession,
+    Client,
+    ClientRuntime,
+    ClientStatus,
+    Event,
+    EventSourceType,
+    GitWorktreeRun,
+    VirtualWindow,
+    WindowGitBinding,
+    WindowStatus,
+)
 from app.repositories.clients import create_client, get_client
 from app.repositories.windows import create_window
+from app.services import git_worktree_coordinator
 from app.services.runtime.broker import TerminalBroker
 from app.services.runtime.client_connections import ClientConnectionRegistry
 from app.services.runtime.protocol import AgentMessage, TerminalPayload, encode_agent_message
@@ -56,7 +68,7 @@ class FakeTerminalBroker:
         self.published.append((client_id, window_id, data))
 
     async def publish_status(self, client_id: UUID, window_id: UUID, message: str) -> None:
-        return None
+        self.published.append((client_id, window_id, message.encode("utf-8")))
 
     async def clear_client(self, client_id: UUID, *, status_message: str | None = None) -> None:
         self.cleared_clients.append((client_id, status_message))
@@ -117,6 +129,22 @@ def command_marker(window_id: UUID, command: str, *, sequence: int = 1) -> bytes
     return (
         f"\x1b]777;web-terminal-command;window_id={window_id};payload={encoded}\x07"
     ).encode("ascii")
+
+
+def worktree_marker(
+    window_id: UUID,
+    *,
+    worktree_root: str = "/repo/.worktrees/feature",
+    main_repo_root: str = "/repo",
+    branch: str = "agent/feature",
+) -> str:
+    payload = {
+        "worktree_root": worktree_root,
+        "main_repo_root": main_repo_root,
+        "branch": branch,
+    }
+    encoded = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+    return f"\x1b]777;web-terminal-worktree;window_id={window_id};payload={encoded}\x07"
 
 
 @pytest.fixture
@@ -509,6 +537,280 @@ def test_client_agent_websocket_persists_codex_ai_event(client_agent_db):
     assert ai_sessions[0].virtual_window_id == window.id
 
 
+def test_client_agent_websocket_tracks_worktree_marker_from_codex_tool_output(
+    client_agent_db,
+):
+    window = asyncio.run(create_remote_window(client_agent_db.session_factory, client_agent_db.client_id))
+    event_payload = {
+        "trace_id": "trace-worktree-1",
+        "name": "response_item",
+        "type": "function_call_output",
+        "output": f"Registered worktree\n{worktree_marker(window.id)}",
+        "client_id": str(client_agent_db.client_id),
+        "virtual_window_id": str(window.id),
+    }
+
+    test_client = TestClient(app)
+    try:
+        with connect_client_agent_bulk(test_client, client_agent_db) as websocket:
+            websocket.send_text(
+                encode_agent_message(
+                    AgentMessage(
+                        type="ai_event",
+                        client_id=client_agent_db.client_id,
+                        window_id=window.id,
+                        request_id="request-worktree-1",
+                        payload={"provider": "codex", "payload": event_payload},
+                    )
+                )
+            )
+            response = websocket.receive_json()
+            assert response["type"] == "ai_event_ack"
+            assert response["payload"] == {"ok": True}
+            wait_for_condition(
+                lambda: asyncio.run(_worktree_binding_exists(client_agent_db.session_factory, window.id))
+            )
+    finally:
+        test_client.close()
+
+    async def load_state():
+        async with client_agent_db.session_factory() as session:
+            event = await session.scalar(
+                select(Event).where(Event.virtual_window_id == window.id)
+            )
+            binding = await session.scalar(
+                select(WindowGitBinding).where(WindowGitBinding.virtual_window_id == window.id)
+            )
+            return event, binding
+
+    event, binding = asyncio.run(load_state())
+    assert event is not None
+    assert event.source_type is EventSourceType.agent_tool_record
+    assert binding is not None
+    assert binding.worktree_root == "/repo/.worktrees/feature"
+    assert binding.main_repo_root == "/repo"
+    assert binding.discovery_method == "osc"
+
+
+def test_client_agent_websocket_acks_worktree_ai_event_before_git_tracking(
+    client_agent_db,
+    monkeypatch,
+):
+    window = asyncio.run(create_remote_window(client_agent_db.session_factory, client_agent_db.client_id))
+    tracking_started = threading.Event()
+    release_tracking = threading.Event()
+
+    async def slow_process_worktree_registration(*args, **kwargs):
+        tracking_started.set()
+        await asyncio.to_thread(release_tracking.wait)
+
+    monkeypatch.setattr(
+        client_agent_router,
+        "process_worktree_registration",
+        slow_process_worktree_registration,
+    )
+    event_payload = {
+        "trace_id": "trace-worktree-priority-1",
+        "name": "response_item",
+        "type": "function_call_output",
+        "output": f"Registered worktree\n{worktree_marker(window.id)}",
+        "client_id": str(client_agent_db.client_id),
+        "virtual_window_id": str(window.id),
+    }
+
+    test_client = TestClient(app)
+    try:
+        with connect_client_agent_bulk(test_client, client_agent_db) as websocket:
+            websocket.send_text(
+                encode_agent_message(
+                    AgentMessage(
+                        type="ai_event",
+                        client_id=client_agent_db.client_id,
+                        window_id=window.id,
+                        request_id="request-worktree-priority-1",
+                        payload={"provider": "codex", "payload": event_payload},
+                    )
+                )
+            )
+            response = websocket.receive_json()
+            assert response["type"] == "ai_event_ack"
+            assert response["payload"] == {"ok": True}
+            assert asyncio.run(_event_count(client_agent_db.session_factory)) == 1
+            wait_for_condition(tracking_started.is_set)
+            release_tracking.set()
+    finally:
+        release_tracking.set()
+        test_client.close()
+
+
+def test_client_agent_websocket_refreshes_git_tracking_after_codex_tool_output(
+    client_agent_db,
+    monkeypatch,
+):
+    window = asyncio.run(create_remote_window(client_agent_db.session_factory, client_agent_db.client_id))
+    asyncio.run(_set_client_runtime(client_agent_db.session_factory, client_agent_db.client_id, ClientRuntime.local))
+    snapshots = [
+        {
+            "is_linked_worktree": True,
+            "worktree_root": "/repo/.worktrees/feature",
+            "main_repo_root": "/repo",
+            "branch": "agent/feature",
+            "head_sha": "base",
+            "status_porcelain": "",
+            "diff_stat": "",
+            "staged_diff_stat": "",
+            "commits": [],
+        },
+        {
+            "is_linked_worktree": True,
+            "worktree_root": "/repo/.worktrees/feature",
+            "main_repo_root": "/repo",
+            "branch": "agent/feature",
+            "head_sha": "feature",
+            "status_porcelain": "",
+            "diff_stat": "",
+            "staged_diff_stat": "",
+            "commits": [
+                {
+                    "sha": "feature",
+                    "short_sha": "feature",
+                    "subject": "Fix terminal reload autofocus reconnect",
+                    "author_name": "Open Claw",
+                    "author_email": "open@example.com",
+                    "authored_at": "2026-05-27T05:55:00+00:00",
+                    "files": [
+                        {
+                            "path": "frontend/src/components/TerminalPane.tsx",
+                            "old_path": None,
+                            "status": "modified",
+                            "additions": 12,
+                            "deletions": 4,
+                            "patch": "@@ -1 +1 @@\n-old\n+new\n",
+                        }
+                    ],
+                }
+            ],
+        },
+    ]
+
+    async def fake_local_git_worktree_action(action: str, **payload):
+        if action == "detect":
+            return {
+                "ok": True,
+                "context": {
+                    "is_linked_worktree": True,
+                    "worktree_root": "/repo/.worktrees/feature",
+                    "main_repo_root": "/repo",
+                    "branch": "agent/feature",
+                },
+            }
+        if action == "snapshot":
+            snapshot = snapshots.pop(0) if len(snapshots) > 1 else snapshots[0]
+            return {"ok": True, "snapshot": snapshot}
+        return None
+
+    monkeypatch.setattr(
+        git_worktree_coordinator,
+        "local_git_worktree_action",
+        fake_local_git_worktree_action,
+    )
+
+    register_payload = {
+        "trace_id": "trace-worktree-refresh-1",
+        "name": "response_item",
+        "type": "function_call_output",
+        "output": f"Registered worktree\n{worktree_marker(window.id)}",
+        "client_id": str(client_agent_db.client_id),
+        "virtual_window_id": str(window.id),
+    }
+    tool_payload = {
+        "trace_id": "trace-worktree-refresh-1",
+        "name": "response_item",
+        "type": "function_call_output",
+        "output": "git commit completed",
+        "client_id": str(client_agent_db.client_id),
+        "virtual_window_id": str(window.id),
+    }
+
+    test_client = TestClient(app)
+    try:
+        with connect_client_agent_bulk(test_client, client_agent_db) as websocket:
+            websocket.send_text(
+                encode_agent_message(
+                    AgentMessage(
+                        type="ai_event",
+                        client_id=client_agent_db.client_id,
+                        window_id=window.id,
+                        request_id="request-worktree-register",
+                        payload={"provider": "codex", "payload": register_payload},
+                    )
+                )
+            )
+            response = websocket.receive_json()
+            assert response["type"] == "ai_event_ack"
+            wait_for_condition(
+                lambda: asyncio.run(_worktree_binding_exists(client_agent_db.session_factory, window.id))
+            )
+
+            websocket.send_text(
+                encode_agent_message(
+                    AgentMessage(
+                        type="ai_event",
+                        client_id=client_agent_db.client_id,
+                        window_id=window.id,
+                        request_id="request-worktree-refresh",
+                        payload={"provider": "codex", "payload": tool_payload},
+                    )
+                )
+            )
+            response = websocket.receive_json()
+            assert response["type"] == "ai_event_ack"
+            assert response["payload"] == {"ok": True}
+            wait_for_condition(
+                lambda: asyncio.run(
+                    _worktree_diff_contains_commit(client_agent_db.session_factory, window.id)
+                )
+            )
+    finally:
+        test_client.close()
+
+
+async def _worktree_binding_exists(
+    session_factory: async_sessionmaker,
+    window_id: UUID,
+) -> bool:
+    async with session_factory() as session:
+        binding = await session.scalar(
+            select(WindowGitBinding).where(WindowGitBinding.virtual_window_id == window_id)
+        )
+        return binding is not None
+
+
+async def _set_client_runtime(
+    session_factory: async_sessionmaker,
+    client_id: UUID,
+    runtime: ClientRuntime,
+) -> None:
+    async with session_factory() as session:
+        client = await session.get(Client, client_id)
+        assert client is not None
+        client.runtime = runtime
+        await session.commit()
+
+
+async def _worktree_diff_contains_commit(
+    session_factory: async_sessionmaker,
+    window_id: UUID,
+) -> bool:
+    async with session_factory() as session:
+        run = await session.scalar(
+            select(GitWorktreeRun).where(GitWorktreeRun.virtual_window_id == window_id)
+        )
+        diff = run.session_diff_json if run is not None else None
+        commits = diff.get("commits") if isinstance(diff, dict) else None
+        return bool(commits and commits[0].get("sha") == "feature")
+
+
 def test_bulk_terminal_output_display_worker_keeps_publishing_while_recording_is_backlogged(
     client_agent_db, monkeypatch
 ):
@@ -564,6 +866,140 @@ def test_bulk_terminal_output_display_worker_keeps_publishing_while_recording_is
                 assert not release_recording.is_set()
             finally:
                 release_recording.set()
+    finally:
+        test_client.close()
+
+
+def test_bulk_terminal_output_keeps_publishing_when_recording_queue_is_full(
+    client_agent_db, monkeypatch
+):
+    monkeypatch.setattr(client_agent_router, "BACKGROUND_MESSAGE_QUEUE_MAX_SIZE", 1)
+    window = asyncio.run(create_remote_window(client_agent_db.session_factory, client_agent_db.client_id))
+    broker = FakeTerminalBroker()
+    recording_started = threading.Event()
+    release_recording = threading.Event()
+
+    async def slow_record_terminal_output_chunk(*args, **kwargs):
+        recording_started.set()
+        await asyncio.to_thread(release_recording.wait)
+        return None
+
+    monkeypatch.setattr(app.state, "terminal_broker", broker, raising=False)
+    monkeypatch.setattr(
+        client_agent_router,
+        "record_terminal_output_chunk",
+        slow_record_terminal_output_chunk,
+    )
+
+    test_client = TestClient(app)
+    try:
+        with connect_client_agent_bulk(test_client, client_agent_db) as websocket:
+            try:
+                for text in (b"first\n", b"second\n", b"third\n"):
+                    websocket.send_text(
+                        encode_agent_message(
+                            AgentMessage(
+                                type="terminal_output",
+                                client_id=client_agent_db.client_id,
+                                window_id=window.id,
+                                payload=TerminalPayload.from_bytes(window.id, text).model_dump(),
+                            )
+                        )
+                    )
+                wait_for_condition(recording_started.is_set)
+                wait_for_condition(lambda: len(broker.published) == 3)
+
+                websocket.send_text(
+                    encode_agent_message(
+                        AgentMessage(
+                            type="terminal_output",
+                            client_id=client_agent_db.client_id,
+                            window_id=window.id,
+                            payload=TerminalPayload.from_bytes(window.id, b"fourth\n").model_dump(),
+                        )
+                    )
+                )
+
+                wait_for_condition(
+                    lambda: broker.published
+                    == [
+                        (client_agent_db.client_id, window.id, b"first\n"),
+                        (client_agent_db.client_id, window.id, b"second\n"),
+                        (client_agent_db.client_id, window.id, b"third\n"),
+                        (client_agent_db.client_id, window.id, b"fourth\n"),
+                    ]
+                )
+                assert not release_recording.is_set()
+            finally:
+                release_recording.set()
+    finally:
+        test_client.close()
+
+
+def test_bulk_terminal_output_keeps_publishing_when_ai_event_queue_is_full(
+    client_agent_db, monkeypatch
+):
+    monkeypatch.setattr(client_agent_router, "BACKGROUND_MESSAGE_QUEUE_MAX_SIZE", 1)
+    window = asyncio.run(create_remote_window(client_agent_db.session_factory, client_agent_db.client_id))
+    broker = FakeTerminalBroker()
+    ai_event_started = threading.Event()
+    release_ai_event = threading.Event()
+
+    async def slow_handle_ai_event(*args, **kwargs):
+        ai_event_started.set()
+        await asyncio.to_thread(release_ai_event.wait)
+
+    monkeypatch.setattr(app.state, "terminal_broker", broker, raising=False)
+    monkeypatch.setattr(
+        client_agent_router,
+        "_handle_ai_event_message_with_ack_sender",
+        slow_handle_ai_event,
+    )
+
+    test_client = TestClient(app)
+    try:
+        with connect_client_agent_bulk(test_client, client_agent_db) as websocket:
+            try:
+                for index in range(3):
+                    websocket.send_text(
+                        encode_agent_message(
+                            AgentMessage(
+                                type="ai_event",
+                                client_id=client_agent_db.client_id,
+                                window_id=window.id,
+                                payload={"payload": {"id": f"queued-{index}"}},
+                            )
+                        )
+                    )
+                wait_for_condition(ai_event_started.is_set)
+
+                websocket.send_text(
+                    encode_agent_message(
+                        AgentMessage(
+                            type="terminal_output",
+                            client_id=client_agent_db.client_id,
+                            window_id=window.id,
+                            payload=TerminalPayload.from_bytes(
+                                window.id,
+                                b"terminal-still-visible\n",
+                            ).model_dump(),
+                        )
+                    )
+                )
+
+                wait_for_condition(
+                    lambda: broker.published
+                    == [
+                        (
+                            client_agent_db.client_id,
+                            window.id,
+                            b"terminal-still-visible\n",
+                        )
+                    ]
+                )
+                assert not release_ai_event.is_set()
+            finally:
+                release_ai_event.set()
     finally:
         test_client.close()
 
@@ -750,6 +1186,7 @@ def test_client_agent_websocket_records_terminal_output_when_browser_subscriber_
                 )
             )
             wait_for_condition(lambda: len(failures) == 1)
+            wait_for_condition(lambda: asyncio.run(_event_count(client_agent_db.session_factory)) == 1)
     finally:
         test_client.close()
 
@@ -912,11 +1349,57 @@ def test_client_agent_bulk_websocket_accepts_agent_work_presence(client_agent_db
             )
             wait_for_condition(
                 lambda: broker.published == [(client_agent_db.client_id, window.id, b"still connected\n")]
+                and asyncio.run(_event_count(client_agent_db.session_factory)) == 2
             )
     finally:
         test_client.close()
 
-    assert asyncio.run(_event_count(client_agent_db.session_factory)) == 1
+    assert asyncio.run(_event_count(client_agent_db.session_factory)) == 2
+
+
+def test_client_agent_websocket_publishes_view_terminal_selection(client_agent_db):
+    window = asyncio.run(create_remote_window(client_agent_db.session_factory, client_agent_db.client_id))
+    broker = app.state.terminal_broker
+    broker.published.clear()
+    view_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+    test_client = TestClient(app)
+    try:
+        with test_client.websocket_connect(
+            "/api/client-agent/ws",
+            headers={
+                "X-Client-Id": str(client_agent_db.client_id),
+                "Authorization": f"Bearer {client_agent_db.token}",
+            },
+        ) as websocket:
+            websocket.send_text(
+                encode_agent_message(AgentMessage(type="hello", client_id=client_agent_db.client_id))
+            )
+            response = websocket.receive_json()
+            assert response["type"] == "hello_ack"
+            websocket.send_text(
+                encode_agent_message(
+                    AgentMessage(
+                        type="terminal_selection",
+                        client_id=client_agent_db.client_id,
+                        window_id=window.id,
+                        payload={"view_id": str(view_id)},
+                    )
+                )
+            )
+            wait_for_condition(lambda: len(broker.published) == 1)
+    finally:
+        test_client.close()
+
+    client_id, published_view_id, raw_message = broker.published[0]
+    assert client_id == client_agent_db.client_id
+    assert published_view_id == view_id
+    assert json.loads(raw_message.decode("utf-8")) == {
+        "type": "terminal_selection",
+        "client_id": str(client_agent_db.client_id),
+        "window_id": str(window.id),
+        "view_id": str(view_id),
+    }
 
 
 def test_control_websocket_rejects_bulk_messages(client_agent_db):

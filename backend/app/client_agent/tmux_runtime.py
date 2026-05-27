@@ -63,12 +63,16 @@ class ClientTmuxRuntime:
             await self._run(["tmux", "has-session", "-t", self.pool_session])
         except RuntimeError:
             await self._run(["tmux", "new-session", "-d", "-s", self.pool_session, self.default_shell])
-        await self._ensure_manual_window_size(self.pool_session)
+        await self._ensure_terminal_session_options(self.pool_session)
         await self._ensure_clipboard_support()
 
-    async def _ensure_manual_window_size(self, session_name: str) -> None:
+    async def _ensure_terminal_session_options(self, session_name: str) -> None:
         with contextlib.suppress(RuntimeError):
             await self._run(["tmux", "set-option", "-t", session_name, "window-size", "manual"])
+
+    async def _ensure_pane_passthrough(self, tmux_target: str) -> None:
+        with contextlib.suppress(RuntimeError):
+            await self._run(["tmux", "set-option", "-p", "-t", tmux_target, "allow-passthrough", "on"])
 
     async def _ensure_clipboard_support(self) -> None:
         if self._clipboard_configured:
@@ -134,6 +138,8 @@ class ClientTmuxRuntime:
                 ]
             )
         ).strip()
+        await self._ensure_pane_passthrough(f"{self.pool_session}:{remote_window_id}")
+        await self.select_window(remote_window_id)
         await self._run(
             [
                 "tmux",
@@ -165,11 +171,52 @@ class ClientTmuxRuntime:
             managed_agent_tools=True,
         )
 
+    async def recreate_window(
+        self,
+        window_id: UUID | str,
+        *,
+        cwd: str | None = None,
+        shell_command: str | None = None,
+    ) -> ClientRuntimeWindow:
+        return await self.create_window(window_id, cwd=cwd, shell_command=shell_command)
+
+    async def select_window(self, remote_window_id: str) -> None:
+        await self._run(["tmux", "select-window", "-t", f"{self.pool_session}:{remote_window_id}"])
+
+    async def has_window(
+        self,
+        remote_window_id: str,
+        *,
+        remote_session_id: str | None = None,
+    ) -> bool:
+        session_id = remote_session_id or self.pool_session
+        try:
+            window_id = (
+                await self._run(
+                    [
+                        "tmux",
+                        "display-message",
+                        "-p",
+                        "-t",
+                        f"{session_id}:{remote_window_id}",
+                        "#{window_id}",
+                    ]
+                )
+            ).strip()
+        except RuntimeError:
+            return False
+        return window_id == remote_window_id
+
     async def kill_window(self, window_id: UUID | str) -> None:
         local_window_id = UUID(str(window_id))
         for runtime_window in await self.list_windows():
             if runtime_window.local_window_id != local_window_id:
                 continue
+            if not await self.has_window(
+                runtime_window.remote_window_id,
+                remote_session_id=runtime_window.remote_session_id,
+            ):
+                return
             await self._run(
                 [
                     "tmux",

@@ -22,13 +22,20 @@ const sampleTree: TreeFolderCore[] = [
 
 describe("terminalTree", () => {
   it("merges activity into tree windows", () => {
+    const gitWorktree = {
+      worktree_root: "/repo/.worktrees/feature",
+      main_repo_root: "/repo",
+      branch: "agent/feature",
+      pending_commit: true
+    };
     const activity = windowActivityMap({
       windows: [
         {
           window_id: "window-1",
           work_status: { state: "WORKING", label: "Working", color: "orange" },
           runtime_tags: ["/workspace/project"],
-          last_agent_task_completed_at: "2026-05-24T01:00:00Z"
+          last_agent_task_completed_at: "2026-05-24T01:00:00Z",
+          git_worktree: gitWorktree
         }
       ]
     });
@@ -37,11 +44,13 @@ describe("terminalTree", () => {
     expect(merged?.[0]?.windows[0]?.work_status.state).toBe("WORKING");
     expect(merged?.[0]?.windows[0]?.runtime_tags).toEqual(["/workspace/project"]);
     expect(merged?.[0]?.windows[0]?.last_agent_task_completed_at).toBe("2026-05-24T01:00:00Z");
+    expect(merged?.[0]?.windows[0]?.git_worktree).toEqual(gitWorktree);
   });
 
   it("uses defaults when activity is missing", () => {
     const merged = mergeTreeWithActivity(sampleTree, new Map());
     expect(merged?.[0]?.windows[0]?.work_status).toEqual(DEFAULT_WORK_STATUS);
     expect(merged?.[0]?.windows[0]?.runtime_tags).toEqual([]);
+    expect(merged?.[0]?.windows[0]?.git_worktree).toBeNull();
   });
 });

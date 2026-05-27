@@ -1,0 +1,21 @@
+appId: com.webterminal.acp
+productName: Web Terminal ACP
+directories:
+  output: release
+files:
+  - dist/**/*
+  - electron/**/*
+  - package.json
+extraMetadata:
+  main: electron/main.cjs
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+    - zip
+win:
+  target:
+    - nsis
+linux:
+  target:
+    - AppImage

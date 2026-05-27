@@ -1,6 +1,14 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import contextlib
+import errno
+import os
+import pty
+import select
+import shutil
+import subprocess
 import threading
+import time
 from uuid import UUID
 
 import pytest
@@ -8,9 +16,11 @@ import pytest
 import app.client_agent.terminal as client_terminal
 from app.client_agent.terminal import (
     PTY_DRAIN_BUFFER_MAX_BYTES,
+    PTY_OUTPUT_SEND_CHUNK_BYTES,
     ClientTerminalMultiplexer,
     _AttachedTerminal,
 )
+from app.client_agent.shell_hook import build_managed_shell_command
 
 
 WINDOW_ID = UUID("87654321-4321-8765-4321-876543218765")
@@ -28,7 +38,12 @@ async def test_send_input_writes_raw_bytes_to_attached_pty(monkeypatch) -> None:
 
     monkeypatch.setattr(client_terminal.os, "write", fake_write)
     multiplexer = ClientTerminalMultiplexer()
-    multiplexer._attached[str(WINDOW_ID)] = _AttachedTerminal(master_fd=123, process=object(), task=keepalive)
+    multiplexer._attached[str(WINDOW_ID)] = _AttachedTerminal(
+        master_fd=123,
+        process=object(),
+        shadow_session="web_terminal_view__7",
+        task=keepalive,
+    )
     try:
         await multiplexer.send_input(WINDOW_ID, b"hello terminal\r")
     finally:
@@ -40,10 +55,68 @@ async def test_send_input_writes_raw_bytes_to_attached_pty(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_input_is_not_blocked_by_default_executor_starvation(monkeypatch) -> None:
+    writes: list[tuple[int, bytes]] = []
+    keepalive = asyncio.create_task(asyncio.sleep(10))
+    default_executor = ThreadPoolExecutor(max_workers=1)
+    default_worker_started = threading.Event()
+    release_default_worker = threading.Event()
+
+    def occupy_default_executor() -> None:
+        default_worker_started.set()
+        release_default_worker.wait(timeout=5)
+
+    def fake_write(fd: int, data: bytes) -> int:
+        writes.append((fd, data))
+        return len(data)
+
+    monkeypatch.setattr(client_terminal.os, "write", fake_write)
+    loop = asyncio.get_running_loop()
+    loop.set_default_executor(default_executor)
+    default_worker_task = loop.run_in_executor(None, occupy_default_executor)
+
+    multiplexer = ClientTerminalMultiplexer()
+    multiplexer._attached[str(WINDOW_ID)] = _AttachedTerminal(
+        master_fd=123,
+        process=object(),
+        shadow_session="web_terminal_view__7",
+        task=keepalive,
+    )
+    try:
+        deadline = loop.time() + 1
+        while not default_worker_started.is_set():
+            if loop.time() > deadline:
+                raise AssertionError("default executor worker did not start")
+            await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(
+            multiplexer.send_input(WINDOW_ID, b"hello terminal\r"),
+            timeout=0.5,
+        )
+    finally:
+        release_default_worker.set()
+        with contextlib.suppress(asyncio.CancelledError):
+            await default_worker_task
+        default_executor.shutdown(wait=True)
+        keepalive.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await keepalive
+
+    assert writes == [(123, b"hello terminal\r")]
+
+
+@pytest.mark.asyncio
 async def test_resize_applies_dimensions_to_attached_pty_and_shadow_tmux_window(monkeypatch) -> None:
     resizes: list[tuple[int, int, int]] = []
+    signals: list[int] = []
     calls: list[list[str]] = []
     keepalive = asyncio.create_task(asyncio.sleep(10))
+
+    class FakeProcess:
+        returncode = None
+
+        def send_signal(self, signal_number: int) -> None:
+            signals.append(signal_number)
 
     def fake_resize(fd: int, *, cols: int, rows: int) -> None:
         resizes.append((fd, cols, rows))
@@ -55,7 +128,12 @@ async def test_resize_applies_dimensions_to_attached_pty_and_shadow_tmux_window(
     monkeypatch.setattr(client_terminal, "_apply_pty_resize", fake_resize)
     multiplexer = ClientTerminalMultiplexer(runner=fake_run)
     multiplexer.register_window(WINDOW_ID, "client_pool", "@7")
-    multiplexer._attached[str(WINDOW_ID)] = _AttachedTerminal(master_fd=123, process=object(), task=keepalive)
+    multiplexer._attached[str(WINDOW_ID)] = _AttachedTerminal(
+        master_fd=123,
+        process=FakeProcess(),
+        shadow_session="web_terminal_view__7",
+        task=keepalive,
+    )
     try:
         await multiplexer.resize(WINDOW_ID, cols=41, rows=44)
     finally:
@@ -64,14 +142,22 @@ async def test_resize_applies_dimensions_to_attached_pty_and_shadow_tmux_window(
             await keepalive
 
     assert resizes == [(123, 41, 44)]
+    assert signals == [client_terminal.signal.SIGWINCH]
     assert calls == [["tmux", "resize-window", "-t", "web_terminal_view__7:@7", "-x", "41", "-y", "44"]]
 
 
 @pytest.mark.asyncio
 async def test_resize_ignores_repeated_dimensions(monkeypatch) -> None:
     resizes: list[tuple[int, int, int]] = []
+    signals: list[int] = []
     calls: list[list[str]] = []
     keepalive = asyncio.create_task(asyncio.sleep(10))
+
+    class FakeProcess:
+        returncode = None
+
+        def send_signal(self, signal_number: int) -> None:
+            signals.append(signal_number)
 
     def fake_resize(fd: int, *, cols: int, rows: int) -> None:
         resizes.append((fd, cols, rows))
@@ -83,7 +169,12 @@ async def test_resize_ignores_repeated_dimensions(monkeypatch) -> None:
     monkeypatch.setattr(client_terminal, "_apply_pty_resize", fake_resize)
     multiplexer = ClientTerminalMultiplexer(runner=fake_run)
     multiplexer.register_window(WINDOW_ID, "client_pool", "@7")
-    multiplexer._attached[str(WINDOW_ID)] = _AttachedTerminal(master_fd=123, process=object(), task=keepalive)
+    multiplexer._attached[str(WINDOW_ID)] = _AttachedTerminal(
+        master_fd=123,
+        process=FakeProcess(),
+        shadow_session="web_terminal_view__7",
+        task=keepalive,
+    )
     try:
         await multiplexer.resize(WINDOW_ID, cols=41, rows=44)
         await multiplexer.resize(WINDOW_ID, cols=41, rows=44)
@@ -94,10 +185,65 @@ async def test_resize_ignores_repeated_dimensions(monkeypatch) -> None:
             await keepalive
 
     assert resizes == [(123, 41, 44), (123, 42, 44)]
+    assert signals == [client_terminal.signal.SIGWINCH, client_terminal.signal.SIGWINCH]
     assert calls == [
         ["tmux", "resize-window", "-t", "web_terminal_view__7:@7", "-x", "41", "-y", "44"],
         ["tmux", "resize-window", "-t", "web_terminal_view__7:@7", "-x", "42", "-y", "44"],
     ]
+
+
+@pytest.mark.asyncio
+async def test_resize_returns_before_shadow_tmux_resize_completes(monkeypatch) -> None:
+    writes: list[tuple[int, bytes]] = []
+    resizes: list[tuple[int, int, int]] = []
+    shadow_resize_started = asyncio.Event()
+    release_shadow_resize = asyncio.Event()
+    keepalive = asyncio.create_task(asyncio.sleep(10))
+
+    class FakeProcess:
+        returncode = None
+
+        def send_signal(self, signal_number: int) -> None:
+            return None
+
+    def fake_resize(fd: int, *, cols: int, rows: int) -> None:
+        resizes.append((fd, cols, rows))
+
+    def fake_write(fd: int, data: bytes) -> int:
+        writes.append((fd, data))
+        return len(data)
+
+    async def fake_run(args: list[str]) -> str:
+        if args[:2] == ["tmux", "resize-window"]:
+            shadow_resize_started.set()
+            await release_shadow_resize.wait()
+        return ""
+
+    monkeypatch.setattr(client_terminal, "_apply_pty_resize", fake_resize)
+    monkeypatch.setattr(client_terminal.os, "write", fake_write)
+    multiplexer = ClientTerminalMultiplexer(runner=fake_run)
+    multiplexer.register_window(WINDOW_ID, "client_pool", "@7")
+    multiplexer._attached[str(WINDOW_ID)] = _AttachedTerminal(
+        master_fd=123,
+        process=FakeProcess(),
+        shadow_session="web_terminal_view__7",
+        task=keepalive,
+    )
+    try:
+        resize_task = asyncio.create_task(multiplexer.resize(WINDOW_ID, cols=100, rows=30))
+        await asyncio.wait_for(shadow_resize_started.wait(), timeout=1)
+
+        assert resize_task.done(), "resize must not block input behind shadow tmux resize"
+        await multiplexer.send_input(WINDOW_ID, b"x")
+    finally:
+        release_shadow_resize.set()
+        await asyncio.wait_for(resize_task, timeout=1)
+        keepalive.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await keepalive
+
+    assert resizes == [(123, 100, 30)]
+    assert writes == [(123, b"x")]
 
 
 @pytest.mark.asyncio
@@ -129,6 +275,8 @@ async def test_attach_streams_raw_tmux_pty_bytes(monkeypatch) -> None:
 
     async def fake_run(args: list[str]) -> str:
         calls.append(args)
+        if args == ["tmux", "display-message", "-p", "-t", "client_pool:@7", "#{window_id}"]:
+            return "@7\n"
         if args == ["tmux", "has-session", "-t", "web_terminal_view__7"]:
             raise RuntimeError("missing")
         return ""
@@ -171,14 +319,84 @@ async def test_attach_streams_raw_tmux_pty_bytes(monkeypatch) -> None:
 
     assert received == [b"\x1b[31mtmux\x1b[0m"]
     assert calls == [
+        ["tmux", "display-message", "-p", "-t", "client_pool:@7", "#{window_id}"],
         ["tmux", "has-session", "-t", "web_terminal_view__7"],
         ["tmux", "new-session", "-d", "-t", "client_pool", "-s", "web_terminal_view__7"],
         ["tmux", "set-option", "-t", "web_terminal_view__7", "window-size", "manual"],
         ["tmux", "select-window", "-t", "web_terminal_view__7:@7"],
+        ["tmux", "set-option", "-p", "-t", "web_terminal_view__7:@7", "allow-passthrough", "on"],
+        ["tmux", "kill-session", "-t", "web_terminal_view__7"],
     ]
     assert not any(call[:2] == ["tmux", "pipe-pane"] for call in calls)
     assert subprocess_calls[0][0][:4] == ("tmux", "attach-session", "-t", "web_terminal_view__7")
     assert raw_configured == [11]
+
+
+@pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is required")
+@pytest.mark.asyncio
+async def test_tmux_attach_stream_preserves_managed_shell_command_markers() -> None:
+    session = f"wt_marker_unit_{os.getpid()}_{int(time.time() * 1000)}"
+    env = {**os.environ, "TERM": "xterm-256color"}
+    managed_shell = build_managed_shell_command(
+        shell="/bin/bash",
+        client_id="12345678-1234-5678-1234-567812345678",
+        window_id=WINDOW_ID,
+        server_url="http://127.0.0.1:8000",
+        project_path="/tmp",
+    ).command
+
+    subprocess.run(["tmux", "kill-session", "-t", session], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+    try:
+        subprocess.run(
+            ["tmux", "new-session", "-d", "-s", session, "-x", "80", "-y", "24", managed_shell],
+            check=True,
+            env=env,
+        )
+        subprocess.run(
+            ["tmux", "set-option", "-t", session, "allow-passthrough", "on"],
+            check=True,
+            env=env,
+        )
+        master_fd, slave_fd = pty.openpty()
+        process = subprocess.Popen(
+            ["tmux", "attach-session", "-t", session],
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            close_fds=True,
+            env=env,
+        )
+        os.close(slave_fd)
+        try:
+            output = bytearray()
+            sent = False
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and b"web-terminal-command" not in output:
+                readable, _, _ = select.select([master_fd], [], [], 0.05)
+                if readable:
+                    try:
+                        chunk = os.read(master_fd, 65536)
+                    except OSError as exc:
+                        if exc.errno == errno.EIO:
+                            break
+                        raise
+                    output.extend(chunk)
+                    if not sent and (b"$ " in output or b"# " in output):
+                        os.write(master_fd, b"echo tmux-marker-test\n")
+                        sent = True
+                elif not sent and time.monotonic() > deadline - 3:
+                    os.write(master_fd, b"echo tmux-marker-test\n")
+                    sent = True
+
+            assert sent is True
+            assert b"web-terminal-command" in output
+        finally:
+            process.terminate()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=1)
+            os.close(master_fd)
+    finally:
+        subprocess.run(["tmux", "kill-session", "-t", session], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
 
 
 @pytest.mark.asyncio
@@ -193,6 +411,10 @@ async def test_watch_active_window_emits_selection_when_shadow_session_changes(
 
     async def fake_run(args: list[str]) -> str:
         calls.append(args)
+        if args == ["tmux", "display-message", "-p", "-t", "client_pool:@7", "#{window_id}"]:
+            return "@7\n"
+        if args == ["tmux", "display-message", "-p", "-t", "client_pool:@8", "#{window_id}"]:
+            return "@8\n"
         if args == ["tmux", "has-session", "-t", "web_terminal_view__7"]:
             return ""
         if args == ["tmux", "display-message", "-p", "-t", "web_terminal_view__7", "#{window_id}"]:
@@ -249,6 +471,139 @@ async def test_watch_active_window_emits_selection_when_shadow_session_changes(
 
 
 @pytest.mark.asyncio
+async def test_select_window_switches_view_shadow_session_without_new_attach() -> None:
+    calls: list[list[str]] = []
+    view_id = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    keepalive = asyncio.create_task(asyncio.sleep(10))
+
+    async def fake_run(args: list[str]) -> str:
+        calls.append(args)
+        if args == ["tmux", "display-message", "-p", "-t", "client_pool:@8", "#{window_id}"]:
+            return "@8\n"
+        return ""
+
+    class FakeProcess:
+        returncode = None
+
+        def send_signal(self, signal_number: int) -> None:
+            return None
+
+    multiplexer = ClientTerminalMultiplexer(runner=fake_run)
+    multiplexer.register_window(WINDOW_ID, "client_pool", "@7")
+    multiplexer.register_window(OTHER_WINDOW_ID, "client_pool", "@8")
+    multiplexer._attached[str(view_id)] = _AttachedTerminal(
+        master_fd=123,
+        process=FakeProcess(),
+        shadow_session="web_terminal_view_view_one",
+        task=keepalive,
+        size=(120, 40),
+    )
+    try:
+        await multiplexer.select_window(OTHER_WINDOW_ID, view_id=view_id)
+    finally:
+        keepalive.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await keepalive
+
+    assert calls == [
+        ["tmux", "display-message", "-p", "-t", "client_pool:@8", "#{window_id}"],
+        ["tmux", "select-window", "-t", f"web_terminal_view_{view_id}:@8"],
+        ["tmux", "select-window", "-t", "client_pool:@8"],
+        ["tmux", "resize-window", "-t", f"web_terminal_view_{view_id}:@8", "-x", "120", "-y", "40"],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_attach_fails_before_shadow_attach_when_registered_tmux_window_is_missing() -> None:
+    calls: list[list[str]] = []
+
+    async def fake_run(args: list[str]) -> str:
+        calls.append(args)
+        if args == ["tmux", "display-message", "-p", "-t", "client_pool:@7", "#{window_id}"]:
+            raise RuntimeError("missing window")
+        return ""
+
+    async def sender(_data: bytes) -> None:
+        return None
+
+    multiplexer = ClientTerminalMultiplexer(runner=fake_run)
+    multiplexer.register_window(WINDOW_ID, "client_pool", "@7")
+
+    with pytest.raises(RuntimeError, match="tmux window is missing"):
+        await multiplexer.attach(WINDOW_ID, sender)
+
+    assert calls == [["tmux", "display-message", "-p", "-t", "client_pool:@7", "#{window_id}"]]
+
+
+@pytest.mark.asyncio
+async def test_attach_fails_when_registered_tmux_target_resolves_to_different_window() -> None:
+    calls: list[list[str]] = []
+
+    async def fake_run(args: list[str]) -> str:
+        calls.append(args)
+        if args == ["tmux", "display-message", "-p", "-t", "client_pool:@7", "#{window_id}"]:
+            return "@8\n"
+        return ""
+
+    async def sender(_data: bytes) -> None:
+        return None
+
+    multiplexer = ClientTerminalMultiplexer(runner=fake_run)
+    multiplexer.register_window(WINDOW_ID, "client_pool", "@7")
+
+    with pytest.raises(RuntimeError, match="tmux window is missing"):
+        await multiplexer.attach(WINDOW_ID, sender)
+
+    assert calls == [["tmux", "display-message", "-p", "-t", "client_pool:@7", "#{window_id}"]]
+
+
+@pytest.mark.asyncio
+async def test_remove_window_detaches_matching_view_attachment(monkeypatch) -> None:
+    closed: list[int] = []
+    terminated: list[bool] = []
+    view_id = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    keepalive = asyncio.create_task(asyncio.sleep(10))
+
+    class FakeProcess:
+        returncode = None
+
+        def terminate(self) -> None:
+            terminated.append(True)
+            self.returncode = -15
+
+        async def wait(self) -> int:
+            return self.returncode or 0
+
+    monkeypatch.setattr(client_terminal.os, "close", lambda fd: closed.append(fd))
+
+    calls: list[list[str]] = []
+
+    async def fake_run(args: list[str]) -> str:
+        calls.append(args)
+        return ""
+
+    multiplexer = ClientTerminalMultiplexer(runner=fake_run)
+    multiplexer.register_window(WINDOW_ID, "client_pool", "@7")
+    multiplexer.register_window(OTHER_WINDOW_ID, "client_pool", "@8")
+    multiplexer._attached[str(view_id)] = _AttachedTerminal(
+        master_fd=123,
+        process=FakeProcess(),
+        shadow_session="web_terminal_view_view_one",
+        task=keepalive,
+    )
+    multiplexer._attachment_windows[str(view_id)] = str(OTHER_WINDOW_ID)
+
+    await multiplexer.remove_window(OTHER_WINDOW_ID)
+
+    assert closed == [123]
+    assert terminated == [True]
+    assert str(view_id) not in multiplexer._attached
+    assert str(view_id) not in multiplexer._attachment_windows
+    assert not multiplexer.is_registered(OTHER_WINDOW_ID)
+    assert ["tmux", "kill-session", "-t", "web_terminal_view_view_one"] in calls
+
+
+@pytest.mark.asyncio
 async def test_pipe_output_keeps_draining_pty_when_sender_back_pressures(monkeypatch) -> None:
     """The PTY reader must keep emptying the master fd even while the sender is
     stalled, so that a busy tmux pane never blocks user input through the same
@@ -274,6 +629,8 @@ async def test_pipe_output_keeps_draining_pty_when_sender_back_pressures(monkeyp
         await release_sender.wait()
 
     async def fake_run(args: list[str]) -> str:
+        if args == ["tmux", "display-message", "-p", "-t", "client_pool:@7", "#{window_id}"]:
+            return "@7\n"
         if args == ["tmux", "has-session", "-t", "web_terminal_view__7"]:
             return ""
         return ""
@@ -326,6 +683,68 @@ async def test_pipe_output_keeps_draining_pty_when_sender_back_pressures(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_pipe_output_sends_large_drained_buffer_in_small_chunks(monkeypatch) -> None:
+    oversized_output = b"A" * (PTY_OUTPUT_SEND_CHUNK_BYTES * 2 + 17)
+    sender_calls: list[bytes] = []
+    first_chunk_sent = asyncio.Event()
+
+    def fake_read(fd: int, size: int) -> bytes:
+        if fake_read.pending:
+            fake_read.pending = False
+            return oversized_output
+        raise OSError
+
+    fake_read.pending = True
+
+    async def sender(data: bytes) -> None:
+        sender_calls.append(data)
+        first_chunk_sent.set()
+
+    async def fake_run(args: list[str]) -> str:
+        if args == ["tmux", "display-message", "-p", "-t", "client_pool:@7", "#{window_id}"]:
+            return "@7\n"
+        if args == ["tmux", "has-session", "-t", "web_terminal_view__7"]:
+            return ""
+        return ""
+
+    class FakeProcess:
+        returncode = None
+
+        def terminate(self) -> None:
+            self.returncode = -15
+
+        async def wait(self) -> int:
+            return self.returncode or 0
+
+    async def fake_create_subprocess_exec(*args: object, **kwargs: object) -> FakeProcess:
+        return FakeProcess()
+
+    monkeypatch.setattr(client_terminal.pty, "openpty", lambda: (10, 11))
+    monkeypatch.setattr(client_terminal, "_configure_pty_slave", lambda fd: None)
+    monkeypatch.setattr(client_terminal.os, "close", lambda fd: None)
+    monkeypatch.setattr(client_terminal.os, "read", fake_read)
+    monkeypatch.setattr(client_terminal.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    multiplexer = ClientTerminalMultiplexer(runner=fake_run)
+    multiplexer.register_window(WINDOW_ID, "client_pool", "@7")
+    await multiplexer.attach(WINDOW_ID, sender)
+    await asyncio.wait_for(first_chunk_sent.wait(), timeout=1)
+
+    deadline = asyncio.get_event_loop().time() + 1
+    while b"".join(sender_calls) != oversized_output:
+        if asyncio.get_event_loop().time() > deadline:
+            raise AssertionError(f"sender did not receive all chunks: {list(map(len, sender_calls))}")
+        await asyncio.sleep(0.01)
+
+    await multiplexer.detach(WINDOW_ID)
+    assert [len(chunk) for chunk in sender_calls] == [
+        PTY_OUTPUT_SEND_CHUNK_BYTES,
+        PTY_OUTPUT_SEND_CHUNK_BYTES,
+        17,
+    ]
+
+
+@pytest.mark.asyncio
 async def test_pipe_output_drops_oldest_bytes_when_buffer_overflows(monkeypatch) -> None:
     """When the downstream is so slow that the in-memory buffer would grow past
     the configured cap, the reader must drop the oldest bytes instead of
@@ -355,6 +774,8 @@ async def test_pipe_output_drops_oldest_bytes_when_buffer_overflows(monkeypatch)
         await release_sender.wait()
 
     async def fake_run(args: list[str]) -> str:
+        if args == ["tmux", "display-message", "-p", "-t", "client_pool:@7", "#{window_id}"]:
+            return "@7\n"
         return ""
 
     class FakeProcess:

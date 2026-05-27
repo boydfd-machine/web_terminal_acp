@@ -100,7 +100,7 @@ async def test_codex_trace_ingest_creates_client_scoped_event(db_client):
 
 
 @pytest.mark.asyncio
-async def test_receive_codex_trace_links_ai_session_and_enqueues_summary_job(db_client):
+async def test_receive_codex_trace_links_ai_session_and_schedules_summary_job(db_client):
     _client, Session = db_client
     async with Session() as session:
         window = await create_local_window(session)

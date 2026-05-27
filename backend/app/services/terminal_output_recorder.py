@@ -28,6 +28,7 @@ _SECRET_FLAG_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _BEARER_PATTERN = re.compile(r"\bBearer\s+[^\s'\"]+", re.IGNORECASE)
+_AUTO_RESUME_MARKER = "WEB_TERMINAL_AUTO_RESUME=1"
 
 
 async def record_terminal_input_command(
@@ -39,7 +40,9 @@ async def record_terminal_input_command(
     cwd: str | None,
     captured_at: datetime,
     sequence: int | str | None,
-) -> Event:
+) -> Event | None:
+    if is_auto_resume_command(raw_command):
+        return None
     redacted_command = redact_terminal_command(raw_command)
     captured_at_value = _serialize_datetime(captured_at)
     fingerprint = _terminal_input_fingerprint(window_id, redacted_command, captured_at_value, sequence)
@@ -79,7 +82,7 @@ async def record_terminal_input_command(
         if cwd:
             window.cwd = cwd
         if agent_from_command(redacted_command) is None:
-            await schedule_summary_after_terminal_input(session, window, now=captured_at)
+            await schedule_summary_after_terminal_input(session, window)
 
     await session.commit()
     await session.refresh(event)
@@ -115,6 +118,8 @@ async def record_terminal_command_markers(
         raw_command = command.get("command")
         if not isinstance(raw_command, str) or raw_command == "":
             continue
+        if is_auto_resume_command(raw_command):
+            continue
         event = await record_terminal_input_command(
             session,
             client_id,
@@ -125,7 +130,8 @@ async def record_terminal_command_markers(
             _marker_captured_at(command),
             _marker_sequence(command),
         )
-        events.append(event)
+        if event is not None:
+            events.append(event)
     return events
 
 
@@ -141,6 +147,9 @@ async def record_terminal_command_finished(
     exit_status: int | str | None,
 ) -> Event | None:
     if sequence is None:
+        return None
+
+    if raw_command is not None and is_auto_resume_command(raw_command):
         return None
 
     redacted_command = redact_terminal_command(raw_command or "")
@@ -191,6 +200,13 @@ def redact_terminal_command(command: str) -> str:
     redacted = _SECRET_FLAG_PATTERN.sub(lambda match: f"{match.group(1)}[REDACTED]", redacted)
     redacted = _SECRET_ASSIGNMENT_PATTERN.sub(lambda match: f"{match.group(1)}=[REDACTED]", redacted)
     return redacted
+
+
+def is_auto_resume_command(command: str) -> bool:
+    return (
+        command.startswith(f"{_AUTO_RESUME_MARKER} ")
+        or f"&& {_AUTO_RESUME_MARKER} " in command
+    )
 
 
 async def _select_event_by_fingerprint(session: AsyncSession, client_id: UUID, fingerprint: str) -> Event | None:
@@ -283,9 +299,6 @@ async def record_terminal_output_chunk(
     )
     session.add(event)
     await session.flush()
-    window = await session.get(VirtualWindow, window_id)
-    if window is not None:
-        await schedule_summary_after_terminal_input(session, window)
     await session.commit()
     await session.refresh(event)
 

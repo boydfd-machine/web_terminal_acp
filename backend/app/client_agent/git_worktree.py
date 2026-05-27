@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-_GIT_TIMEOUT_SECONDS = 15.0
+_GIT_TIMEOUT_SECONDS = 2.0
 
 
 async def _run_git(cwd: str, *args: str) -> tuple[int, str, str]:
@@ -38,6 +38,13 @@ def is_linked_worktree_path(path: str) -> bool:
     return git_entry.is_file()
 
 
+def _main_repo_root_from_worktree_gitdir(gitdir: str) -> str | None:
+    common_dir = Path(gitdir).parent.parent
+    if common_dir.name == ".git":
+        return _normalize_path(str(common_dir.parent))
+    return _normalize_path(str(common_dir))
+
+
 async def detect_git_context(path: str) -> dict[str, Any]:
     normalized = _normalize_path(path)
     if not os.path.isdir(normalized):
@@ -61,7 +68,7 @@ async def detect_git_context(path: str) -> dict[str, Any]:
             gitdir_line = git_file.read_text(encoding="utf-8").strip()
             if gitdir_line.startswith("gitdir: "):
                 gitdir = _normalize_path(gitdir_line.removeprefix("gitdir: ").strip())
-                main_repo_root = _normalize_path(str(Path(gitdir).parent.parent))
+                main_repo_root = _main_repo_root_from_worktree_gitdir(gitdir)
         except OSError:
             main_repo_root = None
     else:
@@ -98,7 +105,7 @@ async def list_worktrees(main_repo_root: str) -> list[str]:
     return paths
 
 
-async def capture_worktree_snapshot(worktree_root: str) -> dict[str, Any]:
+async def capture_worktree_snapshot(worktree_root: str, *, base_head: str | None = None) -> dict[str, Any]:
     context = await detect_git_context(worktree_root)
     if not context.get("is_linked_worktree"):
         return {"is_linked_worktree": False, "worktree_root": worktree_root}
@@ -107,6 +114,7 @@ async def capture_worktree_snapshot(worktree_root: str) -> dict[str, Any]:
     _code, status_out, _stderr = await _run_git(root, "status", "--porcelain=v2")
     _code, diff_stat, _stderr = await _run_git(root, "diff", "--stat", "HEAD")
     _code, staged_stat, _stderr = await _run_git(root, "diff", "--cached", "--stat")
+    commits = await _capture_commit_diffs(root, base_head=base_head)
 
     return {
         "is_linked_worktree": True,
@@ -117,7 +125,134 @@ async def capture_worktree_snapshot(worktree_root: str) -> dict[str, Any]:
         "status_porcelain": status_out,
         "diff_stat": diff_stat,
         "staged_diff_stat": staged_stat,
+        "commits": commits,
     }
+
+
+async def _capture_commit_diffs(worktree_root: str, *, base_head: str | None) -> list[dict[str, Any]]:
+    rev_range = f"{base_head}..HEAD" if base_head else "main..HEAD"
+    code, log_out, _stderr = await _run_git(
+        worktree_root,
+        "log",
+        "--max-count=50",
+        "--date=iso-strict",
+        "--format=%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s",
+        "--name-status",
+        rev_range,
+    )
+    if code != 0 or not log_out.strip():
+        return []
+
+    commits: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for raw_line in log_out.splitlines():
+        line = raw_line.rstrip("\n")
+        if not line:
+            continue
+        parts = line.split("\x1f")
+        if len(parts) == 6:
+            if current is not None:
+                commits.append(current)
+            current = {
+                "sha": parts[0],
+                "short_sha": parts[1],
+                "author_name": parts[2],
+                "author_email": parts[3],
+                "authored_at": parts[4],
+                "subject": parts[5],
+                "files": [],
+            }
+            continue
+        if current is None:
+            continue
+        file_change = _parse_name_status_line(line)
+        if file_change is not None:
+            current["files"].append(file_change)
+    if current is not None:
+        commits.append(current)
+
+    for commit in commits:
+        sha = str(commit.get("sha") or "")
+        for file_change in commit["files"]:
+            patch = await _capture_file_patch(
+                worktree_root,
+                sha=sha,
+                path=str(file_change["path"]),
+                old_path=file_change.get("old_path"),
+            )
+            file_change.update(patch)
+    return commits
+
+
+def _parse_name_status_line(line: str) -> dict[str, Any] | None:
+    parts = line.split("\t")
+    if len(parts) < 2:
+        return None
+    raw_status = parts[0]
+    code = raw_status[:1]
+    if code in {"R", "C"} and len(parts) >= 3:
+        return {
+            "path": parts[2],
+            "old_path": parts[1],
+            "status": "renamed" if code == "R" else "copied",
+        }
+    statuses = {
+        "A": "added",
+        "M": "modified",
+        "D": "deleted",
+        "T": "type_changed",
+        "U": "unmerged",
+    }
+    return {
+        "path": parts[1],
+        "old_path": None,
+        "status": statuses.get(code, raw_status),
+    }
+
+
+async def _capture_file_patch(
+    worktree_root: str,
+    *,
+    sha: str,
+    path: str,
+    old_path: object,
+) -> dict[str, Any]:
+    if not sha:
+        return {"patch": "", "additions": 0, "deletions": 0}
+    diff_args = ["show", "--format=", "--numstat", "--patch", "--find-renames", sha, "--"]
+    if isinstance(old_path, str) and old_path:
+        diff_args.append(old_path)
+    diff_args.append(path)
+    code, output, _stderr = await _run_git(worktree_root, *diff_args)
+    if code != 0:
+        return {"patch": "", "additions": 0, "deletions": 0}
+
+    additions = 0
+    deletions = 0
+    patch_lines: list[str] = []
+    in_patch = False
+    for line in output.splitlines():
+        if line.startswith("diff --git "):
+            in_patch = True
+        if not in_patch:
+            fields = line.split("\t")
+            if len(fields) >= 3:
+                additions += _parse_numstat_count(fields[0])
+                deletions += _parse_numstat_count(fields[1])
+            continue
+        patch_lines.append(line)
+    return {
+        "patch": "\n".join(patch_lines),
+        "additions": additions,
+        "deletions": deletions,
+    }
+
+
+def _parse_numstat_count(value: str) -> int:
+    try:
+        return int(value)
+    except ValueError:
+        return 0
 
 
 async def handle_git_worktree_request(payload: dict[str, Any]) -> dict[str, Any]:
@@ -133,7 +268,8 @@ async def handle_git_worktree_request(payload: dict[str, Any]) -> dict[str, Any]
         worktree_root = payload.get("worktree_root")
         if not isinstance(worktree_root, str) or not worktree_root.strip():
             return {"ok": False, "error": "worktree_root is required"}
-        snapshot = await capture_worktree_snapshot(worktree_root)
+        base_head = payload.get("base_head") if isinstance(payload.get("base_head"), str) else None
+        snapshot = await capture_worktree_snapshot(worktree_root, base_head=base_head)
         return {"ok": True, "snapshot": snapshot}
 
     if action == "list_worktrees":

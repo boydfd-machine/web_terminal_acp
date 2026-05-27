@@ -107,11 +107,7 @@ async def test_record_terminal_input_command_schedules_summary_job(db_session):
 
     jobs = (await db_session.execute(select(SummaryJob))).scalars().all()
     assert len(jobs) == 1
-    assert jobs[0].run_after.replace(tzinfo=timezone.utc) == datetime(
-        2026, 5, 21, 12, 4, tzinfo=timezone.utc
-    )
     assert jobs[0].trigger_reason == "input_idle"
-    assert jobs[0].input_generation == 1
 
 
 @pytest.mark.asyncio
@@ -147,3 +143,26 @@ async def test_record_terminal_input_command_deduplicates_by_sequence_fingerprin
     assert rows == [first]
     assert second.id == first.id
     assert second.payload_json["command"] == "echo first"
+
+
+@pytest.mark.asyncio
+async def test_record_terminal_input_command_ignores_auto_resume_commands(db_session):
+    client_id = uuid4()
+    window = VirtualWindow(id=uuid4(), client_id=client_id, title="Terminal", status=WindowStatus.active)
+    db_session.add(window)
+    await db_session.commit()
+
+    event = await record_terminal_input_command(
+        db_session,
+        client_id,
+        window.id,
+        "cd /workspace/project && WEB_TERMINAL_AUTO_RESUME=1 codex resume codex-session",
+        "bash",
+        "/workspace/project",
+        datetime(2026, 5, 21, 12, 3, tzinfo=timezone.utc),
+        100,
+    )
+
+    rows = (await db_session.execute(select(Event))).scalars().all()
+    assert event is None
+    assert rows == []

@@ -36,6 +36,56 @@ def test_codex_projects_user_response_item_chat() -> None:
     assert chat.is_duplicate_candidate is False
 
 
+def test_codex_projects_user_context_is_not_chat() -> None:
+    event = make_event(
+        {
+            "raw_type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "# AGENTS.md instructions for /workspace\n\n<INSTRUCTIONS>...</INSTRUCTIONS>",
+                    }
+                ],
+            },
+        }
+    )
+
+    adapter = CodexAdapter()
+    chat = adapter.project_chat(event)
+    projection = adapter.project_event(event)
+
+    assert chat is None
+    assert projection.tone == "context"
+    assert projection.label == "Context"
+
+
+def test_codex_projects_goal_context_extracts_objective_chat() -> None:
+    event = make_event(
+        {
+            "raw_type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "<goal_context>\n<objective>\n剔除 summary 里的默认 user input\n</objective>\n</goal_context>",
+                    }
+                ],
+            },
+        }
+    )
+
+    chat = CodexAdapter().project_chat(event)
+
+    assert chat is not None
+    assert chat.role == "user"
+    assert chat.body == "剔除 summary 里的默认 user input"
+
+
 def test_codex_storage_keeps_managed_per_window_home() -> None:
     storage = CodexAdapter().prepare_storage("window-1")
 

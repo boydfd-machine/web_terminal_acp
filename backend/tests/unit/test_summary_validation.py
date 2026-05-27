@@ -177,6 +177,8 @@ def test_build_summary_prompt_includes_context_and_output_contract():
     assert "summary" in prompt
     assert "tags" in prompt
     assert "folder_path" in prompt
+    assert "session_messages contains only user input" in prompt
+    assert "raw tool activity" in prompt
     assert json.dumps(context_items, ensure_ascii=False, sort_keys=True, indent=2) in prompt
 
 

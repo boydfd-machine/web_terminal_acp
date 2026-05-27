@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import time
 from uuid import UUID
@@ -14,20 +15,28 @@ from app.models import LOCAL_CLIENT_ID, VirtualWindow, WindowStatus
 from app.repositories.clients import get_client
 from app.repositories.windows import get_window_for_client
 from app.repositories.windows import get_window_for_local_tmux_target
+from app.repositories.windows import patch_runtime_window
 from app.routers.ui_events import ui_event_hub_from_state
 from app.services.runtime.broker import TerminalBroker, TerminalRuntimeUnavailable, terminal_status_message
 from app.services.runtime.client_connections import ClientConnectionRegistry
 from app.services.runtime.local import LocalTerminalRuntime
 from app.services.runtime.remote import RemoteClientUnavailable, RemoteRuntime, RemoteTerminalError
 from app.services.runtime.types import RuntimeWindow
-from app.services.terminal_bridge import ResizeControl, parse_text_input
-from app.services.terminal_command_marker import CommandMarkerExtractor
+from app.services.terminal_bridge import ResizeControl, SelectWindowControl, parse_text_input
+from app.services.terminal_stream_markers import TerminalStreamMarkerExtractor
+from app.services.git_worktree_coordinator import (
+    commands_need_git_worktree_tracking,
+    git_worktree_agent_run_sequences,
+    process_git_worktree_snapshot_refresh,
+    process_terminal_commands_for_git,
+    process_worktree_registration,
+)
 from app.services.terminal_output_recorder import (
     record_terminal_command_markers,
     record_terminal_output_chunk,
 )
 from app.services.terminal_selection import TerminalSelectionHub
-from app.services.tmux_manager import TmuxCommandError, TmuxManager, TmuxTarget, get_tmux_manager
+from app.services.tmux_manager import TmuxCommandError, TmuxManager, get_tmux_manager
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["terminal"])
@@ -88,6 +97,58 @@ def _ui_event_hub(websocket: WebSocket):
     return ui_event_hub_from_state(websocket.app.state)
 
 
+def _runtime_window_from_virtual_window(window: VirtualWindow) -> tuple[RuntimeWindow, bool, bool] | None:
+    is_local_window = window.tmux_session is not None and window.tmux_window_id is not None
+    is_remote_window = window.remote_session_id is not None and window.remote_window_id is not None
+    if is_local_window:
+        return (
+            RuntimeWindow(
+                session_id=window.tmux_session,
+                window_id=window.tmux_window_id,
+                cwd=window.cwd,
+                shell_command=window.shell_command,
+            ),
+            True,
+            False,
+        )
+    if is_remote_window:
+        return (
+            RuntimeWindow(
+                session_id=window.remote_session_id,
+                window_id=window.remote_window_id,
+                cwd=window.cwd,
+                shell_command=window.shell_command,
+            ),
+            False,
+            True,
+        )
+    return None
+
+
+async def _persist_runtime_window(
+    client_id: UUID,
+    window_id: UUID,
+    runtime_window: RuntimeWindow,
+    *,
+    is_local_window: bool,
+    is_remote_window: bool,
+) -> None:
+    async with SessionLocal() as session:
+        await patch_runtime_window(
+            session,
+            client_id,
+            window_id,
+            tmux_session=runtime_window.session_id if is_local_window else None,
+            tmux_window_id=runtime_window.window_id if is_local_window else None,
+            remote_session_id=runtime_window.session_id if is_remote_window else None,
+            remote_window_id=runtime_window.window_id if is_remote_window else None,
+            cwd=runtime_window.cwd,
+            shell_command=runtime_window.shell_command,
+        )
+        with contextlib.suppress(Exception):
+            await session.commit()
+
+
 async def _mark_window_error(client_id: UUID, window_id: UUID) -> None:
     async with SessionLocal() as session:
         window = await get_window_for_client(session, client_id, window_id)
@@ -136,13 +197,24 @@ async def terminal_websocket(
     window_id: UUID,
     tmux_manager: TmuxManager = Depends(get_tmux_manager),
 ) -> None:
+    query_params = getattr(websocket, "query_params", {})
+    view_id_text = query_params.get("view_id")
+    try:
+        view_id = UUID(view_id_text) if view_id_text else window_id
+    except ValueError:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
     async with SessionLocal() as session:
         window = await get_window_for_client(session, client_id, window_id)
         if window is None:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
-        is_local_window = window.tmux_session is not None and window.tmux_window_id is not None
-        is_remote_window = window.remote_session_id is not None and window.remote_window_id is not None
+        runtime_result = _runtime_window_from_virtual_window(window)
+        if runtime_result is None:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        runtime_window, is_local_window, is_remote_window = runtime_result
         if window.status is WindowStatus.disconnected and not is_remote_window:
             await websocket.accept()
             await websocket.send_text(
@@ -153,29 +225,6 @@ async def terminal_websocket(
                 )
             )
             await websocket.close()
-            return
-        if is_local_window:
-            runtime_window = RuntimeWindow(
-                session_id=window.tmux_session,
-                window_id=window.tmux_window_id,
-            )
-            if not await tmux_manager.has_window(
-                TmuxTarget(session=window.tmux_session, window_id=window.tmux_window_id)
-            ):
-                mark_window_error(window)
-                with contextlib.suppress(Exception):
-                    await session.commit()
-                await websocket.accept()
-                await websocket.send_text(terminal_status_message("error", reason="attach_failed"))
-                await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
-                return
-        elif is_remote_window:
-            runtime_window = RuntimeWindow(
-                session_id=window.remote_session_id,
-                window_id=window.remote_window_id,
-            )
-        else:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
 
     broker = _terminal_broker(websocket, tmux_manager)
@@ -197,22 +246,29 @@ async def terminal_websocket(
         remote_runtime = RemoteRuntime(client_id=client_id, registry=registry)
         broker.register_runtime(client_id, remote_runtime)
 
-    marker_extractor = CommandMarkerExtractor()
+    marker_extractor = TerminalStreamMarkerExtractor()
     current_window_id = window_id
+    current_runtime_window = runtime_window
     browser_input_seen = False
     attach_started_at = time.monotonic()
 
-    async def publish_selection(runtime_window: RuntimeWindow) -> None:
-        nonlocal current_window_id
+    async def publish_selection(selected_runtime_window: RuntimeWindow) -> None:
+        nonlocal current_window_id, current_runtime_window, marker_extractor
         selected_window_id = await _local_runtime_window_to_virtual_window_id(
             client_id,
-            runtime_window,
+            selected_runtime_window,
         )
         if selected_window_id is None:
             return
         current_window_id = selected_window_id
-        await _terminal_selection_hub(websocket).publish(client_id, selected_window_id)
-        await _ui_event_hub(websocket).publish_terminal_selection(client_id, selected_window_id)
+        current_runtime_window = selected_runtime_window
+        marker_extractor = TerminalStreamMarkerExtractor()
+        await websocket.send_text(json.dumps({
+            "type": "terminal_selection",
+            "client_id": str(client_id),
+            "window_id": str(selected_window_id),
+            "view_id": str(view_id),
+        }, separators=(",", ":")))
 
     async def _record_local_terminal_output(
         target_window_id: UUID,
@@ -234,7 +290,7 @@ async def terminal_websocket(
                 if command_events:
                     with contextlib.suppress(Exception):
                         await _ui_event_hub(websocket).publish_invalidation(
-                            ["agent_record", "window", "tree", "search"],
+                            ["agent_record", "command_history", "window", "tree", "search"],
                             client_id=client_id,
                             window_id=target_window_id,
                             reason="terminal_command",
@@ -261,37 +317,194 @@ async def terminal_websocket(
         except Exception:
             logger.exception("terminal output recording failed")
 
-    async def record_and_publish_output(data: bytes) -> None:
-        target_window_id = current_window_id
-        clean_data, commands = marker_extractor.feed(data)
-        is_attach_snapshot = (
-            bool(commands or clean_data)
-            and not browser_input_seen
-            and time.monotonic() - attach_started_at <= ATTACH_SNAPSHOT_GRACE_SECONDS
+    async def _record_local_git_worktree_tracking(
+        target_window_id: UUID,
+        commands: list,
+        worktree_markers: list,
+        *,
+        is_attach_snapshot: bool,
+    ) -> None:
+        command_list = list(commands)
+        commands_require_git = commands_need_git_worktree_tracking(command_list)
+        if (
+            is_attach_snapshot
+            or (not worktree_markers and not commands_require_git)
+        ):
+            return
+        try:
+            changed = False
+            async with SessionLocal() as session:
+                for marker in worktree_markers:
+                    if str(marker.get("window_id")) != str(target_window_id):
+                        continue
+                    await process_worktree_registration(
+                        session,
+                        client_id=client_id,
+                        window_id=target_window_id,
+                        marker=marker,
+                        registry=None,
+                    )
+                    changed = True
+                if commands_require_git:
+                    await process_terminal_commands_for_git(
+                        session,
+                        client_id=client_id,
+                        window_id=target_window_id,
+                        commands=command_list,
+                        registry=None,
+                    )
+                    changed = True
+                if not changed:
+                    return
+                await session.commit()
+                snapshot_changed = await process_git_worktree_snapshot_refresh(
+                    session,
+                    client_id=client_id,
+                    window_id=target_window_id,
+                    registry=None,
+                    command_sequences=git_worktree_agent_run_sequences(command_list) or None,
+                )
+                if snapshot_changed:
+                    await session.commit()
+            if changed or snapshot_changed:
+                with contextlib.suppress(Exception):
+                    await _ui_event_hub(websocket).publish_invalidation(
+                        ["window", "tree", "git_runs"],
+                        client_id=client_id,
+                        window_id=target_window_id,
+                        reason="git_worktree",
+                    )
+        except Exception:
+            logger.exception("local git worktree tracking failed")
+
+    async def _record_local_git_worktree_tracking_task(
+        target_window_id: UUID,
+        commands: list,
+        worktree_markers: list,
+        *,
+        is_attach_snapshot: bool,
+    ) -> None:
+        await _record_local_git_worktree_tracking(
+            target_window_id,
+            commands,
+            worktree_markers,
+            is_attach_snapshot=is_attach_snapshot,
         )
-        if clean_data:
-            await broker.publish_output(client_id, target_window_id, clean_data)
-        if (commands or clean_data) and not is_attach_snapshot:
+
+    async def _record_local_terminal_output_task(
+        target_window_id: UUID,
+        clean_data: bytes,
+        commands: list,
+        worktree_markers: list,
+        *,
+        is_attach_snapshot: bool,
+    ) -> None:
+        await _record_local_terminal_output(
+            target_window_id,
+            clean_data,
+            commands,
+            is_attach_snapshot=is_attach_snapshot,
+        )
+        if worktree_markers or commands_need_git_worktree_tracking(list(commands)):
             asyncio.create_task(
-                _record_local_terminal_output(
+                _record_local_git_worktree_tracking_task(
                     target_window_id,
-                    clean_data,
                     commands,
+                    worktree_markers,
                     is_attach_snapshot=is_attach_snapshot,
                 )
             )
 
+    async def record_and_publish_output(data: bytes) -> None:
+        target_window_id = current_window_id
+        clean_data, commands, worktree_markers = marker_extractor.feed(data)
+        is_attach_snapshot = (
+            bool(commands or worktree_markers or clean_data)
+            and not browser_input_seen
+            and time.monotonic() - attach_started_at <= ATTACH_SNAPSHOT_GRACE_SECONDS
+        )
+        if clean_data:
+            await broker.publish_view_output(client_id, view_id, clean_data)
+        if (commands or worktree_markers or clean_data) and not is_attach_snapshot:
+            asyncio.create_task(
+                _record_local_terminal_output_task(
+                    target_window_id,
+                    clean_data,
+                    commands,
+                    worktree_markers,
+                    is_attach_snapshot=is_attach_snapshot,
+                )
+            )
+
+    async def select_active_window(next_window_id: UUID) -> bool:
+        nonlocal current_window_id, current_runtime_window, is_local_window, is_remote_window
+        nonlocal marker_extractor, attach_started_at, browser_input_seen
+        if next_window_id == current_window_id:
+            return True
+        async with SessionLocal() as session:
+            next_window = await get_window_for_client(session, client_id, next_window_id)
+            if next_window is None:
+                return False
+            runtime_result = _runtime_window_from_virtual_window(next_window)
+            if runtime_result is None:
+                return False
+            next_runtime_window, next_is_local_window, next_is_remote_window = runtime_result
+
+        selected_runtime_window = await broker.select_window(
+            client_id,
+            view_id,
+            current_window_id,
+            current_runtime_window,
+            next_window_id,
+            next_runtime_window,
+        )
+        if selected_runtime_window != next_runtime_window:
+            await _persist_runtime_window(
+                client_id,
+                next_window_id,
+                selected_runtime_window,
+                is_local_window=next_is_local_window,
+                is_remote_window=next_is_remote_window,
+            )
+            next_runtime_window = selected_runtime_window
+        current_window_id = next_window_id
+        current_runtime_window = next_runtime_window
+        is_local_window = next_is_local_window
+        is_remote_window = next_is_remote_window
+        marker_extractor = TerminalStreamMarkerExtractor()
+        attach_started_at = time.monotonic()
+        browser_input_seen = False
+        await _mark_window_active(client_id, next_window_id)
+        await websocket.send_text(json.dumps({
+            "type": "terminal_selection",
+            "client_id": str(client_id),
+            "window_id": str(next_window_id),
+            "view_id": str(view_id),
+        }, separators=(",", ":")))
+        return True
+
     await websocket.accept()
-    await broker.subscribe(client_id, window_id, websocket.send_bytes, websocket.send_text)
+    await broker.subscribe(client_id, view_id, websocket.send_bytes, websocket.send_text)
     try:
         try:
-            await broker.attach(
+            attached_runtime_window = await broker.attach(
                 client_id,
                 window_id,
                 runtime_window,
                 output_callback=record_and_publish_output if is_local_window else None,
                 selection_callback=publish_selection if is_local_window else None,
+                view_id=view_id,
             )
+            if attached_runtime_window is not None and attached_runtime_window != runtime_window:
+                runtime_window = attached_runtime_window
+                current_runtime_window = attached_runtime_window
+                await _persist_runtime_window(
+                    client_id,
+                    window_id,
+                    runtime_window,
+                    is_local_window=is_local_window,
+                    is_remote_window=is_remote_window,
+                )
         except RemoteClientUnavailable:
             await _mark_window_disconnected(client_id, window_id)
             await websocket.send_text(
@@ -320,9 +533,15 @@ async def terminal_websocket(
             if message.get("bytes") is not None:
                 try:
                     browser_input_seen = True
-                    await broker.send_input(client_id, window_id, runtime_window, message["bytes"])
+                    await broker.send_input(
+                        client_id,
+                        current_window_id,
+                        current_runtime_window,
+                        message["bytes"],
+                        view_id=view_id,
+                    )
                 except RemoteClientUnavailable:
-                    await _mark_window_disconnected(client_id, window_id)
+                    await _mark_window_disconnected(client_id, current_window_id)
                     await broker.clear_client(
                         client_id,
                         status_message=terminal_status_message(
@@ -336,17 +555,40 @@ async def terminal_websocket(
                 continue
             if message.get("text") is not None:
                 action = parse_text_input(message["text"])
-                if isinstance(action, ResizeControl):
+                if isinstance(action, SelectWindowControl):
+                    try:
+                        if not await select_active_window(action.window_id):
+                            await websocket.send_text(
+                                terminal_status_message("error", reason="select_failed")
+                            )
+                    except RemoteClientUnavailable:
+                        await _mark_window_disconnected(client_id, current_window_id)
+                        await broker.clear_client(
+                            client_id,
+                            status_message=terminal_status_message(
+                                "unavailable",
+                                reason="client_offline",
+                                retry_after_ms=REMOTE_RECONNECT_RETRY_AFTER_MS,
+                            ),
+                        )
+                        await websocket.close(code=1013)
+                        return
+                    except (TerminalRuntimeUnavailable, TmuxCommandError, RemoteTerminalError, RuntimeError):
+                        await websocket.send_text(
+                            terminal_status_message("error", reason="select_failed")
+                        )
+                elif isinstance(action, ResizeControl):
                     try:
                         await broker.resize(
                             client_id,
-                            window_id,
-                            runtime_window,
+                            current_window_id,
+                            current_runtime_window,
                             cols=action.cols,
                             rows=action.rows,
+                            view_id=view_id,
                         )
                     except RemoteClientUnavailable:
-                        await _mark_window_disconnected(client_id, window_id)
+                        await _mark_window_disconnected(client_id, current_window_id)
                         await broker.clear_client(
                             client_id,
                             status_message=terminal_status_message(
@@ -360,9 +602,15 @@ async def terminal_websocket(
                 elif isinstance(action, bytes):
                     browser_input_seen = True
                     try:
-                        await broker.send_input(client_id, window_id, runtime_window, action)
+                        await broker.send_input(
+                            client_id,
+                            current_window_id,
+                            current_runtime_window,
+                            action,
+                            view_id=view_id,
+                        )
                     except RemoteClientUnavailable:
-                        await _mark_window_disconnected(client_id, window_id)
+                        await _mark_window_disconnected(client_id, current_window_id)
                         await broker.clear_client(
                             client_id,
                             status_message=terminal_status_message(
@@ -376,11 +624,11 @@ async def terminal_websocket(
     except WebSocketDisconnect:
         return
     except RemoteClientUnavailable:
-        await _mark_window_disconnected(client_id, window_id)
+        await _mark_window_disconnected(client_id, current_window_id)
         await websocket.close(code=1013)
         return
     finally:
-        await broker.unsubscribe(client_id, window_id, websocket.send_bytes, websocket.send_text)
+        await broker.unsubscribe(client_id, view_id, websocket.send_bytes, websocket.send_text)
 
 
 @router.websocket("/api/terminal/{window_id}")

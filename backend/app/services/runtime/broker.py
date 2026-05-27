@@ -4,7 +4,9 @@ import asyncio
 import contextlib
 import json
 import logging
+from collections import deque
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from uuid import UUID
 
 from app.services.runtime.types import (
@@ -16,14 +18,13 @@ from app.services.runtime.types import (
 
 logger = logging.getLogger(__name__)
 
-# Maximum time a single subscriber is allowed to spend processing a publish
-# before the broker considers it unresponsive and drops it. A subscriber that
-# blocks here (e.g. a browser WebSocket whose TCP send buffer is full because
-# the client is too slow / has died without RST) would otherwise stall the
-# bulk-WS worker that publishes terminal output, which in turn back-pressures
-# all the way to the client agent and starves new output from any other
-# terminal sharing the same bulk connection.
+# Per-browser terminal subscribers get their own writer queue. This keeps the
+# client-agent bulk-output worker from waiting on slow WAN websocket sends while
+# still bounding memory for dead or overloaded browsers.
 PUBLISH_OUTPUT_SUBSCRIBER_TIMEOUT_SECONDS = 5.0
+SUBSCRIBER_WRITER_QUEUE_MAX_BYTES = 4 * 1024 * 1024
+SUBSCRIBER_WRITER_QUEUE_MAX_MESSAGES = 1024
+SUBSCRIBER_WRITER_COALESCE_BYTES = 64 * 1024
 
 
 class TerminalRuntimeUnavailable(RuntimeError):
@@ -47,12 +48,133 @@ def terminal_status_message(
     return json.dumps(payload, separators=(",", ":"))
 
 
+@dataclass
+class _QueuedSubscriberMessage:
+    payload: bytes | str
+    size: int
+
+
+class _TerminalSubscriberWriter:
+    def __init__(
+        self,
+        *,
+        client_id: UUID,
+        window_id: UUID,
+        output_sender: TerminalSender,
+        status_sender: TerminalStatusSender | None,
+        on_failure: Callable[["_TerminalSubscriberWriter", BaseException], Awaitable[None]],
+        send_timeout_seconds: float | None = None,
+        max_bytes: int | None = None,
+        max_messages: int | None = None,
+        coalesce_bytes: int | None = None,
+    ) -> None:
+        self.client_id = client_id
+        self.window_id = window_id
+        self.output_sender = output_sender
+        self.status_sender = status_sender
+        self._on_failure = on_failure
+        self._send_timeout_seconds = send_timeout_seconds or PUBLISH_OUTPUT_SUBSCRIBER_TIMEOUT_SECONDS
+        self._max_bytes = max_bytes or SUBSCRIBER_WRITER_QUEUE_MAX_BYTES
+        self._max_messages = max_messages or SUBSCRIBER_WRITER_QUEUE_MAX_MESSAGES
+        self._coalesce_bytes = coalesce_bytes or SUBSCRIBER_WRITER_COALESCE_BYTES
+        self._queue: deque[_QueuedSubscriberMessage] = deque()
+        self._queued_bytes = 0
+        self._condition = asyncio.Condition()
+        self._closed = False
+        self._task: asyncio.Task[None] | None = None
+
+    def start(self) -> None:
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._run())
+
+    async def enqueue_output(self, data: bytes) -> bool:
+        return await self._enqueue(data)
+
+    async def enqueue_status(self, message: str) -> bool:
+        return await self._enqueue(message)
+
+    async def close(self) -> None:
+        async with self._condition:
+            if self._closed:
+                return
+            self._closed = True
+            self._queue.clear()
+            self._queued_bytes = 0
+            self._condition.notify_all()
+        task = self._task
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    async def _enqueue(self, payload: bytes | str) -> bool:
+        size = len(payload) if isinstance(payload, bytes) else len(payload.encode("utf-8"))
+        if size > self._max_bytes:
+            return False
+        async with self._condition:
+            if self._closed:
+                return False
+            if (
+                len(self._queue) >= self._max_messages
+                or self._queued_bytes + size > self._max_bytes
+            ):
+                return False
+            if (
+                isinstance(payload, bytes)
+                and self._queue
+                and isinstance(self._queue[-1].payload, bytes)
+                and self._queue[-1].size + size <= self._coalesce_bytes
+            ):
+                self._queue[-1].payload += payload
+                self._queue[-1].size += size
+            else:
+                self._queue.append(_QueuedSubscriberMessage(payload=payload, size=size))
+            self._queued_bytes += size
+            self._condition.notify()
+        self.start()
+        return True
+
+    async def _next_message(self) -> _QueuedSubscriberMessage | None:
+        async with self._condition:
+            while not self._queue and not self._closed:
+                await self._condition.wait()
+            if not self._queue:
+                return None
+            message = self._queue.popleft()
+            self._queued_bytes -= message.size
+            return message
+
+    async def _run(self) -> None:
+        try:
+            while True:
+                message = await self._next_message()
+                if message is None:
+                    return
+                sender = self.output_sender if isinstance(message.payload, bytes) else self.status_sender
+                if sender is None:
+                    continue
+                await asyncio.wait_for(
+                    sender(message.payload),  # type: ignore[arg-type]
+                    timeout=self._send_timeout_seconds,
+                )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            async with self._condition:
+                self._closed = True
+                self._queue.clear()
+                self._queued_bytes = 0
+                self._condition.notify_all()
+            await self._on_failure(self, exc)
+
+
 class TerminalBroker:
     def __init__(self) -> None:
         self._runtimes: dict[UUID, TerminalRuntime] = {}
-        self._subscribers: dict[tuple[UUID, UUID], set[TerminalSender]] = {}
-        self._status_subscribers: dict[tuple[UUID, UUID], set[TerminalStatusSender]] = {}
+        self._subscribers: dict[tuple[UUID, UUID], dict[TerminalSender, _TerminalSubscriberWriter]] = {}
+        self._status_subscribers: dict[tuple[UUID, UUID], dict[TerminalStatusSender, _TerminalSubscriberWriter]] = {}
         self._attachments: dict[tuple[UUID, UUID], RuntimeWindow] = {}
+        self._attachment_window_ids: dict[tuple[UUID, UUID], UUID] = {}
         self._detaches: dict[tuple[UUID, UUID], asyncio.Task[None]] = {}
         self._lock = asyncio.Lock()
 
@@ -69,11 +191,30 @@ class TerminalBroker:
         sender: TerminalSender,
         status_sender: TerminalStatusSender | None = None,
     ) -> None:
+        existing_writers: list[_TerminalSubscriberWriter] = []
+        writer = _TerminalSubscriberWriter(
+            client_id=client_id,
+            window_id=window_id,
+            output_sender=sender,
+            status_sender=status_sender,
+            on_failure=self._handle_subscriber_writer_failure,
+        )
         async with self._lock:
             key = (client_id, window_id)
-            self._subscribers.setdefault(key, set()).add(sender)
+            existing = self._subscribers.get(key, {}).get(sender)
+            if existing is not None:
+                existing_writers.append(existing)
             if status_sender is not None:
-                self._status_subscribers.setdefault(key, set()).add(status_sender)
+                existing_status = self._status_subscribers.get(key, {}).get(status_sender)
+                if existing_status is not None and existing_status not in existing_writers:
+                    existing_writers.append(existing_status)
+            for existing_writer in existing_writers:
+                self._remove_writer_locked(key, existing_writer)
+            self._subscribers.setdefault(key, {})[sender] = writer
+            if status_sender is not None:
+                self._status_subscribers.setdefault(key, {})[status_sender] = writer
+        for existing in existing_writers:
+            await existing.close()
 
     async def unsubscribe(
         self,
@@ -84,29 +225,41 @@ class TerminalBroker:
     ) -> None:
         key = (client_id, window_id)
         detach_task: asyncio.Task[None] | None = None
+        writers_to_close: list[_TerminalSubscriberWriter] = []
         async with self._lock:
-            subscribers = self._subscribers.get(key)
-            if subscribers is not None:
-                subscribers.discard(sender)
-                if not subscribers:
-                    self._subscribers.pop(key, None)
+            writer = self._subscribers.get(key, {}).get(sender)
+            if writer is not None:
+                self._remove_writer_locked(key, writer)
+                writers_to_close.append(writer)
 
-            status_subscribers = self._status_subscribers.get(key)
-            if status_subscribers is not None and status_sender is not None:
-                status_subscribers.discard(status_sender)
-                if not status_subscribers:
-                    self._status_subscribers.pop(key, None)
+            status_writer = (
+                self._status_subscribers.get(key, {}).get(status_sender)
+                if status_sender is not None
+                else None
+            )
+            if status_writer is not None:
+                self._remove_writer_locked(key, status_writer)
+                if status_writer not in writers_to_close:
+                    writers_to_close.append(status_writer)
 
             if key not in self._subscribers and key not in self._status_subscribers:
                 self._subscribers.pop(key, None)
                 self._status_subscribers.pop(key, None)
                 runtime_window = self._attachments.pop(key, None)
+                local_window_id = self._attachment_window_ids.pop(key, window_id)
                 runtime = self._runtimes.get(client_id)
                 if runtime_window is not None and runtime is not None:
                     detach_task = asyncio.create_task(
-                        runtime.detach(runtime_window, local_window_id=window_id)
+                        runtime.detach(
+                            runtime_window,
+                            local_window_id=local_window_id,
+                            view_id=window_id,
+                        )
                     )
                     self._detaches[key] = detach_task
+
+        for writer in writers_to_close:
+            await writer.close()
 
         if detach_task is not None:
             with contextlib.suppress(Exception):
@@ -117,96 +270,52 @@ class TerminalBroker:
 
     async def publish_output(self, client_id: UUID, window_id: UUID, data: bytes) -> None:
         async with self._lock:
-            subscribers = tuple(self._subscribers.get((client_id, window_id), ()))
+            writers = tuple(self._subscribers.get((client_id, window_id), {}).values())
 
-        if not subscribers:
+        if not writers:
             return
 
-        # Fan out to every subscriber concurrently with an independent timeout
-        # so a single slow / dead subscriber (e.g. browser TCP buffer full,
-        # half-open WebSocket) cannot stall the bulk-WS worker. Anyone that
-        # blocks past the timeout is dropped; remaining healthy subscribers
-        # continue to receive output.
-        async def _send_to_subscriber(target: TerminalSender) -> BaseException | None:
-            try:
-                await asyncio.wait_for(
-                    target(data),
-                    timeout=PUBLISH_OUTPUT_SUBSCRIBER_TIMEOUT_SECONDS,
-                )
-                return None
-            except asyncio.CancelledError:
-                raise
-            except BaseException as exc:
-                return exc
-
-        results = await asyncio.gather(
-            *(_send_to_subscriber(sender) for sender in subscribers),
-            return_exceptions=False,
-        )
-
-        failed_senders: list[TerminalSender] = []
-        for sender, error in zip(subscribers, results):
-            if error is None:
+        failed_writers: list[_TerminalSubscriberWriter] = []
+        for writer in writers:
+            if await writer.enqueue_output(data):
                 continue
-            failed_senders.append(sender)
-            if isinstance(error, asyncio.TimeoutError):
-                logger.warning(
-                    "broker dropping terminal output subscriber that timed out",
-                    extra={
-                        "client_id": str(client_id),
-                        "window_id": str(window_id),
-                        "timeout_seconds": PUBLISH_OUTPUT_SUBSCRIBER_TIMEOUT_SECONDS,
-                    },
-                )
+            failed_writers.append(writer)
+            logger.warning(
+                "broker dropping terminal output subscriber with full queue",
+                extra={
+                    "client_id": str(client_id),
+                    "window_id": str(window_id),
+                },
+            )
 
-        for sender in failed_senders:
-            with contextlib.suppress(Exception):
-                await self.unsubscribe(client_id, window_id, sender)
+        for writer in failed_writers:
+            await self._drop_subscriber_writer(writer)
+
+    async def publish_view_output(self, client_id: UUID, view_id: UUID, data: bytes) -> None:
+        await self.publish_output(client_id, view_id, data)
 
     async def publish_status(self, client_id: UUID, window_id: UUID, message: str) -> None:
         async with self._lock:
-            subscribers = tuple(self._status_subscribers.get((client_id, window_id), ()))
+            writers = tuple(self._status_subscribers.get((client_id, window_id), {}).values())
 
-        if not subscribers:
+        if not writers:
             return
 
-        async def _send_status_to_subscriber(
-            target: TerminalStatusSender,
-        ) -> BaseException | None:
-            try:
-                await asyncio.wait_for(
-                    target(message),
-                    timeout=PUBLISH_OUTPUT_SUBSCRIBER_TIMEOUT_SECONDS,
-                )
-                return None
-            except asyncio.CancelledError:
-                raise
-            except BaseException as exc:
-                return exc
-
-        results = await asyncio.gather(
-            *(_send_status_to_subscriber(sender) for sender in subscribers),
-            return_exceptions=False,
-        )
-
-        failed_senders: list[TerminalStatusSender] = []
-        for sender, error in zip(subscribers, results):
-            if error is None:
+        failed_writers: list[_TerminalSubscriberWriter] = []
+        for writer in writers:
+            if await writer.enqueue_status(message):
                 continue
-            failed_senders.append(sender)
-            if isinstance(error, asyncio.TimeoutError):
-                logger.warning(
-                    "broker dropping terminal status subscriber that timed out",
-                    extra={
-                        "client_id": str(client_id),
-                        "window_id": str(window_id),
-                        "timeout_seconds": PUBLISH_OUTPUT_SUBSCRIBER_TIMEOUT_SECONDS,
-                    },
-                )
+            failed_writers.append(writer)
+            logger.warning(
+                "broker dropping terminal status subscriber with full queue",
+                extra={
+                    "client_id": str(client_id),
+                    "window_id": str(window_id),
+                },
+            )
 
-        for sender in failed_senders:
-            with contextlib.suppress(Exception):
-                await self._unsubscribe_status_sender(client_id, window_id, sender)
+        for writer in failed_writers:
+            await self._drop_subscriber_writer(writer)
 
     async def clear_client(
         self,
@@ -218,6 +327,7 @@ class TerminalBroker:
             for key in tuple(self._attachments):
                 if key[0] == client_id:
                     self._attachments.pop(key, None)
+                    self._attachment_window_ids.pop(key, None)
             subscriber_keys = [
                 key for key in self._status_subscribers
                 if key[0] == client_id and self._status_subscribers.get(key)
@@ -234,28 +344,35 @@ class TerminalBroker:
         runtime_window: RuntimeWindow,
         output_callback: TerminalSender | None = None,
         selection_callback: TerminalSelectionCallback | None = None,
-    ) -> None:
+        view_id: UUID | None = None,
+    ) -> RuntimeWindow:
         runtime = self._require_runtime(client_id)
-        key = (client_id, window_id)
+        attachment_id = view_id or window_id
+        key = (client_id, attachment_id)
         while True:
             async with self._lock:
-                if key in self._attachments:
-                    return
+                existing_attachment = self._attachments.get(key)
+                if existing_attachment is not None:
+                    return existing_attachment
                 detach_task = self._detaches.get(key)
             if detach_task is None:
                 break
             with contextlib.suppress(Exception):
                 await detach_task
 
-        sender = output_callback or (lambda data: self.publish_output(client_id, window_id, data))
-        await runtime.attach(
+        sender = output_callback or (lambda data: self.publish_output(client_id, attachment_id, data))
+        attached_window = await runtime.attach(
             runtime_window,
             sender,
             local_window_id=window_id,
             selection_callback=selection_callback,
+            view_id=attachment_id,
         )
+        effective_runtime_window = attached_window or runtime_window
         async with self._lock:
-            self._attachments[key] = runtime_window
+            self._attachments[key] = effective_runtime_window
+            self._attachment_window_ids[key] = window_id
+        return effective_runtime_window
 
     async def send_input(
         self,
@@ -263,9 +380,15 @@ class TerminalBroker:
         window_id: UUID,
         runtime_window: RuntimeWindow,
         data: bytes,
+        view_id: UUID | None = None,
     ) -> None:
         runtime = self._require_runtime(client_id)
-        await runtime.send_input(runtime_window, data, local_window_id=window_id)
+        await runtime.send_input(
+            runtime_window,
+            data,
+            local_window_id=window_id,
+            view_id=view_id or window_id,
+        )
 
     async def resize(
         self,
@@ -275,9 +398,40 @@ class TerminalBroker:
         *,
         cols: int,
         rows: int,
+        view_id: UUID | None = None,
     ) -> None:
         runtime = self._require_runtime(client_id)
-        await runtime.resize(runtime_window, cols=cols, rows=rows, local_window_id=window_id)
+        await runtime.resize(
+            runtime_window,
+            cols=cols,
+            rows=rows,
+            local_window_id=window_id,
+            view_id=view_id or window_id,
+        )
+
+    async def select_window(
+        self,
+        client_id: UUID,
+        view_id: UUID,
+        current_window_id: UUID,
+        current_runtime_window: RuntimeWindow,
+        next_window_id: UUID,
+        next_runtime_window: RuntimeWindow,
+    ) -> RuntimeWindow:
+        runtime = self._require_runtime(client_id)
+        key = (client_id, view_id)
+        selected_window = await runtime.select_window(
+            current_runtime_window,
+            next_runtime_window,
+            local_window_id=next_window_id,
+            view_id=view_id,
+        )
+        effective_runtime_window = selected_window or next_runtime_window
+        async with self._lock:
+            if key in self._attachments:
+                self._attachments[key] = effective_runtime_window
+                self._attachment_window_ids[key] = next_window_id
+        return effective_runtime_window
 
     def _require_runtime(self, client_id: UUID) -> TerminalRuntime:
         runtime = self._runtimes.get(client_id)
@@ -285,17 +439,70 @@ class TerminalBroker:
             raise TerminalRuntimeUnavailable(f"no terminal runtime registered for client: {client_id}")
         return runtime
 
-    async def _unsubscribe_status_sender(
+    async def _handle_subscriber_writer_failure(
         self,
-        client_id: UUID,
-        window_id: UUID,
-        sender: TerminalStatusSender,
+        writer: _TerminalSubscriberWriter,
+        error: BaseException,
     ) -> None:
+        if isinstance(error, asyncio.TimeoutError):
+            logger.warning(
+                "broker dropping terminal subscriber that timed out",
+                extra={
+                    "client_id": str(writer.client_id),
+                    "window_id": str(writer.window_id),
+                    "timeout_seconds": PUBLISH_OUTPUT_SUBSCRIBER_TIMEOUT_SECONDS,
+                },
+            )
+        await self._drop_subscriber_writer(writer)
+
+    async def _drop_subscriber_writer(self, writer: _TerminalSubscriberWriter) -> None:
+        detach_task: asyncio.Task[None] | None = None
         async with self._lock:
-            key = (client_id, window_id)
-            subscribers = self._status_subscribers.get(key)
-            if subscribers is None:
-                return
-            subscribers.discard(sender)
+            key = (writer.client_id, writer.window_id)
+            self._remove_writer_locked(key, writer)
+
+            if key not in self._subscribers and key not in self._status_subscribers:
+                self._subscribers.pop(key, None)
+                self._status_subscribers.pop(key, None)
+                runtime_window = self._attachments.pop(key, None)
+                local_window_id = self._attachment_window_ids.pop(key, writer.window_id)
+                runtime = self._runtimes.get(writer.client_id)
+                if runtime_window is not None and runtime is not None:
+                    detach_task = asyncio.create_task(
+                        runtime.detach(
+                            runtime_window,
+                            local_window_id=local_window_id,
+                            view_id=writer.window_id,
+                        )
+                    )
+                    self._detaches[key] = detach_task
+
+        await writer.close()
+        if detach_task is not None:
+            with contextlib.suppress(Exception):
+                await detach_task
+            async with self._lock:
+                key = (writer.client_id, writer.window_id)
+                if self._detaches.get(key) is detach_task:
+                    self._detaches.pop(key, None)
+
+    def _remove_writer_locked(
+        self,
+        key: tuple[UUID, UUID],
+        writer: _TerminalSubscriberWriter,
+    ) -> None:
+        subscribers = self._subscribers.get(key)
+        if subscribers is not None:
+            for sender, candidate in tuple(subscribers.items()):
+                if candidate is writer:
+                    subscribers.pop(sender, None)
             if not subscribers:
+                self._subscribers.pop(key, None)
+
+        status_subscribers = self._status_subscribers.get(key)
+        if status_subscribers is not None:
+            for sender, candidate in tuple(status_subscribers.items()):
+                if candidate is writer:
+                    status_subscribers.pop(sender, None)
+            if not status_subscribers:
                 self._status_subscribers.pop(key, None)

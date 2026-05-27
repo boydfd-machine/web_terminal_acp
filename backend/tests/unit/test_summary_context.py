@@ -217,7 +217,7 @@ async def test_collect_summary_context_prunes_topic_tree_to_fit_budget(session_f
 
 
 @pytest.mark.asyncio
-async def test_collect_summary_context_includes_ai_events_when_commands_are_absent(session_factory):
+async def test_collect_summary_context_includes_session_messages_when_commands_are_absent(session_factory):
     created_at = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
     async with session_factory() as session:
         window = await create_local_window(session)
@@ -242,13 +242,17 @@ async def test_collect_summary_context_includes_ai_events_when_commands_are_abse
                 client_id=window.client_id,
                 source_type=EventSourceType.codex_trace,
                 source_id="codex-trace-1",
-                kind="tool_call",
+                kind="assistant_message",
                 virtual_window_id=window.id,
                 payload_json={
-                    "trace_id": "codex-trace-1",
-                    "span": {"name": "tool_call", "attributes": {"tool": "bash", "input": "pytest"}},
+                    "raw_type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "用 pytest 验证修复"}],
+                    },
                 },
-                fingerprint="codex-tool-call",
+                fingerprint="codex-assistant-message",
                 created_at=created_at + timedelta(seconds=1),
             )
         )
@@ -260,10 +264,14 @@ async def test_collect_summary_context_includes_ai_events_when_commands_are_abse
 
     payload = context[0]["payload"]
     assert payload["commands"] == []
-    assert [event["provider"] for event in payload["ai_events"]] == ["claude_code", "codex"]
-    assert payload["ai_events"][0]["role"] == "user"
-    assert "codex summary" in payload["ai_events"][0]["text"]
-    assert "pytest" in payload["ai_events"][1]["text"]
+    assert payload["session_messages"] == [
+        {"role": "user", "content": "帮我修复 codex summary 缺少输入的问题"},
+        {"role": "assistant", "content": "用 pytest 验证修复"},
+    ]
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert "claude-session-1" not in serialized
+    assert "codex-trace-1" not in serialized
+    assert "created_at" not in serialized
 
 
 @pytest.mark.asyncio
@@ -305,18 +313,245 @@ async def test_collect_summary_context_includes_generic_agent_tool_record_with_a
         window = (await session.execute(select(VirtualWindow))).scalar_one()
         context = await collect_summary_context(session, window)
 
-    ai_events = context[0]["payload"]["ai_events"]
-    assert ai_events == [
-        {
-            "source_type": "agent_tool_record",
-            "provider": "cursor_cli",
-            "source_id": "cursor-session-1",
-            "kind": "assistant_message",
-            "role": "assistant",
-            "text": "Cursor adapter summary text",
-            "created_at": ai_events[0]["created_at"],
-        }
+    assert context[0]["payload"]["session_messages"] == [
+        {"role": "assistant", "content": "Cursor adapter summary text"}
     ]
+
+
+@pytest.mark.asyncio
+async def test_collect_summary_context_filters_non_summary_session_content(session_factory):
+    created_at = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
+    async with session_factory() as session:
+        window = await create_local_window(session)
+        session.add_all(
+            [
+                Event(
+                    client_id=window.client_id,
+                    source_type=EventSourceType.agent_tool_record,
+                    source_id="cursor-session-1",
+                    kind="user_message",
+                    virtual_window_id=window.id,
+                    payload_json={
+                        "provider": "cursor_cli",
+                        "role": "user",
+                        "content": "<user_info>\nOS Version: linux\n</user_info>",
+                    },
+                    fingerprint="cursor-user-info-context",
+                    created_at=created_at,
+                ),
+                Event(
+                    client_id=window.client_id,
+                    source_type=EventSourceType.agent_tool_record,
+                    source_id="cursor-session-1",
+                    kind="user_message",
+                    virtual_window_id=window.id,
+                    payload_json={
+                        "provider": "cursor_cli",
+                        "role": "user",
+                        "content": "<user_query>\n排查 summary 输入过多的问题\n</user_query>",
+                    },
+                    fingerprint="cursor-real-user-query",
+                    created_at=created_at + timedelta(seconds=1),
+                ),
+                Event(
+                    client_id=window.client_id,
+                    source_type=EventSourceType.agent_tool_record,
+                    source_id="cursor-session-1",
+                    kind="user_message",
+                    virtual_window_id=window.id,
+                    payload_json={
+                        "provider": "cursor_cli",
+                        "role": "user",
+                        "content": "<encrypted>ciphertext</encrypted>",
+                    },
+                    fingerprint="cursor-encrypted-user-message",
+                    created_at=created_at + timedelta(seconds=2),
+                ),
+                Event(
+                    client_id=window.client_id,
+                    source_type=EventSourceType.agent_tool_record,
+                    source_id="codex-session-1",
+                    kind="response_item",
+                    virtual_window_id=window.id,
+                    payload_json={
+                        "provider": "codex",
+                        "raw_type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_text",
+                                    "text": "# AGENTS.md instructions for /workspace\n\n<INSTRUCTIONS>...</INSTRUCTIONS>",
+                                }
+                            ],
+                        },
+                    },
+                    fingerprint="codex-agents-context",
+                    created_at=created_at + timedelta(seconds=3),
+                ),
+                Event(
+                    client_id=window.client_id,
+                    source_type=EventSourceType.agent_tool_record,
+                    source_id="claude-session-1",
+                    kind="user_message",
+                    virtual_window_id=window.id,
+                    payload_json={
+                        "provider": "claude_code",
+                        "type": "user",
+                        "message": {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": "tool-1",
+                                    "content": "command output",
+                                }
+                            ],
+                        },
+                    },
+                    fingerprint="claude-tool-result-user",
+                    created_at=created_at + timedelta(seconds=4),
+                ),
+                Event(
+                    client_id=window.client_id,
+                    source_type=EventSourceType.agent_tool_record,
+                    source_id="codex-session-1",
+                    kind="response_item",
+                    virtual_window_id=window.id,
+                    payload_json={
+                        "provider": "codex",
+                        "raw_type": "response_item",
+                        "payload": {
+                            "type": "function_call",
+                            "name": "exec_command",
+                            "arguments": "{\"cmd\":\"pytest\"}",
+                        },
+                    },
+                    fingerprint="codex-ordinary-tool-call",
+                    created_at=created_at + timedelta(seconds=5),
+                ),
+                Event(
+                    client_id=window.client_id,
+                    source_type=EventSourceType.agent_tool_record,
+                    source_id="codex-session-1",
+                    kind="response_item",
+                    virtual_window_id=window.id,
+                    payload_json={
+                        "provider": "codex",
+                        "raw_type": "response_item",
+                        "payload": {
+                            "type": "function_call_output",
+                            "output": "pytest output",
+                        },
+                    },
+                    fingerprint="codex-tool-result",
+                    created_at=created_at + timedelta(seconds=6),
+                ),
+                Event(
+                    client_id=window.client_id,
+                    source_type=EventSourceType.agent_tool_record,
+                    source_id="codex-session-1",
+                    kind="response_item",
+                    virtual_window_id=window.id,
+                    payload_json={
+                        "provider": "codex",
+                        "raw_type": "response_item",
+                        "payload": {
+                            "type": "reasoning",
+                            "summary": [{"text": "internal thinking"}],
+                        },
+                    },
+                    fingerprint="codex-reasoning",
+                    created_at=created_at + timedelta(seconds=7),
+                ),
+                Event(
+                    client_id=window.client_id,
+                    source_type=EventSourceType.agent_tool_record,
+                    source_id="codex-session-1",
+                    kind="response_item",
+                    virtual_window_id=window.id,
+                    payload_json={
+                        "provider": "codex",
+                        "raw_type": "response_item",
+                        "payload": {
+                            "type": "function_call",
+                            "name": "request_user_input",
+                            "arguments": json.dumps(
+                                {"questions": [{"question": "要覆盖标题和文件夹吗?"}]},
+                                ensure_ascii=False,
+                            ),
+                        },
+                    },
+                    fingerprint="codex-ask-user-question",
+                    created_at=created_at + timedelta(seconds=8),
+                ),
+                Event(
+                    client_id=window.client_id,
+                    source_type=EventSourceType.agent_tool_record,
+                    source_id="claude-session-1",
+                    kind="assistant_message",
+                    virtual_window_id=window.id,
+                    payload_json={
+                        "provider": "claude_code",
+                        "type": "assistant",
+                        "message": {
+                            "role": "assistant",
+                            "content": [
+                                {"type": "text", "text": "需要确认一个选项"},
+                                {
+                                    "type": "tool_use",
+                                    "name": "ask_user_question",
+                                    "input": {"question": "保留旧字段兼容吗?"},
+                                }
+                            ],
+                        },
+                    },
+                    fingerprint="claude-ask-user-question",
+                    created_at=created_at + timedelta(seconds=9),
+                ),
+                Event(
+                    client_id=window.client_id,
+                    source_type=EventSourceType.agent_tool_record,
+                    source_id="codex-session-1",
+                    kind="response_item",
+                    virtual_window_id=window.id,
+                    payload_json={
+                        "provider": "codex",
+                        "raw_type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": "已完成过滤调整"}],
+                        },
+                    },
+                    fingerprint="codex-assistant-reply",
+                    created_at=created_at + timedelta(seconds=10),
+                ),
+            ]
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        window = (await session.execute(select(VirtualWindow))).scalar_one()
+        context = await collect_summary_context(session, window)
+
+    assert context[0]["payload"]["session_messages"] == [
+        {"role": "user", "content": "排查 summary 输入过多的问题"},
+        {"role": "tool_call", "name": "request_user_input", "content": "要覆盖标题和文件夹吗?"},
+        {"role": "assistant", "content": "需要确认一个选项"},
+        {"role": "tool_call", "name": "ask_user_question", "content": "保留旧字段兼容吗?"},
+        {"role": "assistant", "content": "已完成过滤调整"},
+    ]
+    serialized = json.dumps(context, ensure_ascii=False)
+    assert "<user_info>" not in serialized
+    assert "<encrypted>" not in serialized
+    assert "AGENTS.md instructions" not in serialized
+    assert "command output" not in serialized
+    assert "pytest output" not in serialized
+    assert "internal thinking" not in serialized
+    assert "exec_command" not in serialized
+    assert "codex-session-1" not in serialized
 
 
 @pytest.mark.asyncio

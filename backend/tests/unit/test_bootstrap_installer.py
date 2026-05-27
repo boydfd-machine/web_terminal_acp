@@ -88,13 +88,19 @@ def test_client_app_file_contents_packages_agent_tool_watchers():
     files = client_app_file_contents()
 
     assert "client_agent/git_worktree.py" in files
+    assert "client_agent/agent_commands.py" in files
+    assert "client_agent/agent_idle.py" in files
     assert "client_agent/agent_tool_watchers.py" in files
     assert "client_agent/agent_work_presence.py" in files
     assert "client_agent/cursor_watcher.py" in files
     assert "client_agent/outbound.py" in files
+    idle_source = files["client_agent/agent_idle.py"]
     watcher_source = files["client_agent/agent_tool_watchers.py"]
     presence_source = files["client_agent/agent_work_presence.py"]
     outbound_source = files["client_agent/outbound.py"]
+    command_source = files["client_agent/agent_commands.py"]
+    assert "def format_agent_command" in command_source
+    assert "class AgentIdleSupervisor" in idle_source
     assert "def watch_agent_tool_events" in watcher_source
     assert "from app.client_agent.agent_work_presence import" in watcher_source
     assert "def detect_agent_work_presence" in presence_source
@@ -155,6 +161,7 @@ async def test_bootstrap_client_creates_client_and_uploads_config(db_session_fac
     assert "~/.web-terminal-acp/requirements.txt" in ssh.uploads
     assert "app.client_agent.agent_tool_watchers" in ssh.uploads["~/.web-terminal-acp/app/app/client_agent/runner.py"]
     assert "~/.web-terminal-acp/app/app/client_agent/agent_tool_watchers.py" in ssh.uploads
+    assert "~/.web-terminal-acp/app/app/client_agent/agent_commands.py" in ssh.uploads
     assert "~/.web-terminal-acp/app/app/client_agent/codex_watcher.py" in ssh.uploads
     assert "~/.web-terminal-acp/app/app/client_agent/cursor_watcher.py" in ssh.uploads
     assert any("python3 -m venv ~/.web-terminal-acp/venv" in command for command in ssh.commands)

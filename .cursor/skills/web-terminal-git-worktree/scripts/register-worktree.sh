@@ -14,10 +14,24 @@ fi
 
 worktree_root="$(git rev-parse --show-toplevel)"
 branch="$(git branch --show-current 2>/dev/null || true)"
+git_common_dir="$(git rev-parse --git-common-dir)"
+main_repo_root="$(
+  WEB_TERMINAL_GIT_COMMON_DIR="$git_common_dir" python3 - <<'PY'
+import os
+from pathlib import Path
+
+common_dir = Path(os.environ["WEB_TERMINAL_GIT_COMMON_DIR"]).expanduser().resolve()
+if common_dir.name == ".git":
+    print(common_dir.parent)
+else:
+    print(common_dir)
+PY
+)"
 
 payload="$(
   WEB_TERMINAL_WORKTREE_ROOT="$worktree_root" \
   WEB_TERMINAL_WORKTREE_BRANCH="$branch" \
+  WEB_TERMINAL_MAIN_REPO_ROOT="$main_repo_root" \
   python3 - <<'PY'
 import base64
 import json
@@ -25,6 +39,7 @@ import os
 
 payload: dict[str, str] = {
     "worktree_root": os.environ["WEB_TERMINAL_WORKTREE_ROOT"],
+    "main_repo_root": os.environ["WEB_TERMINAL_MAIN_REPO_ROOT"],
 }
 branch = os.environ.get("WEB_TERMINAL_WORKTREE_BRANCH", "").strip()
 if branch:

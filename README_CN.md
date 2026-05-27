@@ -79,6 +79,7 @@ make deploy-up
 | `WORKSPACE_DIR` | 挂载到容器 `/workspace` 的宿主机路径 | `~/workspace` |
 | `OPENAI_COMPAT_*` | 摘要 LLM | 见 `.env.example` |
 | `BACKEND_PUBLISHED_PORT` | API 对外端口 | `8001` |
+| `VITE_API_BASE` | 前端构建时 API 地址；Docker nginx 代理模式保持为空，本地 Vite 开发可设为 `http://127.0.0.1:8000` | 空 |
 
 默认会把 `~/.claude`、`~/.codex` 等挂进容器，便于 Agent 使用本机凭据——请按安全需求自行收紧。
 

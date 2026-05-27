@@ -1,5 +1,6 @@
 export { FolderTree } from "./FolderTree";
 export { AgentRecordViewer } from "./AgentRecordViewer";
+export { CommandHistoryViewer } from "./CommandHistoryViewer";
 export { SearchPanel } from "./SearchPanel";
 export { TerminalPane } from "./TerminalPane";
 export { TerminalSwitcher } from "./TerminalSwitcher";

@@ -13,7 +13,7 @@ async def request_git_worktree_action(
     client_id: UUID,
     *,
     action: str,
-    timeout: float = 15.0,
+    timeout: float = 3.0,
     **payload: Any,
 ) -> dict[str, Any] | None:
     if registry is None:

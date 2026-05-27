@@ -16,13 +16,14 @@ export type SwitcherGroupNode = {
   count: number;
   children: SwitcherNode[];
   projectPath?: string;
+  topicPath?: string;
 };
 
 export type SwitcherNode = SwitcherGroupNode | SwitcherWindowNode;
 
 export type ProjectSummaryLookup = Map<string, ProjectSummary>;
 
-const UNASSIGNED_PROJECT_PATH = "/未指定";
+export const UNASSIGNED_PROJECT_PATH = "/未指定";
 
 export function projectPathFromRuntimeTags(runtimeTags: string[]): string {
   for (const tag of runtimeTags) {
@@ -61,6 +62,14 @@ export function collectProjectPaths(folders: TreeFolder[]): string[] {
   }
 
   return Array.from(paths).sort((left, right) => left.localeCompare(right));
+}
+
+export function isCreatableProjectPath(projectPath: string): boolean {
+  return projectPath.startsWith("/") && projectPath !== UNASSIGNED_PROJECT_PATH;
+}
+
+export function collectCreatableProjectPaths(folders: TreeFolder[]): string[] {
+  return collectProjectPaths(folders).filter(isCreatableProjectPath);
 }
 
 export function buildTerminalSwitcherTree(
@@ -103,6 +112,7 @@ export function buildTopicSwitcherTree(folders: TreeFolder[], query: string): Sw
       key: `topic:${folder.path}`,
       label: folder.name,
       count,
+      topicPath: folder.path,
       children
     };
   };
@@ -170,6 +180,8 @@ function buildTopicSwitcherTreeForProject(
       key: `project-topic:${projectPath}:topic:${folder.path}`,
       label: folder.name,
       count,
+      projectPath,
+      topicPath: folder.path,
       children
     };
   };
@@ -198,6 +210,23 @@ function matchesWindow(window: TreeWindow, topicPath: string, normalizedQuery: s
 
 function countWindows(nodes: SwitcherNode[]): number {
   return nodes.reduce((total, node) => total + (node.type === "window" ? 1 : node.count), 0);
+}
+
+export function canCreateWindowAtGroupNode(node: SwitcherGroupNode): boolean {
+  return node.projectPath !== undefined
+    && node.topicPath === undefined
+    && isCreatableProjectPath(node.projectPath);
+}
+
+export function createWindowInputForGroupNode(node: SwitcherGroupNode): {
+  cwd?: string | null;
+  folder_path?: string | null;
+} {
+  if (!canCreateWindowAtGroupNode(node)) {
+    return {};
+  }
+
+  return { cwd: node.projectPath };
 }
 
 export function findPathToSwitcherWindow(nodes: SwitcherNode[], windowId: string): string[] {

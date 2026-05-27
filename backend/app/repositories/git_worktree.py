@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -72,13 +73,14 @@ async def create_git_worktree_run(
     window_id: UUID,
     command_sequence: str,
     agent_provider: str | None,
+    status: str = "awaiting_worktree",
 ) -> GitWorktreeRun:
     run = GitWorktreeRun(
         client_id=client_id,
         virtual_window_id=window_id,
         command_sequence=command_sequence,
         agent_provider=agent_provider,
-        status="awaiting_worktree",
+        status=status,
     )
     session.add(run)
     await session.flush()
@@ -109,6 +111,19 @@ async def list_git_worktree_runs(
     return rows, int(count or 0)
 
 
+async def list_window_git_bindings(
+    session: AsyncSession,
+    window_ids: Sequence[UUID],
+) -> list[WindowGitBinding]:
+    if not window_ids:
+        return []
+    return list(
+        await session.scalars(
+            select(WindowGitBinding).where(WindowGitBinding.virtual_window_id.in_(window_ids))
+        )
+    )
+
+
 async def window_has_pending_commit(session: AsyncSession, window_id: UUID) -> bool:
     pending_run = await session.scalar(
         select(GitWorktreeRun.id)
@@ -119,3 +134,20 @@ async def window_has_pending_commit(session: AsyncSession, window_id: UUID) -> b
         .limit(1)
     )
     return pending_run is not None
+
+
+async def pending_commit_window_ids(
+    session: AsyncSession,
+    window_ids: Sequence[UUID],
+) -> set[UUID]:
+    if not window_ids:
+        return set()
+    rows = await session.scalars(
+        select(GitWorktreeRun.virtual_window_id)
+        .where(
+            GitWorktreeRun.virtual_window_id.in_(window_ids),
+            GitWorktreeRun.pending_commit.is_(True),
+        )
+        .group_by(GitWorktreeRun.virtual_window_id)
+    )
+    return set(rows)

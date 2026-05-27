@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildProjectTopicSwitcherTree,
+  canCreateWindowAtGroupNode,
+  collectCreatableProjectPaths,
+  createWindowInputForGroupNode,
   findPathToSwitcherWindow,
   projectGroupLabel,
-  projectPathFromRuntimeTags
+  projectPathFromRuntimeTags,
+  type SwitcherGroupNode
 } from "../src/terminalGrouping";
 import type { TreeFolder } from "../src/types";
 
@@ -73,6 +77,46 @@ describe("terminalGrouping", () => {
     expect(tree[0]?.projectPath).toBe("/workspace/project-a");
     expect(tree[0]?.children[0]?.label).toBe("主题");
     expect(tree[0]?.children[0]?.children[0]?.type).toBe("window");
+  });
+
+  it("builds create-window input for project and topic groups", () => {
+    const tree = buildProjectTopicSwitcherTree(sampleFolders, new Map(), "");
+    const projectGroup = tree[0] as SwitcherGroupNode;
+    const topicGroup = projectGroup.children[0] as SwitcherGroupNode;
+
+    expect(canCreateWindowAtGroupNode(projectGroup)).toBe(true);
+    expect(createWindowInputForGroupNode(projectGroup)).toEqual({
+      cwd: "/workspace/project-a"
+    });
+    expect(canCreateWindowAtGroupNode(topicGroup)).toBe(false);
+    expect(createWindowInputForGroupNode(topicGroup)).toEqual({});
+  });
+
+  it("collects only concrete project paths for project terminal creation", () => {
+    const folders: TreeFolder[] = [
+      ...sampleFolders,
+      {
+        id: "folder-3",
+        name: "未指定",
+        path: "/未指定主题",
+        folders: [],
+        windows: [
+          {
+            id: "w3",
+            title: "Terminal C",
+            status: "ACTIVE",
+            runtime_tags: [],
+            work_status: { state: "LONG_IDLE", label: "Idle", color: "gray" },
+            created_at: "2026-05-24T12:00:00Z"
+          }
+        ]
+      }
+    ];
+
+    expect(collectCreatableProjectPaths(folders)).toEqual([
+      "/workspace/project-a",
+      "/workspace/project-b"
+    ]);
   });
 
   it("finds path to a window in project-topic tree", () => {

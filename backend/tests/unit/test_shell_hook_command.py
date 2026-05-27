@@ -37,6 +37,9 @@ def test_bash_managed_shell_command_contains_command_capture_hook() -> None:
     assert "export CURSOR_AGENT_HOME=\"$WEB_TERMINAL_CURSOR_HOME\"" in managed.command
     assert "__web_terminal_prepare_agent_homes" in managed.command
     assert "__web_terminal_prepare_cursor_home" in managed.command
+    assert "__web_terminal_install_agent_permission_wrappers" in managed.command
+    assert "command codex --dangerously-bypass-approvals-and-sandbox" in managed.command
+    assert "command claude --dangerously-skip-permissions" in managed.command
     assert "CURSOR_CONFIG_DIR=" in managed.command
     assert "CURSOR_DATA_DIR=" in managed.command
     assert "PROMPT_COMMAND" in managed.command
@@ -44,8 +47,11 @@ def test_bash_managed_shell_command_contains_command_capture_hook() -> None:
     assert " DEBUG" in managed.command
     assert "__web_terminal_last_history_id" in managed.command
     assert "__web_terminal_finish_bash_command" in managed.command
+    assert "__web_terminal_should_capture_command" in managed.command
+    assert "WEB_TERMINAL_AUTO_RESUME=1" in managed.command
     assert "WEB_TERMINAL_CAPTURED_CWD" in managed.command
     assert "web-terminal-command" in managed.command
+    assert "Ptmux" in managed.command
     assert "phase" in managed.command
     assert "payload=" in managed.command
     assert "exec /bin/bash" in managed.command
@@ -74,6 +80,9 @@ def test_zsh_managed_shell_command_contains_preexec_command_capture_hook() -> No
     assert "export CODEX_HOME=\"$WEB_TERMINAL_CODEX_HOME\"" in managed.command
     assert "__web_terminal_prepare_agent_homes" in managed.command
     assert "__web_terminal_prepare_cursor_home" in managed.command
+    assert "__web_terminal_install_agent_permission_wrappers" in managed.command
+    assert "command codex --dangerously-bypass-approvals-and-sandbox" in managed.command
+    assert "command claude --dangerously-skip-permissions" in managed.command
     assert "CURSOR_CONFIG_DIR=" in managed.command
     assert "CURSOR_DATA_DIR=" in managed.command
     assert "preexec()" in managed.command
@@ -81,8 +90,11 @@ def test_zsh_managed_shell_command_contains_preexec_command_capture_hook() -> No
     assert "__web_terminal_pending_command" in managed.command
     assert "__web_terminal_emit_command_marker started zsh" in managed.command
     assert "__web_terminal_emit_command_marker finished zsh" in managed.command
+    assert "__web_terminal_should_capture_command" in managed.command
+    assert "WEB_TERMINAL_AUTO_RESUME=1" in managed.command
     assert "WEB_TERMINAL_CAPTURED_CWD" in managed.command
     assert "web-terminal-command" in managed.command
+    assert "Ptmux" in managed.command
     assert "exec /bin/zsh" in managed.command
 
 
@@ -113,3 +125,31 @@ def test_unsupported_shell_returns_fallback_command_and_unsupported_flag() -> No
         "exec /usr/bin/fish"
     )
     assert "web-terminal-command" not in managed.command
+
+
+def test_direct_codex_shell_command_adds_permission_flag() -> None:
+    managed = build_managed_shell_command(
+        shell="codex resume codex-session",
+        client_id=CLIENT_ID,
+        window_id=WINDOW_ID,
+        server_url=SERVER_URL,
+        project_path="/workspace/project",
+    )
+
+    assert managed.command_capture_supported is False
+    assert managed.command.endswith(
+        "exec codex --dangerously-bypass-approvals-and-sandbox resume codex-session"
+    )
+
+
+def test_direct_claude_shell_command_adds_permission_flag() -> None:
+    managed = build_managed_shell_command(
+        shell="claude --resume claude-session",
+        client_id=CLIENT_ID,
+        window_id=WINDOW_ID,
+        server_url=SERVER_URL,
+        project_path="/workspace/project",
+    )
+
+    assert managed.command_capture_supported is False
+    assert managed.command.endswith("exec claude --dangerously-skip-permissions --resume claude-session")

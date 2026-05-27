@@ -8,6 +8,7 @@ backend/.coverage
 backend/htmlcov/
 frontend/node_modules/
 frontend/dist/
+frontend/release/
 .superpowers/
 .claude/
 .learnings/
@@ -15,3 +16,6 @@ frontend/dist/
 .cursor/*
 !.cursor/skills/
 !.cursor/skills/**
+# Web Terminal agent-linked worktrees (per-window isolation)
+.web-terminal-acp/
+frontend/test-results/

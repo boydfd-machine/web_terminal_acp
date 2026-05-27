@@ -4,7 +4,8 @@ FROM node:20.11.1-bookworm-slim AS build
 WORKDIR /app
 ARG VITE_API_BASE=
 ARG NPM_REGISTRY=https://registry.npmmirror.com
-ENV VITE_API_BASE=${VITE_API_BASE}
+ENV VITE_API_BASE=${VITE_API_BASE} \
+    ELECTRON_SKIP_BINARY_DOWNLOAD=1
 
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,id=web-terminal-acp-frontend-npm,target=/root/.npm \

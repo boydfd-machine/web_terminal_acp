@@ -45,6 +45,27 @@ def test_claude_code_projects_user_chat() -> None:
     assert chat.body == "fix bug"
 
 
+def test_claude_code_tool_result_user_event_is_not_chat() -> None:
+    event = make_event(
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "tool-1", "content": "pytest output"}],
+            },
+        },
+        kind="user_message",
+    )
+
+    adapter = ClaudeCodeAdapter()
+    chat = adapter.project_chat(event)
+    projection = adapter.project_event(event)
+
+    assert chat is None
+    assert projection.tone == "tool-result"
+    assert projection.label == "Tool response"
+
+
 def test_claude_code_projects_assistant_chat_from_text_block() -> None:
     event = make_event(
         {"type": "assistant", "message": {"content": [{"type": "text", "text": "done"}]}},

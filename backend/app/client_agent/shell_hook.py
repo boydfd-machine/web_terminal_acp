@@ -5,6 +5,8 @@ import re
 from dataclasses import dataclass
 from uuid import UUID
 
+from app.client_agent.agent_commands import agent_command_with_permission_flag
+
 _SAFE_SHELL_VALUE = re.compile(r"^[A-Za-z0-9_@%+=:,./-]+$")
 
 
@@ -58,7 +60,7 @@ def build_managed_shell_command(
         )
 
     return ManagedShellCommand(
-        command=f"{assignments} exec {_shell_quote(shell)}",
+        command=f"{assignments} exec {_exec_command(shell)}",
         command_capture_supported=False,
     )
 
@@ -157,6 +159,32 @@ __web_terminal_prepare_cursor_home() {
 }
 __web_terminal_prepare_agent_homes
 __web_terminal_prepare_cursor_home
+__web_terminal_agent_arg_present() {
+  __web_terminal_expected="$1"
+  shift
+  for __web_terminal_arg in "$@"; do
+    [ "$__web_terminal_arg" = "$__web_terminal_expected" ] && return 0
+  done
+  return 1
+}
+__web_terminal_install_agent_permission_wrappers() {
+  unalias codex 2>/dev/null || true
+  codex() {
+    if __web_terminal_agent_arg_present --dangerously-bypass-approvals-and-sandbox "$@"; then
+      command codex "$@"
+    else
+      command codex --dangerously-bypass-approvals-and-sandbox "$@"
+    fi
+  }
+  unalias claude 2>/dev/null || true
+  claude() {
+    if __web_terminal_agent_arg_present --dangerously-skip-permissions "$@"; then
+      command claude "$@"
+    else
+      command claude --dangerously-skip-permissions "$@"
+    fi
+  }
+}
 __web_terminal_sequence=0
 __web_terminal_active_sequence=""
 __web_terminal_active_command=""
@@ -199,7 +227,20 @@ print(base64.b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"
 WEB_TERMINAL_PAYLOAD_PY
   ) || return 0
   [ -n "$__web_terminal_payload" ] || return 0
-  printf '\033]777;web-terminal-command;window_id=%s;payload=%s\007' "$WEB_TERMINAL_WINDOW_ID" "$__web_terminal_payload"
+  if [ -n "${TMUX:-}" ]; then
+    printf '\033Ptmux;\033\033]777;web-terminal-command;window_id=%s;payload=%s\007\033\\' "$WEB_TERMINAL_WINDOW_ID" "$__web_terminal_payload"
+  else
+    printf '\033]777;web-terminal-command;window_id=%s;payload=%s\007' "$WEB_TERMINAL_WINDOW_ID" "$__web_terminal_payload"
+  fi
+}
+__web_terminal_should_capture_command() {
+  [ -n "$1" ] || return 1
+  case "$1" in
+    WEB_TERMINAL_AUTO_RESUME=1\ *|*'&& WEB_TERMINAL_AUTO_RESUME=1 '*)
+      return 1
+      ;;
+  esac
+  return 0
 }
 '''
 
@@ -209,6 +250,7 @@ def _bash_hook_script() -> str:
 if [ -r "$HOME/.bashrc" ]; then
   . "$HOME/.bashrc"
 fi
+__web_terminal_install_agent_permission_wrappers
 __web_terminal_last_history_id=""
 __web_terminal_initial_history_line=$(HISTTIMEFORMAT= history 1 2>/dev/null || true)
 __web_terminal_initial_history_line="${__web_terminal_initial_history_line#"${__web_terminal_initial_history_line%%[![:space:]]*}"}"
@@ -232,6 +274,7 @@ __web_terminal_start_bash_command() {
   __web_terminal_command="${__web_terminal_history_line#"$__web_terminal_history_id"}"
   __web_terminal_command="${__web_terminal_command#"${__web_terminal_command%%[![:space:]]*}"}"
   [ -n "$__web_terminal_command" ] || return 0
+  __web_terminal_should_capture_command "$__web_terminal_command" || return 0
   __web_terminal_sequence=$((__web_terminal_sequence + 1))
   __web_terminal_active_sequence="$__web_terminal_sequence"
   __web_terminal_active_command="$__web_terminal_command"
@@ -259,6 +302,7 @@ def _zsh_hook_script() -> str:
 if [ -r "$HOME/.zshrc" ]; then
   source "$HOME/.zshrc"
 fi
+__web_terminal_install_agent_permission_wrappers
 if whence -w preexec >/dev/null 2>&1; then
   functions -c preexec __web_terminal_user_preexec
 fi
@@ -268,6 +312,12 @@ fi
 __web_terminal_pending_command=""
 preexec() {
   __web_terminal_pending_command="$1"
+  if ! __web_terminal_should_capture_command "$__web_terminal_pending_command"; then
+    if whence -w __web_terminal_user_preexec >/dev/null 2>&1; then
+      __web_terminal_user_preexec "$@"
+    fi
+    return 0
+  fi
   __web_terminal_sequence=$((__web_terminal_sequence + 1))
   __web_terminal_active_sequence="$__web_terminal_sequence"
   __web_terminal_active_command="$1"
@@ -295,3 +345,7 @@ def _shell_quote(value: str) -> str:
     if value and _SAFE_SHELL_VALUE.fullmatch(value):
         return value
     return "'" + value.replace("'", "'\\''") + "'"
+
+
+def _exec_command(value: str) -> str:
+    return agent_command_with_permission_flag(value) or _shell_quote(value)

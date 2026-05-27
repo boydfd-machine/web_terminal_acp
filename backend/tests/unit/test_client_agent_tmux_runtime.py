@@ -58,6 +58,8 @@ async def test_create_window_ensures_pool_and_returns_remote_target_when_pool_mi
             "/tmp/project",
             runtime.managed_shell_command(WINDOW_ID, project_path="/tmp/project"),
         ],
+        ["tmux", "set-option", "-p", "-t", "client_pool:@9", "allow-passthrough", "on"],
+        ["tmux", "select-window", "-t", "client_pool:@9"],
         [
             "tmux",
             "set-option",
@@ -100,6 +102,24 @@ def test_managed_shell_command_injects_quoted_environment_and_execs_default_shel
     assert "CLAUDE_CONFIG_DIR='~/.web-terminal-acp/claude-code-homes/87654321-4321-8765-4321-876543218765'" in command
     assert "CURSOR_AGENT_HOME='~/.web-terminal-acp/cursor-homes/87654321-4321-8765-4321-876543218765'" in command
     assert "exec '/opt/shells/custom shell'" in command
+
+
+def test_managed_shell_command_adds_permission_flag_to_direct_codex_start() -> None:
+    runtime = ClientTmuxRuntime(
+        client_id=CLIENT_ID,
+        server_url="https://control.example.com",
+        pool_session="client_pool",
+    )
+
+    command = runtime.managed_shell_command(
+        WINDOW_ID,
+        shell_command="codex resume codex-session",
+        project_path="/workspace/project",
+    )
+
+    assert command.endswith(
+        "exec codex --dangerously-bypass-approvals-and-sandbox resume codex-session"
+    )
 
 
 @pytest.mark.asyncio
@@ -153,3 +173,83 @@ async def test_list_windows_ensures_pool_and_returns_runtime_windows_from_tmux_o
             "#{window_id}\t#{@web-terminal-window-id}\t#{pane_current_path}\t#{@web-terminal-managed-agent-tools}",
         ],
     ]
+
+
+@pytest.mark.asyncio
+async def test_has_window_checks_remote_tmux_target() -> None:
+    calls: list[list[str]] = []
+
+    async def fake_run(args: list[str]) -> str:
+        calls.append(args)
+        return "@9\n"
+
+    runtime = ClientTmuxRuntime(
+        client_id=CLIENT_ID,
+        server_url="https://control.example.com",
+        pool_session="client_pool",
+        runner=fake_run,
+    )
+
+    assert await runtime.has_window("@9", remote_session_id="client_pool")
+    assert calls == [
+        ["tmux", "display-message", "-p", "-t", "client_pool:@9", "#{window_id}"],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_has_window_returns_false_for_missing_remote_tmux_target() -> None:
+    async def fake_run(args: list[str]) -> str:
+        raise RuntimeError("missing window")
+
+    runtime = ClientTmuxRuntime(
+        client_id=CLIENT_ID,
+        server_url="https://control.example.com",
+        pool_session="client_pool",
+        runner=fake_run,
+    )
+
+    assert not await runtime.has_window("@9")
+
+
+@pytest.mark.asyncio
+async def test_has_window_returns_false_when_tmux_resolves_different_remote_window() -> None:
+    async def fake_run(args: list[str]) -> str:
+        return "@10\n"
+
+    runtime = ClientTmuxRuntime(
+        client_id=CLIENT_ID,
+        server_url="https://control.example.com",
+        pool_session="client_pool",
+        runner=fake_run,
+    )
+
+    assert not await runtime.has_window("@9")
+
+
+@pytest.mark.asyncio
+async def test_kill_window_skips_stale_remote_tmux_target() -> None:
+    calls: list[list[str]] = []
+
+    async def fake_run(args: list[str]) -> str:
+        calls.append(args)
+        if args[:4] == ["tmux", "has-session", "-t", "client_pool"]:
+            return ""
+        if args[:4] == ["tmux", "list-windows", "-t", "client_pool"]:
+            return f"@9\t{WINDOW_ID}\t/tmp\t1\n"
+        if args[:4] == ["tmux", "display-message", "-p", "-t"]:
+            return "@10\n"
+        if args[:2] == ["tmux", "kill-window"]:
+            raise AssertionError("stale target must not be killed")
+        return ""
+
+    runtime = ClientTmuxRuntime(
+        client_id=CLIENT_ID,
+        server_url="https://control.example.com",
+        pool_session="client_pool",
+        runner=fake_run,
+    )
+
+    await runtime.kill_window(WINDOW_ID)
+
+    assert calls[-1] == ["tmux", "display-message", "-p", "-t", "client_pool:@9", "#{window_id}"]
+    assert not any(call[:2] == ["tmux", "kill-window"] for call in calls)

@@ -1,9 +1,10 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
-import { fetchAgentRecordChat, fetchAgentRecordDetail, fetchWindow, retrySummary } from "../api";
-import type { GitWorktreeActivity, SummaryJob, VirtualWindow } from "../types";
+import { fetchAgentRecordChat, fetchAgentRecordDetail, fetchCommandHistory, fetchWindow, retrySummary, updateWindowTitle } from "../api";
+import type { GitWorktreeActivity, SummaryJob, TreeFolderCore, VirtualWindow } from "../types";
 import { AgentRecordViewer, type AgentRecordDisplayMode } from "./AgentRecordViewer";
+import { CommandHistoryViewer } from "./CommandHistoryViewer";
 import { DetailPanelTabs, type DetailPanelTab } from "./DetailPanelTabs";
 import { GitRunViewer } from "./GitRunViewer";
 import { WorkStatusBadge } from "./WorkStatusBadge";
@@ -22,6 +23,8 @@ type SummaryStatus = {
 
 const AGENT_RECORD_CHAT_PAGE_SIZE = 30;
 const AGENT_RECORD_DETAIL_PAGE_SIZE = 100;
+const COMMAND_HISTORY_PAGE_SIZE = 100;
+const MAX_TITLE_LENGTH = 255;
 
 function formatDateTime(value: string): string {
   const date = new Date(value);
@@ -71,6 +74,41 @@ function displayTags(item: VirtualWindow): string[] {
   return tags;
 }
 
+function renameTreeWindow(
+  folders: TreeFolderCore[] | undefined,
+  windowId: string,
+  title: string
+): TreeFolderCore[] | undefined {
+  if (folders === undefined) {
+    return undefined;
+  }
+
+  let changed = false;
+  const nextFolders = folders.map((folder) => {
+    let folderChanged = false;
+    const windows = folder.windows.map((window) => {
+      if (window.id !== windowId) {
+        return window;
+      }
+
+      folderChanged = true;
+      return { ...window, title };
+    });
+    const childFolders = renameTreeWindow(folder.folders, windowId, title);
+    if (childFolders !== folder.folders) {
+      folderChanged = true;
+    }
+    if (!folderChanged) {
+      return folder;
+    }
+
+    changed = true;
+    return { ...folder, folders: childFolders ?? folder.folders, windows };
+  });
+
+  return changed ? nextFolders : folders;
+}
+
 export function WindowDetail({
   clientId,
   windowId,
@@ -82,7 +120,10 @@ export function WindowDetail({
   const [agentRecordMode, setAgentRecordMode] = useState<AgentRecordDisplayMode>("chat");
   const [agentChatPage, setAgentChatPage] = useState(0);
   const [agentDetailPage, setAgentDetailPage] = useState(0);
+  const [commandHistoryPage, setCommandHistoryPage] = useState(0);
   const [agentRecordExpanded, setAgentRecordExpanded] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
   const queryClient = useQueryClient();
   const showGitTab = gitWorktree !== null;
 
@@ -91,7 +132,10 @@ export function WindowDetail({
     setAgentRecordMode("chat");
     setAgentChatPage(0);
     setAgentDetailPage(0);
+    setCommandHistoryPage(0);
     setAgentRecordExpanded(false);
+    setIsEditingTitle(false);
+    setTitleDraft("");
   }, [clientId, windowId]);
 
   useEffect(() => {
@@ -134,6 +178,18 @@ export function WindowDetail({
     placeholderData: keepPreviousData,
     refetchInterval: 10000
   });
+  const commandHistoryQuery = useQuery({
+    queryKey: ["command-history", clientId, windowId, commandHistoryPage, COMMAND_HISTORY_PAGE_SIZE],
+    queryFn: () => fetchCommandHistory(
+      clientId as string,
+      windowId as string,
+      COMMAND_HISTORY_PAGE_SIZE,
+      commandHistoryPage * COMMAND_HISTORY_PAGE_SIZE
+    ),
+    enabled: clientId !== null && windowId !== null && detailTab === "history",
+    placeholderData: keepPreviousData,
+    refetchInterval: 10000
+  });
   const retryMutation = useMutation({
     mutationFn: ({
       clientId,
@@ -150,6 +206,30 @@ export function WindowDetail({
       queryClient.invalidateQueries({ queryKey: ["window-activity", variables.clientId] });
     }
   });
+  const renameMutation = useMutation({
+    mutationFn: ({
+      clientId,
+      windowId,
+      title
+    }: {
+      clientId: string;
+      windowId: string;
+      title: string;
+    }) => updateWindowTitle(clientId, windowId, title),
+    onSuccess: (updated, variables) => {
+      queryClient.setQueryData(["window", variables.clientId, variables.windowId], updated);
+      queryClient.setQueryData<TreeFolderCore[]>(
+        ["tree", variables.clientId],
+        (current) => renameTreeWindow(current, variables.windowId, updated.title)
+      );
+      queryClient.invalidateQueries({ queryKey: ["window", variables.clientId, variables.windowId] });
+      queryClient.invalidateQueries({ queryKey: ["tree", variables.clientId] });
+      queryClient.invalidateQueries({ queryKey: ["window-activity", variables.clientId] });
+      queryClient.invalidateQueries({ queryKey: ["terminal-recents", variables.clientId] });
+      setTitleDraft(updated.title);
+      setIsEditingTitle(false);
+    }
+  });
 
   if (clientId === null || windowId === null) {
     return <p className="muted">Select a terminal artifact.</p>;
@@ -164,6 +244,12 @@ export function WindowDetail({
   const item = windowQuery.data;
   const status = summaryStatus(item.summary_job, item.command_capture_supported !== false);
   const tags = displayTags(item);
+  const trimmedTitleDraft = titleDraft.trim();
+  const titleSaveDisabled =
+    renameMutation.isPending
+    || trimmedTitleDraft.length === 0
+    || trimmedTitleDraft.length > MAX_TITLE_LENGTH
+    || trimmedTitleDraft === item.title;
   const manualLocks = [
     item.title_manually_overridden ? "title locked" : null,
     item.folder_manually_overridden ? "folder locked" : null
@@ -172,7 +258,65 @@ export function WindowDetail({
 
   return (
     <div>
-      <h2>{item.title}</h2>
+      <div className="window-title-header">
+        {isEditingTitle ? (
+          <form
+            className="window-title-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (titleSaveDisabled) {
+                return;
+              }
+              renameMutation.mutate({ clientId, windowId: item.id, title: trimmedTitleDraft });
+            }}
+          >
+            <input
+              aria-label="Terminal title"
+              maxLength={MAX_TITLE_LENGTH}
+              value={titleDraft}
+              autoFocus
+              disabled={renameMutation.isPending}
+              onChange={(event) => setTitleDraft(event.target.value)}
+            />
+            <div className="window-title-actions">
+              <button type="submit" disabled={titleSaveDisabled}>
+                Save
+              </button>
+              <button
+                type="button"
+                disabled={renameMutation.isPending}
+                onClick={() => {
+                  setTitleDraft(item.title);
+                  setIsEditingTitle(false);
+                  renameMutation.reset();
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="window-title-display">
+            <h2 title={item.title}>{item.title}</h2>
+            <button
+              type="button"
+              className="window-title-edit-button"
+              onClick={() => {
+                setTitleDraft(item.title);
+                setIsEditingTitle(true);
+                renameMutation.reset();
+              }}
+            >
+              Rename
+            </button>
+          </div>
+        )}
+      </div>
+      {renameMutation.isError && (
+        <p className="error" role="alert">
+          {renameMutation.error instanceof Error ? renameMutation.error.message : "Failed to rename terminal."}
+        </p>
+      )}
       <DetailPanelTabs activeTab={detailTab} showGitTab={showGitTab} onTabChange={setDetailTab} />
 
       {detailTab === "overview" && (
@@ -301,6 +445,17 @@ export function WindowDetail({
             if (agentRecordMode === "chat") setAgentChatPage((page) => page + 1);
             else setAgentDetailPage((page) => page + 1);
           }}
+        />
+      )}
+
+      {detailTab === "history" && (
+        <CommandHistoryViewer
+          history={commandHistoryQuery.data ?? null}
+          isLoading={commandHistoryQuery.isLoading}
+          isError={commandHistoryQuery.isError}
+          isFetching={commandHistoryQuery.isFetching}
+          onPreviousPage={() => setCommandHistoryPage((page) => Math.max(0, page - 1))}
+          onNextPage={() => setCommandHistoryPage((page) => page + 1)}
         />
       )}
 

@@ -271,6 +271,8 @@ def client_app_file_contents() -> dict[str, str]:
         "client_agent/__main__.py",
         "client_agent/config.py",
         "client_agent/runner.py",
+        "client_agent/agent_commands.py",
+        "client_agent/agent_idle.py",
         "client_agent/git_worktree.py",
         "client_agent/outbound.py",
         "client_agent/agent_tool_watchers.py",
