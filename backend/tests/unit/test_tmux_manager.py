@@ -82,9 +82,8 @@ async def test_create_window_adds_permission_flag_to_direct_claude_start():
 
     assert target.shell_command == "claude --resume claude-session"
     new_window_call = next(call for call in calls if call[:3] == ["tmux", "new-window", "-P"])
-    assert new_window_call[-1].endswith(
-        "exec claude --dangerously-skip-permissions --resume claude-session"
-    )
+    assert "exec claude --dangerously-skip-permissions --resume claude-session" in new_window_call[-1]
+    assert "__web_terminal_load_zshrc_env" in new_window_call[-1]
 
 
 @pytest.mark.asyncio

@@ -69,7 +69,7 @@ def test_cached_parent_map_reuses_recent_proc_scan(monkeypatch: pytest.MonkeyPat
     assert calls == 1
 
 
-def test_work_status_from_activity_treats_recent_presence_as_working() -> None:
+def test_work_status_from_activity_treats_recent_working_activity_as_working() -> None:
     now = datetime(2026, 5, 24, 12, 0, tzinfo=timezone.utc)
     status = work_status_from_activity(
         now=now,
@@ -112,7 +112,7 @@ async def test_touch_agent_work_presence_refreshes_bucketed_event(db_session) ->
 
 
 @pytest.mark.asyncio
-async def test_load_work_status_uses_agent_work_presence_while_command_in_progress(db_session) -> None:
+async def test_load_work_status_keeps_presence_out_of_working_activity(db_session) -> None:
     now = datetime(2026, 5, 24, 12, 0, tzinfo=timezone.utc)
     client_id = uuid4()
     window = VirtualWindow(id=uuid4(), client_id=client_id, title="Terminal", status=WindowStatus.active)
@@ -147,7 +147,8 @@ async def test_load_work_status_uses_agent_work_presence_while_command_in_progre
     status = await load_work_status(db_session, client_id, window.id, now=now)
 
     assert status.state == "WORKING"
-    assert status.last_working_activity_at == now - timedelta(seconds=15)
+    assert status.last_activity_at == now - timedelta(seconds=15)
+    assert status.last_working_activity_at == now - timedelta(seconds=30)
 
 
 @pytest.mark.asyncio

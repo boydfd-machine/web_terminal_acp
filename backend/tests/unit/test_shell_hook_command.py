@@ -41,6 +41,11 @@ def test_bash_managed_shell_command_contains_command_capture_hook() -> None:
     assert "export CURSOR_AGENT_HOME=\"$WEB_TERMINAL_CURSOR_HOME\"" in managed.command
     assert "__web_terminal_prepare_agent_homes" in managed.command
     assert '__web_terminal_prepend_path_once "~/.web-terminal-acp/npm-global/bin"' in managed.command
+    assert "__web_terminal_load_zshrc_env" in managed.command
+    assert 'if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then' in managed.command
+    assert "zsh -ic" in managed.command
+    assert "ANTHROPIC_*=*|CLAUDE_CODE_*=*" in managed.command
+    assert "CLAUDE_CONFIG_DIR=*" not in managed.command
     assert "__web_terminal_prepare_cursor_home" in managed.command
     assert "__web_terminal_install_agent_permission_wrappers" in managed.command
     assert "command codex --dangerously-bypass-approvals-and-sandbox" in managed.command
@@ -115,7 +120,7 @@ def test_unsupported_shell_returns_fallback_command_and_unsupported_flag() -> No
     )
 
     assert managed.command_capture_supported is False
-    assert managed.command == (
+    assert managed.command.startswith(
         'PATH="$HOME/.web-terminal-acp/npm-global/bin:$PATH" '
         "WEB_TERMINAL_CLIENT_ID=12345678-1234-5678-1234-567812345678 "
         "WEB_TERMINAL_WINDOW_ID=87654321-4321-8765-4321-876543218765 "
@@ -130,8 +135,11 @@ def test_unsupported_shell_returns_fallback_command_and_unsupported_flag() -> No
         "CURSOR_AGENT_HOME='~/.web-terminal-acp/cursor-homes/87654321-4321-8765-4321-876543218765' "
         "CURSOR_CONFIG_DIR='~/.web-terminal-acp/cursor-homes/87654321-4321-8765-4321-876543218765' "
         "CURSOR_DATA_DIR='~/.web-terminal-acp/cursor-homes/87654321-4321-8765-4321-876543218765' "
-        "exec /usr/bin/fish"
+        "/bin/sh -c "
     )
+    assert "__web_terminal_prepare_agent_homes" in managed.command
+    assert "__web_terminal_load_zshrc_env" in managed.command
+    assert "exec /usr/bin/fish" in managed.command
     assert "web-terminal-command" not in managed.command
 
 
@@ -145,9 +153,8 @@ def test_direct_codex_shell_command_adds_permission_flag() -> None:
     )
 
     assert managed.command_capture_supported is False
-    assert managed.command.endswith(
-        "exec codex --dangerously-bypass-approvals-and-sandbox resume codex-session"
-    )
+    assert "exec codex --dangerously-bypass-approvals-and-sandbox resume codex-session" in managed.command
+    assert "__web_terminal_load_zshrc_env" in managed.command
 
 
 def test_direct_claude_shell_command_adds_permission_flag() -> None:
@@ -160,4 +167,5 @@ def test_direct_claude_shell_command_adds_permission_flag() -> None:
     )
 
     assert managed.command_capture_supported is False
-    assert managed.command.endswith("exec claude --dangerously-skip-permissions --resume claude-session")
+    assert "exec claude --dangerously-skip-permissions --resume claude-session" in managed.command
+    assert "__web_terminal_load_zshrc_env" in managed.command

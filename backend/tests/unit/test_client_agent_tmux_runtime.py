@@ -102,7 +102,8 @@ def test_managed_shell_command_injects_quoted_environment_and_execs_default_shel
     assert not command.startswith("CODEX_HOME='~/.web-terminal-acp/codex-homes/87654321-4321-8765-4321-876543218765'")
     assert "CLAUDE_CONFIG_DIR='~/.web-terminal-acp/claude-code-homes/87654321-4321-8765-4321-876543218765'" in command
     assert "CURSOR_AGENT_HOME='~/.web-terminal-acp/cursor-homes/87654321-4321-8765-4321-876543218765'" in command
-    assert "exec '/opt/shells/custom shell'" in command
+    assert "/bin/sh -c" in command
+    assert "exec '\\''/opt/shells/custom shell'\\''" in command
 
 
 def test_managed_shell_command_adds_permission_flag_to_direct_codex_start() -> None:
@@ -118,9 +119,8 @@ def test_managed_shell_command_adds_permission_flag_to_direct_codex_start() -> N
         project_path="/workspace/project",
     )
 
-    assert command.endswith(
-        "exec codex --dangerously-bypass-approvals-and-sandbox resume codex-session"
-    )
+    assert "exec codex --dangerously-bypass-approvals-and-sandbox resume codex-session" in command
+    assert "__web_terminal_load_zshrc_env" in command
 
 
 @pytest.mark.asyncio

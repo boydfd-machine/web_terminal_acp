@@ -54,11 +54,31 @@ def test_clear_settings_env_removes_mixed_case_variants(monkeypatch):
 
 def test_settings_defaults_bind_locally(monkeypatch):
     clear_settings_env(monkeypatch)
+    monkeypatch.setenv("SHELL", "/usr/bin/zsh")
 
     settings = Settings(_env_file=None)
 
     assert settings.app_host == "127.0.0.1"
     assert settings.app_port == 8000
+    assert settings.default_shell == "/usr/bin/zsh"
+
+
+def test_settings_default_shell_auto_uses_user_shell(monkeypatch):
+    clear_settings_env(monkeypatch)
+    monkeypatch.setenv("SHELL", "/usr/bin/zsh")
+
+    settings = Settings(_env_file=None, default_shell="auto")
+
+    assert settings.default_shell == "/usr/bin/zsh"
+
+
+def test_settings_default_shell_can_be_forced(monkeypatch):
+    clear_settings_env(monkeypatch)
+    monkeypatch.setenv("SHELL", "/usr/bin/zsh")
+
+    settings = Settings(_env_file=None, default_shell="/bin/bash")
+
+    assert settings.default_shell == "/bin/bash"
 
 
 def test_settings_env_file_points_to_project_root():

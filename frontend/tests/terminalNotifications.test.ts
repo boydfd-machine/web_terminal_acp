@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { TreeFolder } from "../src/types";
 import {
+  clearTerminalNotifications,
+  deleteTerminalNotification,
   findNewUnreadNotifications,
   loadStoredNotifications,
   markTerminalNotificationRead,
@@ -51,26 +53,50 @@ afterEach(() => {
 });
 
 describe("markTerminalNotificationRead", () => {
-  it("removes the notification from storage after it is opened", () => {
+  it("marks the notification read without deleting it after it is opened", () => {
     syncTerminalNotifications(CLIENT_ID, treeWithCompletion(COMPLETED_AT));
     const [stored] = loadStoredNotifications(CLIENT_ID);
 
     const next = markTerminalNotificationRead(CLIENT_ID, stored);
 
+    expect(next).toEqual([{ ...stored, read: true }]);
+    expect(loadStoredNotifications(CLIENT_ID)).toEqual([{ ...stored, read: true }]);
+  });
+});
+
+describe("deleteTerminalNotification", () => {
+  it("removes the notification and keeps sync from restoring it", () => {
+    syncTerminalNotifications(CLIENT_ID, treeWithCompletion(COMPLETED_AT));
+    const [stored] = loadStoredNotifications(CLIENT_ID);
+
+    const next = deleteTerminalNotification(CLIENT_ID, stored);
+
+    expect(next).toEqual([]);
+    expect(syncTerminalNotifications(CLIENT_ID, treeWithCompletion(COMPLETED_AT))).toEqual([]);
+  });
+});
+
+describe("clearTerminalNotifications", () => {
+  it("clears stored notifications and keeps sync from restoring them", () => {
+    syncTerminalNotifications(CLIENT_ID, treeWithCompletion(COMPLETED_AT));
+
+    const next = clearTerminalNotifications(CLIENT_ID);
+
     expect(next).toEqual([]);
     expect(loadStoredNotifications(CLIENT_ID)).toEqual([]);
+    expect(syncTerminalNotifications(CLIENT_ID, treeWithCompletion(COMPLETED_AT))).toEqual([]);
   });
 });
 
 describe("syncTerminalNotifications", () => {
-  it("does not restore notifications that were already acknowledged", () => {
+  it("preserves notifications that were already acknowledged as read", () => {
     syncTerminalNotifications(CLIENT_ID, treeWithCompletion(COMPLETED_AT));
     const [stored] = loadStoredNotifications(CLIENT_ID);
     markTerminalNotificationRead(CLIENT_ID, stored);
 
     const next = syncTerminalNotifications(CLIENT_ID, treeWithCompletion(COMPLETED_AT));
 
-    expect(next).toEqual([]);
+    expect(next).toEqual([{ ...stored, read: true }]);
   });
 });
 

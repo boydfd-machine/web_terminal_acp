@@ -109,14 +109,13 @@ export function syncTerminalNotifications(
       continue;
     }
 
-    const acknowledgedAt = readAcknowledgedCompletionAt(clientId, treeWindow.id);
-    if (acknowledgedAt !== null && acknowledgedAt >= completedAt) {
-      continue;
-    }
-
     const id = `${clientId}:${treeWindow.id}:${completedAt}`;
     const previous = existingById.get(id);
-    const read = previous?.read ?? false;
+    const acknowledgedAt = readAcknowledgedCompletionAt(clientId, treeWindow.id);
+    if (previous === undefined && acknowledgedAt !== null && acknowledgedAt >= completedAt) {
+      continue;
+    }
+    const read = previous?.read ?? (acknowledgedAt !== null && acknowledgedAt >= completedAt);
 
     next.push({
       id,
@@ -138,9 +137,31 @@ export function markTerminalNotificationRead(
   notification: TerminalNotification
 ): TerminalNotification[] {
   writeAcknowledgedCompletionAt(clientId, notification.windowId, notification.completedAt);
+  const next = loadStoredNotifications(clientId).map((item) =>
+    item.id === notification.id ? { ...item, read: true } : item
+  );
+  storeNotifications(clientId, next);
+  return next;
+}
+
+export function deleteTerminalNotification(
+  clientId: string,
+  notification: TerminalNotification
+): TerminalNotification[] {
+  writeAcknowledgedCompletionAt(clientId, notification.windowId, notification.completedAt);
   const next = loadStoredNotifications(clientId).filter((item) => item.id !== notification.id);
   storeNotifications(clientId, next);
   return next;
+}
+
+export function clearTerminalNotifications(clientId: string): TerminalNotification[] {
+  const notifications = loadStoredNotifications(clientId);
+  for (const notification of notifications) {
+    writeAcknowledgedCompletionAt(clientId, notification.windowId, notification.completedAt);
+  }
+
+  storeNotifications(clientId, []);
+  return [];
 }
 
 export function markTerminalViewed(

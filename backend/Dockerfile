@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 ARG BACKEND_BASE_IMAGE=localhost/web_terminal_acp-backend-base:local
 FROM ${BACKEND_BASE_IMAGE}
 

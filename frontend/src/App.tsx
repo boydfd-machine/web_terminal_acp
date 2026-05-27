@@ -31,6 +31,8 @@ import {
 } from "./userPreferences";
 import { ensureDesktopNotificationPermission, showAgentTaskDesktopNotification } from "./desktopNotifications";
 import {
+  clearTerminalNotifications,
+  deleteTerminalNotification,
   findNewUnreadNotifications,
   flattenTreeWindows,
   markTerminalNotificationRead,
@@ -101,6 +103,11 @@ function isNewTerminalShortcut(event: KeyboardEvent): boolean {
 function isNewTerminalByProjectShortcut(event: KeyboardEvent): boolean {
   const key = event.key.toLocaleLowerCase();
   return event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && (event.code === "KeyN" || key === "n" || event.keyCode === 78);
+}
+
+function isLocateSelectedTerminalShortcut(event: KeyboardEvent): boolean {
+  const key = event.key.toLocaleLowerCase();
+  return event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && (event.code === "KeyL" || key === "l" || event.keyCode === 76);
 }
 
 function isXtermInput(element: EventTarget | null): boolean {
@@ -265,6 +272,7 @@ export default function App() {
   const [terminalImmersive, setTerminalImmersive] = useState(false);
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
   const [agentRecordExpandSignal, setAgentRecordExpandSignal] = useState(0);
+  const [terminalListLocateSignal, setTerminalListLocateSignal] = useState(0);
   const [terminalNotifications, setTerminalNotifications] = useState<TerminalNotification[]>([]);
   const notificationPreviousRef = useRef<TerminalNotification[]>([]);
   const terminalControlsRef = useRef<HTMLDivElement | null>(null);
@@ -526,6 +534,17 @@ export default function App() {
     setAgentRecordExpandSignal((signal) => signal + 1);
   }, [selectedClientId, selectedWindowId]);
 
+  const triggerLocateSelectedTerminal = useCallback(() => {
+    if (selectedClientId === null || selectedWindowId === null) {
+      return;
+    }
+
+    setMobileTerminalActive(false);
+    setTerminalImmersive(false);
+    setTerminalControlsOpen(false);
+    setTerminalListLocateSignal((signal) => signal + 1);
+  }, [selectedClientId, selectedWindowId]);
+
   const triggerQuickInput = useCallback(() => {
     if (selectedClientId === null || selectedWindowId === null) {
       return;
@@ -622,6 +641,24 @@ export default function App() {
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
   }, [selectedClientId, selectedWindowId, triggerAgentRecordExpand]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!isLocateSelectedTerminalShortcut(event)) {
+        return;
+      }
+      if (selectedClientId === null || selectedWindowId === null) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      triggerLocateSelectedTerminal();
+    };
+
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
+  }, [selectedClientId, selectedWindowId, triggerLocateSelectedTerminal]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -890,9 +927,9 @@ export default function App() {
   };
 
   const handleSelectNotification = useCallback((notification: TerminalNotification) => {
-    setTerminalNotifications(
-      markTerminalNotificationRead(notification.clientId, notification)
-    );
+    const next = markTerminalNotificationRead(notification.clientId, notification);
+    notificationPreviousRef.current = next;
+    setTerminalNotifications(next);
     setNotificationCenterOpen(false);
     if (notification.clientId !== selectedClientId) {
       setRouteSelectionRequest(null);
@@ -904,6 +941,22 @@ export default function App() {
     writeTerminalRoute(notification.clientId, notification.windowId, "push");
     focusSelectedTerminal();
   }, [focusSelectedTerminal, selectedClientId]);
+
+  const handleDeleteNotification = useCallback((notification: TerminalNotification) => {
+    const next = deleteTerminalNotification(notification.clientId, notification);
+    notificationPreviousRef.current = next;
+    setTerminalNotifications(next);
+  }, []);
+
+  const handleClearNotifications = useCallback(() => {
+    if (selectedClientId === null) {
+      return;
+    }
+
+    const next = clearTerminalNotifications(selectedClientId);
+    notificationPreviousRef.current = next;
+    setTerminalNotifications(next);
+  }, [selectedClientId]);
 
   const mobileShortcutActions = useMemo(
     () => [
@@ -942,6 +995,13 @@ export default function App() {
         onPress: triggerAgentRecordExpand
       },
       {
+        id: "locate-terminal",
+        label: "定位当前终端",
+        hint: "Alt+L",
+        disabled: selectedClientId === null || selectedWindowId === null,
+        onPress: triggerLocateSelectedTerminal
+      },
+      {
         id: "notifications",
         label: "通知中心",
         badge: unreadNotificationCount,
@@ -960,6 +1020,7 @@ export default function App() {
       selectedClientOffline,
       selectedWindowId,
       triggerAgentRecordExpand,
+      triggerLocateSelectedTerminal,
       triggerNewTerminalByProjectShortcut,
       triggerNewTerminalShortcut,
       triggerQuickInput,
@@ -979,15 +1040,17 @@ export default function App() {
         terminalImmersive ? "terminal-immersive" : "",
       ].filter(Boolean).join(" ")}
     >
+      <div className="notification-bell-anchor">
+        <NotificationBellButton
+          unreadCount={unreadNotificationCount}
+          isOpen={notificationCenterOpen}
+          onClick={() => setNotificationCenterOpen((isOpen) => !isOpen)}
+        />
+      </div>
       <aside className="sidebar">
         <div className="sidebar-header">
           <div className="sidebar-title-row">
             <h1>Web Terminal ACP</h1>
-            <NotificationBellButton
-              unreadCount={unreadNotificationCount}
-              isOpen={notificationCenterOpen}
-              onClick={() => setNotificationCenterOpen((isOpen) => !isOpen)}
-            />
           </div>
           <div className="sidebar-actions">
             <button
@@ -1047,6 +1110,7 @@ export default function App() {
             groupingMode={terminalGroupingMode}
             summaryOutputLanguage={summaryOutputLanguage}
             selectedWindowId={selectedWindowId}
+            locateSelectedWindowSignal={terminalListLocateSignal}
             deletingWindowId={deletingWindowId}
             hasUnreadNotification={hasUnreadNotification}
             onSelectWindow={(window) => selectWindow(window.id)}
@@ -1267,6 +1331,8 @@ export default function App() {
         notifications={terminalNotifications}
         onClose={() => setNotificationCenterOpen(false)}
         onSelectNotification={handleSelectNotification}
+        onDeleteNotification={handleDeleteNotification}
+        onClearNotifications={handleClearNotifications}
       />
       <MobileShortcutFab
         visible={

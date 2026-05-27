@@ -181,6 +181,7 @@ function terminalOutput(rows = 40): string {
 type MockApiOptions = {
   slowTreeMs?: number;
   slowSocketMs?: number;
+  tree?: ReturnType<typeof testTree>;
   onTerminalMessage?: (message: string | Buffer, ws: MockTerminalSocket) => void;
   afterTerminalConnected?: (ws: MockTerminalSocket) => void;
 };
@@ -301,7 +302,7 @@ async function startMockApiServer(options?: MockApiOptions): Promise<{ baseUrl: 
         if (options?.slowTreeMs) {
           await new Promise((resolve) => setTimeout(resolve, options.slowTreeMs));
         }
-        sendJson(response, testTree());
+        sendJson(response, options?.tree ?? testTree());
       } else if (url.pathname === `${clientPath}/windows/activity`) {
         sendJson(response, {
           windows: [{
@@ -433,6 +434,65 @@ test.describe("terminal viewport fit", () => {
     expect(metrics.renderedHeight).toBeGreaterThan(300);
     expect(metrics.visibleText).toContain("top marker");
     expect(metrics.visibleText).toContain("fit-row-40");
+  });
+
+  test("Alt+L locates the selected terminal in the sidebar list", async ({ page }) => {
+    const selectedWindow = testWindow();
+    const extraWindows = Array.from({ length: 28 }, (_, index) => {
+      const suffix = String(index + 1).padStart(2, "0");
+      return {
+        id: `00000000-0000-0000-0000-0000000010${suffix}`,
+        title: `Scrollable Terminal ${suffix}`,
+        status: "ACTIVE",
+        title_tags: [`scroll-${suffix}`],
+        created_at: selectedWindow.created_at,
+      };
+    });
+
+    await mockApi(page, {
+      tree: [{
+        id: "00000000-0000-0000-0000-000000000010",
+        name: "未分类",
+        path: "/未分类",
+        folders: [],
+        windows: [selectedWindow, ...extraWindows],
+      }],
+    });
+    await page.goto(terminalPath(), { waitUntil: "domcontentloaded" });
+    const selectedTerminal = page.locator(".tree-window.selected", { hasText: selectedWindow.title });
+    await expect(selectedTerminal).toBeVisible();
+
+    await page.locator(".sidebar").evaluate((sidebar) => {
+      sidebar.scrollTop = sidebar.scrollHeight;
+    });
+    await expect.poll(
+      () => selectedTerminal.evaluate((element) => {
+        const sidebar = element.closest(".sidebar");
+        if (!(sidebar instanceof HTMLElement)) {
+          return false;
+        }
+        const elementBox = element.getBoundingClientRect();
+        const sidebarBox = sidebar.getBoundingClientRect();
+        return elementBox.bottom > sidebarBox.top && elementBox.top < sidebarBox.bottom;
+      }),
+      { timeout: 5000 },
+    ).toBe(false);
+
+    await page.keyboard.press("Alt+L");
+
+    await expect(selectedTerminal).toHaveClass(/locating/);
+    await expect.poll(
+      () => selectedTerminal.evaluate((element) => {
+        const sidebar = element.closest(".sidebar");
+        if (!(sidebar instanceof HTMLElement)) {
+          return false;
+        }
+        const elementBox = element.getBoundingClientRect();
+        const sidebarBox = sidebar.getBoundingClientRect();
+        return elementBox.top >= sidebarBox.top && elementBox.bottom <= sidebarBox.bottom;
+      }),
+      { timeout: 5000 },
+    ).toBe(true);
   });
 
   test("reconnects and focuses terminal after page reload", async ({ page }) => {

@@ -66,7 +66,7 @@ def build_managed_shell_command(
         )
 
     return ManagedShellCommand(
-        command=f"{assignments} exec {_exec_command(shell)}",
+        command=f"{assignments} /bin/sh -c {_shell_quote(_direct_launcher(shell))}",
         command_capture_supported=False,
     )
 
@@ -94,7 +94,16 @@ exec {quoted_shell} -i
 """
 
 
-def _common_hook_script() -> str:
+def _direct_launcher(shell: str) -> str:
+    return f"""{_agent_environment_script()}
+if [ -z "${{ANTHROPIC_API_KEY:-}}" ] && [ -z "${{ANTHROPIC_AUTH_TOKEN:-}}" ]; then
+  __web_terminal_load_zshrc_env
+fi
+exec {_exec_command(shell)}
+"""
+
+
+def _agent_environment_script() -> str:
     return r'''__web_terminal_prepare_codex_home() {
   [ -n "$WEB_TERMINAL_CODEX_HOME" ] || return 0
   __web_terminal_source_codex_home="${WEB_TERMINAL_ORIGINAL_CODEX_HOME:-${CODEX_HOME:-$HOME/.codex}}"
@@ -182,9 +191,31 @@ __web_terminal_prepare_cursor_home() {
   export CURSOR_CONFIG_DIR="$managed_cursor"
   export CURSOR_DATA_DIR="$managed_cursor"
 }
+__web_terminal_load_zshrc_env() {
+  [ -r "$HOME/.zshrc" ] || return 0
+  command -v zsh >/dev/null 2>&1 || return 0
+  __web_terminal_zshrc_env=$(
+    env -i HOME="$HOME" USER="${USER:-}" LOGNAME="${LOGNAME:-${USER:-}}" PATH="$PATH" SHELL="${SHELL:-/bin/zsh}" \
+      zsh -ic 'env' 2>/dev/null
+  ) || return 0
+  while IFS= read -r __web_terminal_env_line; do
+    case "$__web_terminal_env_line" in
+      ANTHROPIC_*=*|CLAUDE_CODE_*=*|HTTP_PROXY=*|HTTPS_PROXY=*|NO_PROXY=*|http_proxy=*|https_proxy=*|no_proxy=*)
+        export "$__web_terminal_env_line"
+        ;;
+    esac
+  done <<WEB_TERMINAL_ZSHRC_ENV
+$__web_terminal_zshrc_env
+WEB_TERMINAL_ZSHRC_ENV
+  unset __web_terminal_zshrc_env __web_terminal_env_line
+}
 __web_terminal_prepare_agent_homes
 __web_terminal_prepare_cursor_home
-__web_terminal_agent_arg_present() {
+'''
+
+
+def _common_hook_script() -> str:
+    return _agent_environment_script() + r'''__web_terminal_agent_arg_present() {
   __web_terminal_expected="$1"
   shift
   for __web_terminal_arg in "$@"; do
@@ -272,6 +303,9 @@ __web_terminal_should_capture_command() {
 
 def _bash_hook_script() -> str:
     return _common_hook_script() + r'''
+if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
+  __web_terminal_load_zshrc_env
+fi
 if [ -r "$HOME/.bashrc" ]; then
   . "$HOME/.bashrc"
 fi

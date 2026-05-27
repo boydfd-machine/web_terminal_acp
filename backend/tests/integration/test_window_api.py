@@ -1664,7 +1664,7 @@ async def test_get_window_returns_recent_active_for_recent_shell_command(db_clie
 
 
 @pytest.mark.asyncio
-async def test_get_window_returns_working_for_in_progress_agent_command(db_client):
+async def test_get_window_returns_working_for_recent_agent_activity(db_client):
     client_id = await get_local_client_id(db_client)
     async with db_client.session_factory() as session:
         client = await ensure_local_client(session)
@@ -1682,12 +1682,12 @@ async def test_get_window_returns_working_for_in_progress_agent_command(db_clien
             ),
             Event(
                 client_id=client.id,
-                source_type=EventSourceType.terminal,
-                source_id=str(window.id),
-                kind="terminal_output",
+                source_type=EventSourceType.agent_tool_record,
+                source_id="codex-session",
+                kind="assistant_message",
                 virtual_window_id=window.id,
-                payload_json={"text": "working\n"},
-                fingerprint=f"terminal_output:{window.id}:recent",
+                payload_json={"provider": "codex", "role": "assistant", "content": "working"},
+                fingerprint=f"agent_tool_record:{window.id}:recent",
                 created_at=datetime.now(timezone.utc) - timedelta(seconds=10),
             ),
         ])

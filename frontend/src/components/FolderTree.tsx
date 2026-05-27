@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchProjectSummaries, summarizeProject } from "../api";
 import {
@@ -22,6 +22,7 @@ type FolderTreeProps = {
   groupingMode: TerminalGroupingMode;
   summaryOutputLanguage: SummaryOutputLanguage;
   selectedWindowId: string | null;
+  locateSelectedWindowSignal?: number;
   deletingWindowId?: string | null;
   hasUnreadNotification?: (windowId: string) => boolean;
   onSelectWindow: (window: TreeWindow) => void;
@@ -105,6 +106,8 @@ function writeCollapsedKeys(storageKey: string, keys: Set<string>) {
 function WindowNode({
   window,
   selectedWindowId,
+  locatingWindowId,
+  registerWindowButton,
   deletingWindowId,
   hasUnreadNotification,
   onSelectWindow,
@@ -112,21 +115,32 @@ function WindowNode({
 }: {
   window: TreeWindow;
   selectedWindowId: string | null;
+  locatingWindowId: string | null;
+  registerWindowButton: (windowId: string, element: HTMLButtonElement | null) => void;
   deletingWindowId?: string | null;
   hasUnreadNotification?: (windowId: string) => boolean;
   onSelectWindow: (window: TreeWindow) => void;
   onDeleteWindow: (window: TreeWindow) => void;
 }) {
   const isSelected = window.id === selectedWindowId;
+  const isLocating = window.id === locatingWindowId;
   const isDeleting = deletingWindowId === window.id;
   const showUnreadDot = hasUnreadNotification?.(window.id) ?? false;
+  const handleWindowButtonRef = useCallback((element: HTMLButtonElement | null) => {
+    registerWindowButton(window.id, element);
+  }, [registerWindowButton, window.id]);
 
   return (
     <li className="tree-window-row">
       <button
         type="button"
+        ref={handleWindowButtonRef}
         aria-current={isSelected ? "true" : undefined}
-        className={isSelected ? "tree-window selected" : "tree-window"}
+        className={[
+          "tree-window",
+          isSelected ? "selected" : "",
+          isLocating ? "locating" : ""
+        ].filter(Boolean).join(" ")}
         onClick={() => onSelectWindow(window)}
         title={`${window.work_status.label}: ${window.title}`}
       >
@@ -157,6 +171,8 @@ function DisplayTreeNode({
   collapsedKeys,
   selectedPathKeys,
   selectedWindowId,
+  locatingWindowId,
+  registerWindowButton,
   deletingWindowId,
   summarizingProjectPath,
   hasUnreadNotification,
@@ -172,6 +188,8 @@ function DisplayTreeNode({
   collapsedKeys: Set<string>;
   selectedPathKeys: Set<string>;
   selectedWindowId: string | null;
+  locatingWindowId: string | null;
+  registerWindowButton: (windowId: string, element: HTMLButtonElement | null) => void;
   deletingWindowId?: string | null;
   summarizingProjectPath: string | null;
   hasUnreadNotification?: (windowId: string) => boolean;
@@ -188,6 +206,8 @@ function DisplayTreeNode({
       <WindowNode
         window={node.window}
         selectedWindowId={selectedWindowId}
+        locatingWindowId={locatingWindowId}
+        registerWindowButton={registerWindowButton}
         deletingWindowId={deletingWindowId}
         hasUnreadNotification={hasUnreadNotification}
         onSelectWindow={onSelectWindow}
@@ -256,6 +276,8 @@ function DisplayTreeNode({
               collapsedKeys={collapsedKeys}
               selectedPathKeys={selectedPathKeys}
               selectedWindowId={selectedWindowId}
+              locatingWindowId={locatingWindowId}
+              registerWindowButton={registerWindowButton}
               deletingWindowId={deletingWindowId}
               summarizingProjectPath={summarizingProjectPath}
               hasUnreadNotification={hasUnreadNotification}
@@ -280,6 +302,7 @@ export function FolderTree({
   groupingMode,
   summaryOutputLanguage,
   selectedWindowId,
+  locateSelectedWindowSignal = 0,
   deletingWindowId,
   hasUnreadNotification,
   onSelectWindow,
@@ -290,6 +313,9 @@ export function FolderTree({
 }: FolderTreeProps) {
   const queryClient = useQueryClient();
   const [summarizingProjectPath, setSummarizingProjectPath] = useState<string | null>(null);
+  const [locatingWindowId, setLocatingWindowId] = useState<string | null>(null);
+  const windowButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const locateClearTimeoutRef = useRef<number | null>(null);
   const projectSummariesQuery = useQuery({
     queryKey: ["project-summaries", clientId],
     queryFn: () => fetchProjectSummaries(clientId as string),
@@ -329,6 +355,15 @@ export function FolderTree({
     [displayTree, selectedWindowId]
   );
 
+  const registerWindowButton = useCallback((windowId: string, element: HTMLButtonElement | null) => {
+    if (element === null) {
+      windowButtonRefs.current.delete(windowId);
+      return;
+    }
+
+    windowButtonRefs.current.set(windowId, element);
+  }, []);
+
   useEffect(() => {
     setCollapsedState({ storageKey, keys: loadCollapsedKeys(storageKey, displayTree) });
   }, [displayTree, storageKey]);
@@ -338,6 +373,46 @@ export function FolderTree({
       writeCollapsedKeys(storageKey, collapsedState.keys);
     }
   }, [collapsedState, storageKey]);
+
+  useEffect(() => {
+    if (locateClearTimeoutRef.current !== null) {
+      window.clearTimeout(locateClearTimeoutRef.current);
+      locateClearTimeoutRef.current = null;
+    }
+
+    return () => {
+      if (locateClearTimeoutRef.current !== null) {
+        window.clearTimeout(locateClearTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (locateSelectedWindowSignal === 0 || selectedWindowId === null) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const selectedButton = windowButtonRefs.current.get(selectedWindowId);
+      if (!selectedButton) {
+        return;
+      }
+
+      selectedButton.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+      selectedButton.focus({ preventScroll: true });
+      setLocatingWindowId(selectedWindowId);
+
+      if (locateClearTimeoutRef.current !== null) {
+        window.clearTimeout(locateClearTimeoutRef.current);
+      }
+      locateClearTimeoutRef.current = window.setTimeout(() => {
+        setLocatingWindowId((currentId) => (currentId === selectedWindowId ? null : currentId));
+        locateClearTimeoutRef.current = null;
+      }, 1200);
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [locateSelectedWindowSignal, selectedWindowId, selectedPathKeys]);
 
   const toggleGroup = (key: string) => {
     setCollapsedState((currentState) => {
@@ -365,6 +440,8 @@ export function FolderTree({
             collapsedKeys={collapsedKeys}
             selectedPathKeys={selectedPathKeys}
             selectedWindowId={selectedWindowId}
+            locatingWindowId={locatingWindowId}
+            registerWindowButton={registerWindowButton}
             deletingWindowId={deletingWindowId}
             summarizingProjectPath={summarizingProjectPath}
             hasUnreadNotification={hasUnreadNotification}

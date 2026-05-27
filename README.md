@@ -43,7 +43,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the full product design.
 ## Quick start (Docker Compose)
 
 ```bash
-git clone https://github.com/<your-org>/web_terminal_acp.git
+git clone https://github.com/boydfd-machine/web_terminal_acp.git
 cd web_terminal_acp
 cp .env.example .env
 # Edit .env — at minimum set paths and OPENAI_COMPAT_* if you want summaries
@@ -76,6 +76,7 @@ Copy `.env.example` to `.env`. Important variables:
 |----------|-------------|---------|
 | `DATABASE_URL` | Async PostgreSQL URL | local Compose Postgres |
 | `ELASTICSEARCH_URL` | Elasticsearch base URL | `http://127.0.0.1:19201` |
+| `DEFAULT_SHELL` | Shell for new local terminals; `auto` uses the backend user's login shell | `auto` |
 | `CLAUDE_PROJECTS_DIR` | Claude Code projects root (JSONL ingest) | `~/.claude/projects` |
 | `WORKSPACE_DIR` | Host path mounted into backend as `/workspace` | `~/workspace` |
 | `OPENAI_COMPAT_BASE_URL` | Summarization API base | `http://127.0.0.1:11434/v1` |
@@ -144,6 +145,7 @@ Client protocol and UI version are kept in sync:
 
 - `backend/app/version.py`
 - `frontend/package.json`
+- `frontend/package-lock.json`
 
 Bump **PATCH** for fixes, **MINOR** for compatible features, **MAJOR** for breaking protocol or storage changes.
 

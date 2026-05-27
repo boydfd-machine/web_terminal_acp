@@ -1,7 +1,20 @@
 from functools import lru_cache
+import os
 from pathlib import Path
+import pwd
 
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def default_user_shell() -> str:
+    shell = os.environ.get("SHELL")
+    if shell:
+        return shell
+    try:
+        return pwd.getpwuid(os.getuid()).pw_shell or "/bin/bash"
+    except KeyError:
+        return "/bin/bash"
 
 
 class Settings(BaseSettings):
@@ -16,7 +29,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://web_terminal:dev_password@127.0.0.1:15436/web_terminal_acp"
     elasticsearch_url: str = "http://127.0.0.1:19201"
     tmux_pool_session: str = "web_terminal_acp_pool"
-    default_shell: str = "/bin/bash"
+    default_shell: str = Field(default_factory=default_user_shell)
     claude_projects_dir: str = "~/.claude/projects"
     openai_compat_base_url: str = "http://127.0.0.1:11434/v1"
     openai_compat_api_key: str = "dev-local-key"
@@ -27,6 +40,14 @@ class Settings(BaseSettings):
     terminal_summary_repeat_seconds: int = 600
     terminal_summary_input_context_max_bytes: int = 32768
     summary_output_language: str = "中文"
+
+    @field_validator("default_shell")
+    @classmethod
+    def resolve_default_shell(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized in {"", "auto", "login"}:
+            return default_user_shell()
+        return value
 
 
 @lru_cache

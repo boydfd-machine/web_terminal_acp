@@ -2,6 +2,7 @@ appId: com.webterminal.acp
 productName: Web Terminal ACP
 directories:
   output: release
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 files:
   - dist/**/*
   - electron/**/*

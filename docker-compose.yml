@@ -88,7 +88,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://web_terminal:dev_password@postgres:5432/web_terminal_acp
       ELASTICSEARCH_URL: http://elasticsearch:9200
       TMUX_POOL_SESSION: web_terminal_acp_pool
-      DEFAULT_SHELL: /bin/bash
+      DEFAULT_SHELL: ${DEFAULT_SHELL:-auto}
       CLAUDE_PROJECTS_DIR: /claude-projects
       OPENAI_COMPAT_BASE_URL: ${OPENAI_COMPAT_BASE_URL:-http://host.docker.internal:11434/v1}
       OPENAI_COMPAT_API_KEY: ${OPENAI_COMPAT_API_KEY:-dev-local-key}

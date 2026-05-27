@@ -49,7 +49,6 @@ class _WindowActivityData:
     latest_activity: dict[UUID, datetime]
     latest_working_activity: dict[UUID, datetime]
     latest_ai_activity: dict[UUID, datetime]
-    latest_presence: dict[UUID, datetime]
     latest_commands: dict[UUID, Event]
     finished_sequences: dict[UUID, set[str]]
     latest_agent_finished_at: dict[UUID, datetime]
@@ -77,7 +76,6 @@ class _WindowActivityData:
                     window_id,
                     in_progress=in_progress,
                 ),
-                agent_command_in_progress=window_id in in_progress,
             )
             for window_id in window_ids
         }
@@ -96,8 +94,6 @@ class _WindowActivityData:
                 candidates.append(command.created_at)
         if window_id in self.latest_ai_activity:
             candidates.append(self.latest_ai_activity[window_id])
-        if window_id in in_progress and window_id in self.latest_presence:
-            candidates.append(self.latest_presence[window_id])
         if not candidates:
             return None
         return max(_aware_utc(value) for value in candidates)
@@ -140,7 +136,6 @@ def work_status_from_activity(
     now: datetime | None = None,
     last_activity_at: datetime | None,
     last_working_activity_at: datetime | None,
-    agent_command_in_progress: bool = False,
 ) -> TerminalWorkStatus:
     current = _aware_utc(now or datetime.now(UTC))
     last_activity = _aware_utc(last_activity_at) if last_activity_at is not None else None
@@ -148,7 +143,7 @@ def work_status_from_activity(
         _aware_utc(last_working_activity_at) if last_working_activity_at is not None else None
     )
 
-    if agent_command_in_progress or (
+    if (
         last_working_activity is not None
         and current - last_working_activity <= timedelta(seconds=WORKING_WINDOW_SECONDS)
     ):
@@ -282,7 +277,6 @@ async def _load_window_activity_data(
     )
     latest_activity = await _latest_activity_by_window(session, client_id, window_ids)
     latest_ai = await _latest_ai_activity_by_window(session, client_id, window_ids)
-    latest_presence = await _latest_agent_work_presence_by_window(session, client_id, window_ids)
     agent_command_windows = [
         window_id
         for window_id, event in latest_commands.items()
@@ -297,7 +291,6 @@ async def _load_window_activity_data(
         window_ids,
         latest_commands=latest_commands,
         latest_ai=latest_ai,
-        latest_presence=latest_presence,
         finished_sequences=finished_sequences,
     )
 
@@ -312,7 +305,6 @@ async def _load_window_activity_data(
         latest_activity=latest_activity,
         latest_working_activity=latest_working_activity,
         latest_ai_activity=latest_ai,
-        latest_presence=latest_presence,
         latest_commands=latest_commands,
         finished_sequences=finished_sequences,
         latest_agent_finished_at=latest_agent_finished_at,
@@ -424,10 +416,12 @@ async def _latest_agent_command_finished_at_by_window(
     )
     for event in deferred:
         window_id = event.virtual_window_id
-        if window_id is None or window_id in latest:
+        if window_id is None:
             continue
         if _finished_event_is_agent(event, input_by_window_sequence):
-            latest[window_id] = event.created_at
+            current_latest = latest.get(window_id)
+            if current_latest is None or event.created_at > current_latest:
+                latest[window_id] = event.created_at
     return latest
 
 
@@ -546,7 +540,6 @@ def _merge_latest_working_activity(
     *,
     latest_commands: dict[UUID, Event],
     latest_ai: dict[UUID, datetime],
-    latest_presence: dict[UUID, datetime],
     finished_sequences: dict[UUID, set[str]],
 ) -> dict[UUID, datetime]:
     latest_work: dict[UUID, datetime] = {}
@@ -559,8 +552,6 @@ def _merge_latest_working_activity(
                 candidates.append(command.created_at)
         if window_id in latest_ai:
             candidates.append(latest_ai[window_id])
-        if window_id in latest_presence:
-            candidates.append(latest_presence[window_id])
         if candidates:
             latest_work[window_id] = max(_aware_utc(value) for value in candidates)
     return latest_work
@@ -610,19 +601,6 @@ async def _latest_activity_by_window(
         source_types=agent_activity_source_types(),
     )
     return _merge_latest_created_at(latest_by_kind, latest_by_source)
-
-
-async def _latest_agent_work_presence_by_window(
-    session: AsyncSession,
-    client_id: UUID,
-    window_ids: list[UUID],
-) -> dict[UUID, datetime]:
-    return await _latest_created_at_by_window_and_kinds(
-        session,
-        client_id,
-        window_ids,
-        kinds=(AGENT_WORK_PRESENCE_KIND,),
-    )
 
 
 async def _latest_ai_activity_by_window(

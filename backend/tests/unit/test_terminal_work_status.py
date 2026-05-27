@@ -53,17 +53,16 @@ def test_work_status_from_activity_prefers_working_for_recent_agent_activity() -
     assert status.color == "orange"
 
 
-def test_work_status_from_activity_returns_working_for_in_progress_agent_command() -> None:
+def test_work_status_from_activity_returns_recent_active_for_stale_agent_activity() -> None:
     now = datetime(2026, 5, 22, 12, 0, tzinfo=timezone.utc)
 
     status = work_status_from_activity(
         now=now,
-        last_activity_at=now - timedelta(minutes=10),
-        last_working_activity_at=now - timedelta(minutes=10),
-        agent_command_in_progress=True,
+        last_activity_at=now - timedelta(minutes=2),
+        last_working_activity_at=now - timedelta(minutes=2),
     )
 
-    assert status.state == "WORKING"
+    assert status.state == "RECENT_ACTIVE"
 
 
 def test_work_status_from_activity_returns_recent_active_for_recent_input_only() -> None:
@@ -150,7 +149,7 @@ async def test_load_work_status_returns_working_for_in_progress_agent_command(db
             virtual_window_id=window.id,
             payload_json={"command": "codex exec 'fix tests'", "sequence": 7},
             fingerprint="terminal-input-codex",
-            created_at=now - timedelta(minutes=5),
+            created_at=now - timedelta(seconds=30),
         )
     )
     await db_session.flush()
@@ -158,6 +157,48 @@ async def test_load_work_status_returns_working_for_in_progress_agent_command(db
     status = await load_work_status(db_session, client_id, window.id, now=now)
 
     assert status.state == "WORKING"
+
+
+@pytest.mark.asyncio
+async def test_load_work_status_returns_idle_for_stale_in_progress_agent_command_without_activity(
+    db_session,
+) -> None:
+    now = datetime(2026, 5, 22, 12, 0, tzinfo=timezone.utc)
+    client_id = uuid4()
+    window = VirtualWindow(id=uuid4(), client_id=client_id, title="Terminal", status=WindowStatus.active)
+    db_session.add(window)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            Event(
+                client_id=client_id,
+                source_type=EventSourceType.terminal,
+                source_id=str(window.id),
+                kind="terminal_input_command",
+                virtual_window_id=window.id,
+                payload_json={"command": "codex exec 'fix tests'", "sequence": 7},
+                fingerprint="terminal-input-codex",
+                created_at=now - timedelta(minutes=5),
+            ),
+            Event(
+                client_id=client_id,
+                source_type=EventSourceType.agent_tool_record,
+                source_id="codex-session-1",
+                kind="assistant_message",
+                virtual_window_id=window.id,
+                payload_json={"provider": "codex", "role": "assistant", "content": "working"},
+                fingerprint="codex-agent-stale-work-status",
+                created_at=now - timedelta(minutes=2),
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    status = await load_work_status(db_session, client_id, window.id, now=now)
+
+    assert status.state == "RECENT_ACTIVE"
+    assert status.last_activity_at == now - timedelta(minutes=2)
+    assert status.last_working_activity_at == now - timedelta(minutes=2)
 
 
 @pytest.mark.asyncio
@@ -241,6 +282,59 @@ async def test_load_last_agent_task_completed_resolves_agent_from_input_command(
 
 
 @pytest.mark.asyncio
+async def test_load_last_agent_task_completed_prefers_newer_finished_event_resolved_from_input(
+    db_session,
+) -> None:
+    now = datetime(2026, 5, 22, 12, 0, tzinfo=timezone.utc)
+    client_id = uuid4()
+    window = VirtualWindow(id=uuid4(), client_id=client_id, title="Terminal", status=WindowStatus.active)
+    db_session.add(window)
+    await db_session.flush()
+    older_completed_at = now - timedelta(minutes=2)
+    newer_completed_at = now - timedelta(seconds=30)
+    db_session.add_all([
+        Event(
+            client_id=client_id,
+            source_type=EventSourceType.terminal,
+            source_id=str(window.id),
+            kind="terminal_input_command",
+            virtual_window_id=window.id,
+            payload_json={"command": "codex exec 'newer done'", "sequence": 2},
+            fingerprint="terminal-input-codex-newer",
+            created_at=newer_completed_at - timedelta(seconds=5),
+        ),
+        Event(
+            client_id=client_id,
+            source_type=EventSourceType.terminal,
+            source_id=str(window.id),
+            kind="terminal_command_finished",
+            virtual_window_id=window.id,
+            payload_json={"command": "claude --resume old-session", "sequence": 1},
+            fingerprint="terminal-finished-claude-older",
+            created_at=older_completed_at,
+        ),
+        Event(
+            client_id=client_id,
+            source_type=EventSourceType.terminal,
+            source_id=str(window.id),
+            kind="terminal_command_finished",
+            virtual_window_id=window.id,
+            payload_json={"command": "", "sequence": 2},
+            fingerprint="terminal-finished-codex-newer",
+            created_at=newer_completed_at,
+        ),
+    ])
+    await db_session.flush()
+
+    latest = await load_last_agent_task_completed_at_by_window(db_session, client_id, [window.id])
+
+    stored = latest[window.id]
+    if stored.tzinfo is None:
+        stored = stored.replace(tzinfo=timezone.utc)
+    assert stored == newer_completed_at
+
+
+@pytest.mark.asyncio
 async def test_load_last_agent_task_completed_from_idle_agent_work(db_session) -> None:
     now = datetime(2026, 5, 22, 12, 0, tzinfo=timezone.utc)
     client_id = uuid4()
@@ -251,12 +345,12 @@ async def test_load_last_agent_task_completed_from_idle_agent_work(db_session) -
     db_session.add(
         Event(
             client_id=client_id,
-            source_type=EventSourceType.terminal,
-            source_id=str(window.id),
-            kind="agent_work_presence",
+            source_type=EventSourceType.agent_tool_record,
+            source_id="claude-session-1",
+            kind="assistant_message",
             virtual_window_id=window.id,
-            payload_json={"providers": ["claude_code"], "reasons": ["process"]},
-            fingerprint="agent-work-presence-claude",
+            payload_json={"provider": "claude_code", "role": "assistant", "content": "working"},
+            fingerprint="claude-agent-idle-work",
             created_at=working_at,
         )
     )

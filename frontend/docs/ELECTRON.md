@@ -42,7 +42,15 @@ npm run electron:dist:mac:zip
 npm run electron:dist:win:portable
 ```
 
-Those commands produce a macOS `.zip` and Windows portable `.exe` without requiring a macOS host or Linux `wine` for executable metadata editing. Use the platform-native installer commands above for final signed releases.
+`electron:dist:mac:zip` produces separate `x64` and `arm64` macOS `.zip` artifacts, with the architecture included in each filename. Use the `arm64` artifact for Apple Silicon Macs; running the `x64` artifact through Rosetta can significantly increase cold-start memory usage. Use the platform-native installer commands above for final signed releases.
+
+Single-architecture macOS zip builds are also available when debugging packaging:
+
+```bash
+cd frontend
+npm run electron:dist:mac:zip:x64
+npm run electron:dist:mac:zip:arm64
+```
 
 Packaged builds serve `dist/` on `http://127.0.0.1:4173` so CORS matches localhost origins. The backend allows any `http://127.0.0.1:<port>` origin via `allow_origin_regex`.
 
