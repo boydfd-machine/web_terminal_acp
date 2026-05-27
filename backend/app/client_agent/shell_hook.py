@@ -8,6 +8,7 @@ from uuid import UUID
 from app.client_agent.agent_commands import agent_command_with_permission_flag
 
 _SAFE_SHELL_VALUE = re.compile(r"^[A-Za-z0-9_@%+=:,./-]+$")
+AGENT_NPM_GLOBAL_BIN = "~/.web-terminal-acp/npm-global/bin"
 
 
 @dataclass(frozen=True)
@@ -45,7 +46,12 @@ def build_managed_shell_command(
         "WEB_TERMINAL_ORIGINAL_CURSOR_DIR": "~/.cursor",
         **storage_env,
     }
-    assignments = " ".join(f"{key}={_shell_quote(value)}" for key, value in env.items())
+    assignments = " ".join(
+        [
+            'PATH="$HOME/.web-terminal-acp/npm-global/bin:$PATH"',
+            *(f"{key}={_shell_quote(value)}" for key, value in env.items()),
+        ]
+    )
     shell_name = posixpath.basename(shell)
 
     if shell_name == "bash":
@@ -103,10 +109,32 @@ def _common_hook_script() -> str:
   done
   export CODEX_HOME="$WEB_TERMINAL_CODEX_HOME"
 }
+__web_terminal_prepare_claude_code_home() {
+  [ -n "$WEB_TERMINAL_CLAUDE_CODE_HOME" ] || return 0
+  __web_terminal_source_claude_home="${WEB_TERMINAL_ORIGINAL_CLAUDE_CODE_HOME:-$HOME/.claude}"
+  case "$WEB_TERMINAL_CLAUDE_CODE_HOME" in
+    "~/"*) WEB_TERMINAL_CLAUDE_CODE_HOME="$HOME/${WEB_TERMINAL_CLAUDE_CODE_HOME#"~/"}" ;;
+  esac
+  mkdir -p "$WEB_TERMINAL_CLAUDE_CODE_HOME/projects" 2>/dev/null || true
+  for __web_terminal_claude_item in settings.json commands hooks plugins api-key-helper.sh; do
+    [ -e "$__web_terminal_source_claude_home/$__web_terminal_claude_item" ] || continue
+    [ -e "$WEB_TERMINAL_CLAUDE_CODE_HOME/$__web_terminal_claude_item" ] && continue
+    ln -s "$__web_terminal_source_claude_home/$__web_terminal_claude_item" "$WEB_TERMINAL_CLAUDE_CODE_HOME/$__web_terminal_claude_item" 2>/dev/null || true
+  done
+  export CLAUDE_CONFIG_DIR="$WEB_TERMINAL_CLAUDE_CODE_HOME"
+}
 __web_terminal_expand_home_path() {
   case "$1" in
     "~"*) printf '%s\n' "$HOME${1#\~}" ;;
     *) printf '%s\n' "$1" ;;
+  esac
+}
+__web_terminal_prepend_path_once() {
+  __web_terminal_path_to_add=$(__web_terminal_expand_home_path "$1")
+  [ -n "$__web_terminal_path_to_add" ] || return 0
+  case ":$PATH:" in
+    *":$__web_terminal_path_to_add:"*) ;;
+    *) export PATH="$__web_terminal_path_to_add:$PATH" ;;
   esac
 }
 __web_terminal_mkdir_env_path() {
@@ -116,15 +144,12 @@ __web_terminal_mkdir_env_path() {
   mkdir -p "$__web_terminal_env_path" 2>/dev/null || true
 }
 __web_terminal_prepare_agent_homes() {
+  __web_terminal_prepend_path_once "~/.web-terminal-acp/npm-global/bin"
   __web_terminal_prepare_codex_home
-  case "$WEB_TERMINAL_CLAUDE_CODE_HOME" in
-    "~/"*) WEB_TERMINAL_CLAUDE_CODE_HOME="$HOME/${WEB_TERMINAL_CLAUDE_CODE_HOME#"~/"}" ;;
-  esac
+  __web_terminal_prepare_claude_code_home
   case "$WEB_TERMINAL_CURSOR_HOME" in
     "~/"*) WEB_TERMINAL_CURSOR_HOME="$HOME/${WEB_TERMINAL_CURSOR_HOME#"~/"}" ;;
   esac
-  [ -n "$WEB_TERMINAL_CLAUDE_CODE_HOME" ] && mkdir -p "$WEB_TERMINAL_CLAUDE_CODE_HOME/projects" 2>/dev/null || true
-  export CLAUDE_CONFIG_DIR="$WEB_TERMINAL_CLAUDE_CODE_HOME"
   export CURSOR_AGENT_HOME="$WEB_TERMINAL_CURSOR_HOME"
   export CURSOR_CONFIG_DIR="$WEB_TERMINAL_CURSOR_HOME"
   export CURSOR_DATA_DIR="$WEB_TERMINAL_CURSOR_HOME"

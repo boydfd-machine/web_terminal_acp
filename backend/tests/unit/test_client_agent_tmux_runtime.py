@@ -91,6 +91,7 @@ def test_managed_shell_command_injects_quoted_environment_and_execs_default_shel
 
     command = runtime.managed_shell_command(WINDOW_ID, project_path="/workspace/project")
 
+    assert 'PATH="$HOME/.web-terminal-acp/npm-global/bin:$PATH"' in command
     assert "WEB_TERMINAL_CLIENT_ID=12345678-1234-5678-1234-567812345678" in command
     assert "WEB_TERMINAL_WINDOW_ID=87654321-4321-8765-4321-876543218765" in command
     assert "WEB_TERMINAL_SERVER_URL='https://control.example.com/with space/it'\\''s-ok'" in command

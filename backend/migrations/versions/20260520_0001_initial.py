@@ -60,11 +60,36 @@ def _local_client_id(is_postgresql: bool) -> str:
     return LOCAL_CLIENT_ID_SQLITE
 
 
+def _local_client_id_default(is_postgresql: bool) -> str | sa.TextClause:
+    if is_postgresql:
+        return sa.text(f"'{LOCAL_CLIENT_ID}'::uuid")
+    return LOCAL_CLIENT_ID_SQLITE
+
+
+def _seed_local_client_statement(is_postgresql: bool) -> sa.TextClause:
+    if is_postgresql:
+        return sa.text(
+            "INSERT INTO clients (id, name, status, token_hash, runtime) "
+            f"VALUES ('{LOCAL_CLIENT_ID}'::uuid, 'local', "
+            "'ONLINE'::clientstatus, :token_hash, 'local'::clientruntime)"
+        ).bindparams(token_hash=LOCAL_CLIENT_UNUSABLE_TOKEN_HASH)
+    return sa.text(
+        "INSERT INTO clients (id, name, status, token_hash, runtime) "
+        "VALUES (:id, :name, :status, :token_hash, :runtime)"
+    ).bindparams(
+        id=LOCAL_CLIENT_ID_SQLITE,
+        name="local",
+        status="ONLINE",
+        token_hash=LOCAL_CLIENT_UNUSABLE_TOKEN_HASH,
+        runtime="local",
+    )
+
+
 def upgrade() -> None:
     is_postgresql = _is_postgresql()
     uuid_type = _uuid_type(is_postgresql)
     now_default = _now_default(is_postgresql)
-    local_client_id = _local_client_id(is_postgresql)
+    local_client_id_default = _local_client_id_default(is_postgresql)
     clientstatus = _enum_type(CLIENT_STATUS_VALUES, "clientstatus", is_postgresql)
     clientruntime = _enum_type(CLIENT_RUNTIME_VALUES, "clientruntime", is_postgresql)
     windowstatus = _enum_type(WINDOW_STATUS_VALUES, "windowstatus", is_postgresql)
@@ -96,23 +121,12 @@ def upgrade() -> None:
     )
     op.create_index("ix_clients_status", "clients", ["status"])
     op.create_index("ix_clients_runtime", "clients", ["runtime"])
-    op.execute(
-        sa.text(
-            "INSERT INTO clients (id, name, status, token_hash, runtime) "
-            "VALUES (:id, :name, :status, :token_hash, :runtime)"
-        ).bindparams(
-            id=local_client_id,
-            name="local",
-            status="ONLINE",
-            token_hash=LOCAL_CLIENT_UNUSABLE_TOKEN_HASH,
-            runtime="local",
-        )
-    )
+    op.execute(_seed_local_client_statement(is_postgresql))
 
     op.create_table(
         "folders",
         sa.Column("id", uuid_type, nullable=False),
-        sa.Column("client_id", uuid_type, server_default=local_client_id, nullable=False),
+        sa.Column("client_id", uuid_type, server_default=local_client_id_default, nullable=False),
         sa.Column("parent_id", uuid_type, nullable=True),
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("path", sa.String(length=1024), nullable=False),
@@ -135,7 +149,7 @@ def upgrade() -> None:
     op.create_table(
         "virtual_windows",
         sa.Column("id", uuid_type, nullable=False),
-        sa.Column("client_id", uuid_type, server_default=local_client_id, nullable=False),
+        sa.Column("client_id", uuid_type, server_default=local_client_id_default, nullable=False),
         sa.Column("title", sa.String(length=255), nullable=False),
         sa.Column("folder_id", uuid_type, nullable=True),
         sa.Column("status", windowstatus, server_default="ACTIVE", nullable=False),
@@ -165,7 +179,7 @@ def upgrade() -> None:
     op.create_table(
         "ai_sessions",
         sa.Column("id", uuid_type, nullable=False),
-        sa.Column("client_id", uuid_type, server_default=local_client_id, nullable=False),
+        sa.Column("client_id", uuid_type, server_default=local_client_id_default, nullable=False),
         sa.Column("provider", sa.String(length=64), nullable=False),
         sa.Column("source_id", sa.String(length=512), nullable=False),
         sa.Column("source_path", sa.Text(), nullable=True),
@@ -199,7 +213,7 @@ def upgrade() -> None:
     op.create_table(
         "events",
         sa.Column("id", uuid_type, nullable=False),
-        sa.Column("client_id", uuid_type, server_default=local_client_id, nullable=False),
+        sa.Column("client_id", uuid_type, server_default=local_client_id_default, nullable=False),
         sa.Column("source_type", eventsourcetype, nullable=False),
         sa.Column("source_id", sa.String(length=512), nullable=False),
         sa.Column("kind", sa.String(length=128), nullable=False),

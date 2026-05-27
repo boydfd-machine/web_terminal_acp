@@ -116,7 +116,7 @@ make frontend-build   # tsc + vite build
 3. Provide SSH host/user/port, private key (and passphrase if needed), install path, and server URL.
 4. The server installs `~/.web-terminal-acp/config.json` and starts `client-agent` on the remote host over WebSocket.
 
-Remote machines need tmux, Python runtime for `client-agent`, and network access back to your Web Terminal API.
+Remote machines need tmux, a Python runtime with venv/ensurepip support (for example `python3-venv` on Debian/Ubuntu), and network access back to your Web Terminal API. To run Codex or Claude Code from remote terminals, install those CLIs on the remote host in `PATH`; `~/.web-terminal-acp/npm-global/bin` is added automatically for user-local npm installs.
 
 ## Agent git worktrees (Cursor / Claude / Codex)
 

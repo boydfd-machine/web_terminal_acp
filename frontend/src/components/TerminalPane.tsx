@@ -14,6 +14,7 @@ import {
   isTerminalViewLowPriority,
   TERMINAL_VIEW_PRIORITY_CHANGED_EVENT,
 } from "../terminalViewPriority";
+import { createBrowserUuid } from "../uuid";
 
 type TerminalViewportMode = "desktop" | "phone" | "fixed";
 type TerminalConnectionStatus = "connecting" | "connected" | "reconnecting" | "unavailable" | "error";
@@ -235,7 +236,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   const socketOpenRef = useRef(false);
   const activeWindowIdRef = useRef<string | null>(null);
   const initialWindowIdRef = useRef<string | null>(null);
-  const viewIdRef = useRef<string>(crypto.randomUUID());
+  const viewIdRef = useRef<string>(createBrowserUuid());
   const onTerminalSelectionRef = useRef<TerminalPaneProps["onTerminalSelection"]>(onTerminalSelection);
   const onQuickInputOpenChangeRef = useRef<TerminalPaneProps["onQuickInputOpenChange"]>(onQuickInputOpenChange);
   const fitAndNotifyResizeRef = useRef<(() => void) | null>(null);

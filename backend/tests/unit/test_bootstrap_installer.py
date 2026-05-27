@@ -61,7 +61,9 @@ def test_dependency_check_script_checks_required_bins_without_sudo():
     assert "command -v python3" in script
     assert "command -v tmux" in script
     assert "command -v bash" in script
-    assert "import venv" in script
+    assert "python3 -m venv" in script
+    assert "-m pip --version" in script
+    assert "mktemp -d" in script
     assert "sudo" not in script.lower()
 
 
@@ -164,9 +166,11 @@ async def test_bootstrap_client_creates_client_and_uploads_config(db_session_fac
     assert "~/.web-terminal-acp/app/app/client_agent/agent_commands.py" in ssh.uploads
     assert "~/.web-terminal-acp/app/app/client_agent/codex_watcher.py" in ssh.uploads
     assert "~/.web-terminal-acp/app/app/client_agent/cursor_watcher.py" in ssh.uploads
+    assert any("mkdir -p ~/.web-terminal-acp/npm-global/bin" in command for command in ssh.commands)
     assert any("python3 -m venv ~/.web-terminal-acp/venv" in command for command in ssh.commands)
     assert any("tmux" in command and "web_terminal_acp_client" in command for command in ssh.commands)
     assert any("pgrep -f" in command for command in ssh.commands)
+    assert any('PATH="$HOME/.web-terminal-acp/npm-global/bin:$PATH"' in command for command in ssh.commands)
     assert any("~/.web-terminal-acp/venv/bin/python -m app.client_agent" in command for command in ssh.commands)
 
 

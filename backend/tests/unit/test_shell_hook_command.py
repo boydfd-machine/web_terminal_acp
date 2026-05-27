@@ -19,6 +19,7 @@ def test_bash_managed_shell_command_contains_command_capture_hook() -> None:
     )
 
     assert managed.command_capture_supported is True
+    assert 'PATH="$HOME/.web-terminal-acp/npm-global/bin:$PATH"' in managed.command
     assert "WEB_TERMINAL_CLIENT_ID=12345678-1234-5678-1234-567812345678" in managed.command
     assert "WEB_TERMINAL_WINDOW_ID=87654321-4321-8765-4321-876543218765" in managed.command
     assert "WEB_TERMINAL_SERVER_URL=https://control.example.com" in managed.command
@@ -34,8 +35,12 @@ def test_bash_managed_shell_command_contains_command_capture_hook() -> None:
     assert '__web_terminal_source_codex_home="${WEB_TERMINAL_ORIGINAL_CODEX_HOME:-${CODEX_HOME:-$HOME/.codex}}"' in managed.command
     assert "export CODEX_HOME=\"$WEB_TERMINAL_CODEX_HOME\"" in managed.command
     assert "export CLAUDE_CONFIG_DIR=\"$WEB_TERMINAL_CLAUDE_CODE_HOME\"" in managed.command
+    assert '__web_terminal_source_claude_home="${WEB_TERMINAL_ORIGINAL_CLAUDE_CODE_HOME:-$HOME/.claude}"' in managed.command
+    assert "for __web_terminal_claude_item in settings.json commands hooks plugins api-key-helper.sh" in managed.command
+    assert "__web_terminal_prepare_claude_code_home" in managed.command
     assert "export CURSOR_AGENT_HOME=\"$WEB_TERMINAL_CURSOR_HOME\"" in managed.command
     assert "__web_terminal_prepare_agent_homes" in managed.command
+    assert '__web_terminal_prepend_path_once "~/.web-terminal-acp/npm-global/bin"' in managed.command
     assert "__web_terminal_prepare_cursor_home" in managed.command
     assert "__web_terminal_install_agent_permission_wrappers" in managed.command
     assert "command codex --dangerously-bypass-approvals-and-sandbox" in managed.command
@@ -67,6 +72,7 @@ def test_zsh_managed_shell_command_contains_preexec_command_capture_hook() -> No
     )
 
     assert managed.command_capture_supported is True
+    assert 'PATH="$HOME/.web-terminal-acp/npm-global/bin:$PATH"' in managed.command
     assert "WEB_TERMINAL_COMMAND_HOOK=1" in managed.command
     assert "WEB_TERMINAL_PROJECT_PATH=/workspace/project" in managed.command
     assert "WEB_TERMINAL_CODEX_HOME='~/.web-terminal-acp/codex-homes/87654321-4321-8765-4321-876543218765'" in managed.command
@@ -78,6 +84,7 @@ def test_zsh_managed_shell_command_contains_preexec_command_capture_hook() -> No
     assert "CURSOR_AGENT_HOME='~/.web-terminal-acp/cursor-homes/87654321-4321-8765-4321-876543218765'" in managed.command
     assert '__web_terminal_source_codex_home="${WEB_TERMINAL_ORIGINAL_CODEX_HOME:-${CODEX_HOME:-$HOME/.codex}}"' in managed.command
     assert "export CODEX_HOME=\"$WEB_TERMINAL_CODEX_HOME\"" in managed.command
+    assert "__web_terminal_prepare_claude_code_home" in managed.command
     assert "__web_terminal_prepare_agent_homes" in managed.command
     assert "__web_terminal_prepare_cursor_home" in managed.command
     assert "__web_terminal_install_agent_permission_wrappers" in managed.command
@@ -109,6 +116,7 @@ def test_unsupported_shell_returns_fallback_command_and_unsupported_flag() -> No
 
     assert managed.command_capture_supported is False
     assert managed.command == (
+        'PATH="$HOME/.web-terminal-acp/npm-global/bin:$PATH" '
         "WEB_TERMINAL_CLIENT_ID=12345678-1234-5678-1234-567812345678 "
         "WEB_TERMINAL_WINDOW_ID=87654321-4321-8765-4321-876543218765 "
         "WEB_TERMINAL_SERVER_URL=https://control.example.com "

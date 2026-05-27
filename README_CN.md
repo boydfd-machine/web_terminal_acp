@@ -108,7 +108,7 @@ make backend-test
 3. 填写 SSH、私钥、安装路径、服务器 URL。
 4. 服务端在远程机安装 `~/.web-terminal-acp/config.json` 并拉起 `client-agent`。
 
-远程机需要 tmux、能跑 client-agent 的 Python，以及到 Web Terminal API 的网络连通。
+远程机需要 tmux、带 venv/ensurepip 的 Python（Debian/Ubuntu 上通常是 `python3-venv`），以及到 Web Terminal API 的网络连通。若要在远程终端里运行 Codex 或 Claude Code，请把这些 CLI 安装到远程机的 `PATH`；`~/.web-terminal-acp/npm-global/bin` 会自动加入 managed shell，适合 npm 用户级安装。
 
 ## Agent 与 Git worktree
 

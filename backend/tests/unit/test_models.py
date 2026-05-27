@@ -1,3 +1,4 @@
+import importlib
 import uuid
 from pathlib import Path
 
@@ -28,6 +29,7 @@ from app.repositories.clients import hash_client_token
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
+initial_migration = importlib.import_module("migrations.versions.20260520_0001_initial")
 
 
 def _uuid_hex() -> str:
@@ -379,6 +381,18 @@ def test_sqlite_create_all_accepts_arbitrary_ai_session_providers():
     Base.metadata.create_all(engine)
 
     _assert_arbitrary_providers_accepted(engine)
+
+
+def test_initial_postgresql_local_client_seed_casts_uuid():
+    statement = initial_migration._seed_local_client_statement(is_postgresql=True)
+
+    sql = str(statement)
+    assert f"'{LOCAL_CLIENT_ID}'::uuid" in sql
+    assert "'ONLINE'::clientstatus" in sql
+    assert "'local'::clientruntime" in sql
+    assert statement.compile().params == {
+        "token_hash": initial_migration.LOCAL_CLIENT_UNUSABLE_TOKEN_HASH
+    }
 
 
 def test_sqlite_alembic_migration_adds_terminal_summary_control_defaults(tmp_path, monkeypatch):

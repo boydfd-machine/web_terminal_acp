@@ -77,9 +77,11 @@ missing=""
 command -v python3 >/dev/null 2>&1 || missing="$missing python3"
 command -v tmux >/dev/null 2>&1 || missing="$missing tmux"
 command -v bash >/dev/null 2>&1 || missing="$missing bash"
-python3 - <<'PY' >/dev/null 2>&1 || missing="$missing python3-venv"
-import venv
-PY
+venv_test="$(mktemp -d 2>/dev/null || true)"
+if [ -z "$venv_test" ] || ! python3 -m venv "$venv_test/venv" >/dev/null 2>&1 || ! "$venv_test/venv/bin/python" -m pip --version >/dev/null 2>&1; then
+  missing="$missing python3-venv"
+fi
+rm -rf "$venv_test"
 if [ -n "$missing" ]; then
   echo "missing dependencies:$missing" >&2
   exit 42
@@ -297,6 +299,7 @@ def client_app_file_contents() -> dict[str, str]:
 
 def _install_agent_dependencies_command() -> str:
     return (
+        f"mkdir -p {DEFAULT_INSTALL_PATH}/npm-global/bin && "
         f"python3 -m venv {VENV_PATH} && "
         f"{VENV_PATH}/bin/python -m pip install --upgrade pip && "
         f"{VENV_PATH}/bin/python -m pip install -r {REQUIREMENTS_PATH}"
@@ -310,6 +313,7 @@ def _start_daemon_command() -> str:
         f"{stop_existing_processes}; "
         f"tmux new-session -d -s {DAEMON_SESSION} "
         "'cd ~/.web-terminal-acp/app && "
+        'PATH="$HOME/.web-terminal-acp/npm-global/bin:$PATH" '
         "PYTHONPATH=~/.web-terminal-acp/app "
         f"{VENV_PATH}/bin/python -m app.client_agent --config ~/.web-terminal-acp/config.json'"
     )
