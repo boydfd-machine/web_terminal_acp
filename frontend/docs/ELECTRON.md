@@ -28,13 +28,24 @@ VITE_API_BASE=http://your-server.example.com:8001 npm run build
 ```bash
 cd frontend
 npm install
-# macOS installer (run on macOS for signing/notarization)
+# macOS installer (run on macOS for dmg creation, signing, and notarization)
 npm run electron:dist:mac
-# Windows installer (run on Windows, or use CI)
+# Windows installer (run on Windows, or Linux with wine/nsis available)
 npm run electron:dist:win
 ```
 
 Artifacts are written to `frontend/release/`.
+
+For CI smoke checks or unsigned prerelease artifacts on Linux:
+
+```bash
+cd frontend
+npm install
+npm run electron:dist:mac:zip
+npm run electron:dist:win:portable
+```
+
+Those commands produce a macOS `.zip` and Windows portable `.exe` without requiring a macOS host or Linux `wine` for executable metadata editing. Use the platform-native installer commands above for final signed releases.
 
 Packaged builds serve `dist/` on `http://127.0.0.1:4173` so CORS matches localhost origins. The backend allows any `http://127.0.0.1:<port>` origin via `allow_origin_regex`.
 
