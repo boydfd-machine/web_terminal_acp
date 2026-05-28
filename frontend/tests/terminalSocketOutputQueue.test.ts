@@ -100,10 +100,52 @@ async function testNonInteractiveOutputStillBatchesOnTimer(): Promise<void> {
   assert(textOf(posts[0].data) === "ab", "background output should batch adjacent strings");
 }
 
+async function testControlMessagesDoNotMergeWithEachOtherOrOutput(): Promise<void> {
+  const posts: TerminalSocketOutputPost[] = [];
+  const scheduled: Array<() => void> = [];
+  const queue = createTerminalSocketOutputQueue({
+    post: (message) => posts.push(message),
+    now: () => 6000,
+    schedule: (callback) => {
+      scheduled.push(callback);
+      return scheduled.length;
+    },
+    cancel: () => undefined,
+  });
+
+  queue.queueOutput("a");
+  queue.queueControl("{\"type\":\"terminal_selection\",\"window_id\":\"w1\"}");
+  queue.queueControl("{\"type\":\"terminal_selection\",\"window_id\":\"w2\"}");
+  queue.queueOutput("b");
+  scheduled[0]();
+
+  assert(posts.length === 1, "first output should flush first");
+  assert(posts[0].type === "output", "normal terminal output should remain output");
+  assert(textOf(posts[0].data) === "a", "output before controls should be preserved");
+
+  queue.ackOutput();
+  assert(posts.length === 2, "first control should flush after output ack");
+  assert(posts[1].type === "control", "control should stay out of terminal output");
+  assert(textOf(posts[1].data).includes("\"w1\""), "first control should not merge with the second");
+
+  queue.ackOutput();
+  assert(posts.length === 3, "second control should flush as its own frame");
+  assert(posts[2].type === "control", "second control should stay out of terminal output");
+  assert(textOf(posts[2].data).includes("\"w2\""), "second control should be preserved");
+
+  queue.ackOutput();
+  assert(posts.length === 3, "normal output after controls should still wait for its scheduled flush");
+  scheduled[1]();
+  assert(posts.length === 4, "output after controls should flush last");
+  assert(posts[3].type === "output", "trailing terminal output should remain output");
+  assert(textOf(posts[3].data) === "b", "trailing output should be preserved");
+}
+
 async function run(): Promise<void> {
   await testInputDoesNotDropQueuedOutput();
   await testQueuedInteractiveOutputFlushesImmediatelyAfterAck();
   await testNonInteractiveOutputStillBatchesOnTimer();
+  await testControlMessagesDoNotMergeWithEachOtherOrOutput();
 }
 
 run().catch((error) => {

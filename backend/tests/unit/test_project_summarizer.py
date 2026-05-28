@@ -22,6 +22,13 @@ def test_parse_project_summary_response_accepts_name() -> None:
     assert result.name == "终端编排"
 
 
+@pytest.mark.parametrize("fence", ["json", ""])
+def test_parse_project_summary_response_accepts_markdown_fenced_json(fence) -> None:
+    result = parse_project_summary_response(f'```{fence}\n{{"name":"终端编排"}}\n```')
+
+    assert result.name == "终端编排"
+
+
 def test_parse_project_summary_response_rejects_unknown_field() -> None:
     with pytest.raises(ValueError, match="unknown field"):
         parse_project_summary_response(json.dumps({"name": "ok", "extra": "nope"}))

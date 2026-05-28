@@ -1000,6 +1000,78 @@ async def test_get_window_agent_record_chat_returns_minimal_messages(db_client):
 
 
 @pytest.mark.asyncio
+async def test_get_window_agent_record_chat_filters_by_role(db_client):
+    client_id = await get_local_client_id(db_client)
+    window_response = await db_client.post(
+        f"/api/clients/{client_id}/windows",
+        json={"cwd": "/tmp/project", "shell_command": "/bin/bash"},
+    )
+    window_id = UUID(window_response.json()["id"])
+
+    async with db_client.session_factory() as session:
+        ai_session = AiSession(
+            client_id=UUID(client_id),
+            provider="codex",
+            source_id="codex-session-1",
+            virtual_window_id=window_id,
+        )
+        session.add(ai_session)
+        await session.flush()
+        base_time = datetime.now(timezone.utc)
+        session.add_all(
+            [
+                Event(
+                    client_id=UUID(client_id),
+                    source_type=EventSourceType.codex_trace,
+                    source_id="codex-session-1",
+                    kind="response_item",
+                    virtual_window_id=window_id,
+                    ai_session_id=ai_session.id,
+                    payload_json={
+                        "raw_type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "user",
+                            "content": [{"type": "input_text", "text": "hello"}],
+                        },
+                    },
+                    fingerprint="agent-record-chat-role-user",
+                    created_at=base_time,
+                ),
+                Event(
+                    client_id=UUID(client_id),
+                    source_type=EventSourceType.codex_trace,
+                    source_id="codex-session-1",
+                    kind="response_item",
+                    virtual_window_id=window_id,
+                    ai_session_id=ai_session.id,
+                    payload_json={
+                        "raw_type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": "done"}],
+                        },
+                    },
+                    fingerprint="agent-record-chat-role-agent",
+                    created_at=base_time + timedelta(milliseconds=1),
+                ),
+            ]
+        )
+        await session.commit()
+
+    response = await db_client.get(
+        f"/api/clients/{client_id}/windows/{window_id}/agent-record/chat?role=agent"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [(item["role"], item["body"]) for item in body["messages"]] == [("agent", "done")]
+    assert body["messages_total"] == 1
+    assert body["messages_has_more"] is False
+
+
+@pytest.mark.asyncio
 async def test_get_window_agent_record_chat_filters_agent_default_user_inputs(db_client):
     client_id = await get_local_client_id(db_client)
     window_response = await db_client.post(
@@ -2207,3 +2279,45 @@ async def test_windows_activity_returns_work_status_for_windows(db_client):
         item for item in response.json()["windows"] if item["window_id"] == window_id
     )
     assert activity_window["work_status"]["state"] == "WORKING"
+
+
+@pytest.mark.asyncio
+async def test_windows_activity_does_not_notify_for_agent_open_close_without_result(db_client):
+    client_id = await get_local_client_id(db_client)
+    async with db_client.session_factory() as session:
+        client = await ensure_local_client(session)
+        window = await create_window(session, client.id, cwd="/tmp", shell_command="/bin/bash")
+        started_at = datetime.now(timezone.utc) - timedelta(minutes=2)
+        finished_at = started_at + timedelta(seconds=30)
+        session.add_all([
+            Event(
+                client_id=client.id,
+                source_type=EventSourceType.terminal,
+                source_id=str(window.id),
+                kind="terminal_input_command",
+                virtual_window_id=window.id,
+                payload_json={"command": "claude", "sequence": 9},
+                fingerprint=f"terminal_input_command:{window.id}:claude-open",
+                created_at=started_at,
+            ),
+            Event(
+                client_id=client.id,
+                source_type=EventSourceType.terminal,
+                source_id=str(window.id),
+                kind="terminal_command_finished",
+                virtual_window_id=window.id,
+                payload_json={"command": "", "sequence": 9, "exit_status": 0},
+                fingerprint=f"terminal_command_finished:{window.id}:claude-close",
+                created_at=finished_at,
+            ),
+        ])
+        window_id = str(window.id)
+        await session.commit()
+
+    response = await db_client.get(f"/api/clients/{client_id}/windows/activity")
+
+    assert response.status_code == 200
+    activity_window = next(
+        item for item in response.json()["windows"] if item["window_id"] == window_id
+    )
+    assert activity_window["last_agent_task_completed_at"] is None

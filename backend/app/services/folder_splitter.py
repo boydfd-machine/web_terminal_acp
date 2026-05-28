@@ -6,6 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from app.repositories.folders import MAX_FOLDER_SEGMENT_LENGTH
+from app.services.llm_json import strip_json_markdown_fence
 from app.services.redaction import redact_secrets
 
 
@@ -56,8 +57,9 @@ def parse_folder_split_response(
     allowed_terminal_ids: list[UUID] | set[UUID],
     parent_name: str,
 ) -> FolderSplitResult:
+    normalized_text = strip_json_markdown_fence(text)
     try:
-        payload = json.loads(text)
+        payload = json.loads(normalized_text)
     except json.JSONDecodeError as exc:
         raise ValueError("folder split response must be valid JSON") from exc
 

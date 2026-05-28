@@ -259,13 +259,14 @@ async def test_load_work_status_returns_idle_for_stale_in_progress_agent_command
 
 
 @pytest.mark.asyncio
-async def test_load_last_agent_task_completed_at_by_window(db_session) -> None:
+async def test_load_last_agent_task_completed_uses_latest_agent_result_output(db_session) -> None:
     now = datetime(2026, 5, 22, 12, 0, tzinfo=timezone.utc)
     client_id = uuid4()
     window = VirtualWindow(id=uuid4(), client_id=client_id, title="Terminal", status=WindowStatus.active)
     db_session.add(window)
     await db_session.flush()
-    completed_at = now - timedelta(seconds=30)
+    result_at = now - timedelta(seconds=30)
+    finished_at = now - timedelta(seconds=5)
     db_session.add_all([
         Event(
             client_id=client_id,
@@ -281,11 +282,39 @@ async def test_load_last_agent_task_completed_at_by_window(db_session) -> None:
             client_id=client_id,
             source_type=EventSourceType.terminal,
             source_id=str(window.id),
-            kind="terminal_command_finished",
+            kind="terminal_input_command",
             virtual_window_id=window.id,
             payload_json={"command": "codex exec 'done'", "sequence": 2},
+            fingerprint="terminal-input-codex",
+            created_at=result_at - timedelta(seconds=5),
+        ),
+        Event(
+            client_id=client_id,
+            source_type=EventSourceType.terminal,
+            source_id=str(window.id),
+            kind="terminal_command_finished",
+            virtual_window_id=window.id,
+            payload_json={"command": "", "sequence": 2},
             fingerprint="terminal-finished-codex",
-            created_at=completed_at,
+            created_at=finished_at,
+        ),
+        Event(
+            client_id=client_id,
+            source_type=EventSourceType.agent_tool_record,
+            source_id="codex-session-1",
+            kind="response_item",
+            virtual_window_id=window.id,
+            payload_json={
+                "provider": "codex",
+                "raw_type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "done"}],
+                },
+            },
+            fingerprint="codex-agent-result",
+            created_at=result_at,
         ),
     ])
     await db_session.flush()
@@ -295,11 +324,51 @@ async def test_load_last_agent_task_completed_at_by_window(db_session) -> None:
     stored = latest[window.id]
     if stored.tzinfo is None:
         stored = stored.replace(tzinfo=timezone.utc)
-    assert stored == completed_at
+    assert stored == finished_at
 
 
 @pytest.mark.asyncio
-async def test_load_last_agent_task_completed_resolves_agent_from_input_command(db_session) -> None:
+async def test_load_last_agent_task_completed_waits_until_agent_result_is_idle(db_session) -> None:
+    now = datetime(2026, 5, 22, 12, 0, tzinfo=timezone.utc)
+    client_id = uuid4()
+    window = VirtualWindow(id=uuid4(), client_id=client_id, title="Terminal", status=WindowStatus.active)
+    db_session.add(window)
+    await db_session.flush()
+    result_at = now - timedelta(seconds=10)
+    db_session.add(
+        Event(
+            client_id=client_id,
+            source_type=EventSourceType.agent_tool_record,
+            source_id="codex-session-1",
+            kind="response_item",
+            virtual_window_id=window.id,
+            payload_json={
+                "provider": "codex",
+                "raw_type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "still working"}],
+                },
+            },
+            fingerprint="codex-agent-result-still-working",
+            created_at=result_at,
+        )
+    )
+    await db_session.flush()
+
+    latest = await load_last_agent_task_completed_at_by_window(
+        db_session,
+        client_id,
+        [window.id],
+        now=now,
+    )
+
+    assert latest == {}
+
+
+@pytest.mark.asyncio
+async def test_load_last_agent_task_completed_ignores_agent_command_without_result_output(db_session) -> None:
     now = datetime(2026, 5, 22, 12, 0, tzinfo=timezone.utc)
     client_id = uuid4()
     window = VirtualWindow(id=uuid4(), client_id=client_id, title="Terminal", status=WindowStatus.active)
@@ -332,14 +401,11 @@ async def test_load_last_agent_task_completed_resolves_agent_from_input_command(
 
     latest = await load_last_agent_task_completed_at_by_window(db_session, client_id, [window.id])
 
-    stored = latest[window.id]
-    if stored.tzinfo is None:
-        stored = stored.replace(tzinfo=timezone.utc)
-    assert stored == completed_at
+    assert latest == {}
 
 
 @pytest.mark.asyncio
-async def test_load_last_agent_task_completed_prefers_newer_finished_event_resolved_from_input(
+async def test_load_last_agent_task_completed_does_not_attach_old_result_to_new_empty_agent_exit(
     db_session,
 ) -> None:
     now = datetime(2026, 5, 22, 12, 0, tzinfo=timezone.utc)
@@ -347,8 +413,96 @@ async def test_load_last_agent_task_completed_prefers_newer_finished_event_resol
     window = VirtualWindow(id=uuid4(), client_id=client_id, title="Terminal", status=WindowStatus.active)
     db_session.add(window)
     await db_session.flush()
-    older_completed_at = now - timedelta(minutes=2)
-    newer_completed_at = now - timedelta(seconds=30)
+    old_result_at = now - timedelta(minutes=10)
+    old_finished_at = old_result_at + timedelta(seconds=20)
+    new_started_at = now - timedelta(minutes=2)
+    new_finished_at = now - timedelta(minutes=1)
+    db_session.add_all([
+        Event(
+            client_id=client_id,
+            source_type=EventSourceType.terminal,
+            source_id=str(window.id),
+            kind="terminal_input_command",
+            virtual_window_id=window.id,
+            payload_json={"command": "claude -p 'fix'", "sequence": 1},
+            fingerprint="terminal-input-claude-old",
+            created_at=old_result_at - timedelta(seconds=10),
+        ),
+        Event(
+            client_id=client_id,
+            source_type=EventSourceType.agent_tool_record,
+            source_id="claude-session-1",
+            kind="assistant_message",
+            virtual_window_id=window.id,
+            payload_json={
+                "provider": "claude_code",
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "old result"}],
+                },
+            },
+            fingerprint="claude-agent-result-old",
+            created_at=old_result_at,
+        ),
+        Event(
+            client_id=client_id,
+            source_type=EventSourceType.terminal,
+            source_id=str(window.id),
+            kind="terminal_command_finished",
+            virtual_window_id=window.id,
+            payload_json={"command": "", "sequence": 1, "exit_status": 0},
+            fingerprint="terminal-finished-claude-old",
+            created_at=old_finished_at,
+        ),
+        Event(
+            client_id=client_id,
+            source_type=EventSourceType.terminal,
+            source_id=str(window.id),
+            kind="terminal_input_command",
+            virtual_window_id=window.id,
+            payload_json={"command": "claude", "sequence": 2},
+            fingerprint="terminal-input-claude-new",
+            created_at=new_started_at,
+        ),
+        Event(
+            client_id=client_id,
+            source_type=EventSourceType.terminal,
+            source_id=str(window.id),
+            kind="terminal_command_finished",
+            virtual_window_id=window.id,
+            payload_json={"command": "", "sequence": 2, "exit_status": 0},
+            fingerprint="terminal-finished-claude-new",
+            created_at=new_finished_at,
+        ),
+    ])
+    await db_session.flush()
+
+    latest = await load_last_agent_task_completed_at_by_window(
+        db_session,
+        client_id,
+        [window.id],
+        now=now,
+    )
+
+    stored = latest[window.id]
+    if stored.tzinfo is None:
+        stored = stored.replace(tzinfo=timezone.utc)
+    assert stored == old_finished_at
+
+
+@pytest.mark.asyncio
+async def test_load_last_agent_task_completed_prefers_newer_agent_result_output(
+    db_session,
+) -> None:
+    now = datetime(2026, 5, 22, 12, 0, tzinfo=timezone.utc)
+    client_id = uuid4()
+    window = VirtualWindow(id=uuid4(), client_id=client_id, title="Terminal", status=WindowStatus.active)
+    db_session.add(window)
+    await db_session.flush()
+    older_result_at = now - timedelta(minutes=2)
+    newer_result_at = now - timedelta(seconds=30)
+    newer_finished_at = now - timedelta(seconds=5)
     db_session.add_all([
         Event(
             client_id=client_id,
@@ -358,17 +512,7 @@ async def test_load_last_agent_task_completed_prefers_newer_finished_event_resol
             virtual_window_id=window.id,
             payload_json={"command": "codex exec 'newer done'", "sequence": 2},
             fingerprint="terminal-input-codex-newer",
-            created_at=newer_completed_at - timedelta(seconds=5),
-        ),
-        Event(
-            client_id=client_id,
-            source_type=EventSourceType.terminal,
-            source_id=str(window.id),
-            kind="terminal_command_finished",
-            virtual_window_id=window.id,
-            payload_json={"command": "claude --resume old-session", "sequence": 1},
-            fingerprint="terminal-finished-claude-older",
-            created_at=older_completed_at,
+            created_at=newer_result_at - timedelta(seconds=5),
         ),
         Event(
             client_id=client_id,
@@ -378,7 +522,42 @@ async def test_load_last_agent_task_completed_prefers_newer_finished_event_resol
             virtual_window_id=window.id,
             payload_json={"command": "", "sequence": 2},
             fingerprint="terminal-finished-codex-newer",
-            created_at=newer_completed_at,
+            created_at=newer_finished_at,
+        ),
+        Event(
+            client_id=client_id,
+            source_type=EventSourceType.agent_tool_record,
+            source_id="claude-session-1",
+            kind="assistant_message",
+            virtual_window_id=window.id,
+            payload_json={
+                "provider": "claude_code",
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "old result"}],
+                },
+            },
+            fingerprint="claude-agent-result-older",
+            created_at=older_result_at,
+        ),
+        Event(
+            client_id=client_id,
+            source_type=EventSourceType.agent_tool_record,
+            source_id="codex-session-1",
+            kind="response_item",
+            virtual_window_id=window.id,
+            payload_json={
+                "provider": "codex",
+                "raw_type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "newer result"}],
+                },
+            },
+            fingerprint="codex-agent-result-newer",
+            created_at=newer_result_at,
         ),
     ])
     await db_session.flush()
@@ -388,11 +567,11 @@ async def test_load_last_agent_task_completed_prefers_newer_finished_event_resol
     stored = latest[window.id]
     if stored.tzinfo is None:
         stored = stored.replace(tzinfo=timezone.utc)
-    assert stored == newer_completed_at
+    assert stored == newer_finished_at
 
 
 @pytest.mark.asyncio
-async def test_load_last_agent_task_completed_from_idle_agent_work(db_session) -> None:
+async def test_load_last_agent_task_completed_ignores_idle_agent_activity_without_result(db_session) -> None:
     now = datetime(2026, 5, 22, 12, 0, tzinfo=timezone.utc)
     client_id = uuid4()
     window = VirtualWindow(id=uuid4(), client_id=client_id, title="Terminal", status=WindowStatus.active)
@@ -420,7 +599,4 @@ async def test_load_last_agent_task_completed_from_idle_agent_work(db_session) -
         now=now,
     )
 
-    stored = latest[window.id]
-    if stored.tzinfo is None:
-        stored = stored.replace(tzinfo=timezone.utc)
-    assert stored == working_at + timedelta(seconds=60)
+    assert latest == {}

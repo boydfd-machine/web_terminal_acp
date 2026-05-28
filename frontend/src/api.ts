@@ -1,5 +1,6 @@
 import type {
   AgentChatRecord,
+  AgentChatRoleFilter,
   AgentRecord,
   BootstrapClientInput,
   BootstrapClientResult,
@@ -180,11 +181,20 @@ export function updateWindowTitle(clientId: string, windowId: string, title: str
   });
 }
 
-export function fetchAgentRecordChat(clientId: string, windowId: string, limit = 30, offset = 0): Promise<AgentChatRecord> {
+export function fetchAgentRecordChat(
+  clientId: string,
+  windowId: string,
+  limit = 30,
+  offset = 0,
+  role: AgentChatRoleFilter = "all"
+): Promise<AgentChatRecord> {
   const params = new URLSearchParams({
     messages_limit: String(limit),
     messages_offset: String(offset)
   });
+  if (role !== "all") {
+    params.set("role", role);
+  }
   return request<AgentChatRecord>(
     `/api/clients/${pathSegment(clientId)}/windows/${pathSegment(windowId)}/agent-record/chat?${params.toString()}`
   );

@@ -13,13 +13,16 @@ import {
   updateClient
 } from "./api";
 import { BootstrapClientForm } from "./components/BootstrapClientForm";
+import { AgentRecordModal } from "./components/AgentRecordViewer";
 import { ClientList } from "./components/ClientList";
 import { FolderTree } from "./components/FolderTree";
+import { GitDiffBrowserModal } from "./components/GitDiffBrowserModal";
 import { ProjectTerminalPicker } from "./components/ProjectTerminalPicker";
 import { SearchPanel } from "./components/SearchPanel";
 import { MobileShortcutFab } from "./components/MobileShortcutFab";
 import { NotificationBellButton, NotificationCenter } from "./components/NotificationCenter";
 import { TerminalPane, type TerminalPaneHandle } from "./components/TerminalPane";
+import { useAgentRecordData } from "./hooks/useAgentRecordData";
 import { useMobileLayout } from "./hooks/useMobileLayout";
 import { readInitialSettings, SettingsModal } from "./components/SettingsModal";
 import { TerminalSwitcher, type TerminalSwitcherMode } from "./components/TerminalSwitcher";
@@ -108,6 +111,11 @@ function isNewTerminalByProjectShortcut(event: KeyboardEvent): boolean {
 function isLocateSelectedTerminalShortcut(event: KeyboardEvent): boolean {
   const key = event.key.toLocaleLowerCase();
   return event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && (event.code === "KeyL" || key === "l" || event.keyCode === 76);
+}
+
+function isGitDiffShortcut(event: KeyboardEvent): boolean {
+  const key = event.key.toLocaleLowerCase();
+  return event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && (event.code === "KeyG" || key === "g" || event.keyCode === 71);
 }
 
 function isXtermInput(element: EventTarget | null): boolean {
@@ -329,13 +337,19 @@ export default function App() {
   const [terminalQuickInputOpen, setTerminalQuickInputOpen] = useState(false);
   const [terminalImmersive, setTerminalImmersive] = useState(false);
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
-  const [agentRecordExpandSignal, setAgentRecordExpandSignal] = useState(0);
+  const [gitDiffBrowserOpen, setGitDiffBrowserOpen] = useState(false);
+  const [agentRecordModalOpen, setAgentRecordModalOpen] = useState(false);
   const [terminalListLocateSignal, setTerminalListLocateSignal] = useState(0);
   const [terminalNotifications, setTerminalNotifications] = useState<TerminalNotification[]>([]);
   const notificationPreviousRef = useRef<TerminalNotification[]>([]);
   const terminalControlsRef = useRef<HTMLDivElement | null>(null);
   const terminalPaneRef = useRef<TerminalPaneHandle | null>(null);
   const queryClient = useQueryClient();
+  const agentRecordModal = useAgentRecordData({
+    clientId: selectedClientId,
+    windowId: selectedWindowId,
+    enabled: agentRecordModalOpen
+  });
 
   const persistTerminalRecent = useCallback((clientId: string, windowId: string, title: string) => {
     void recordTerminalRecent(clientId, { window_id: windowId, title })
@@ -397,6 +411,7 @@ export default function App() {
       setSelectedClientId(window.client_id);
       setSelectedWindowId(window.id);
       setRouteSelectionRequest(null);
+      setAgentRecordModalOpen(false);
       writeTerminalRoute(window.client_id, window.id, "push");
       persistTerminalRecent(window.client_id, window.id, window.title);
       setProjectTerminalPickerOpen(false);
@@ -419,6 +434,7 @@ export default function App() {
           setMobileTerminalActive(false);
           setDetailPanelOpen(false);
           setTerminalImmersive(false);
+          setAgentRecordModalOpen(false);
         }
         return nextWindowId;
       });
@@ -474,6 +490,7 @@ export default function App() {
       if (selectedClientId !== null) {
         setSelectedClientId(null);
         setSelectedWindowId(null);
+        setAgentRecordModalOpen(false);
       }
       return;
     }
@@ -488,6 +505,7 @@ export default function App() {
       const nextClient = requestedClient ?? currentClient ?? clients.find((client) => client.runtime === "local") ?? clients[0];
       setSelectedClientId(nextClient.id);
       setSelectedWindowId(requestedClient ? routeSelectionRequest.windowId : null);
+      setAgentRecordModalOpen(false);
       if (requestedClient === null && routeSelectionRequest.clientId !== null) {
         writeTerminalRoute(nextClient.id, null, "replace");
       }
@@ -502,6 +520,7 @@ export default function App() {
     const preferredClient = clients.find((client) => client.runtime === "local") ?? clients[0];
     setSelectedClientId(preferredClient.id);
     setSelectedWindowId(null);
+    setAgentRecordModalOpen(false);
   }, [clientsQuery.data, routeSelectionRequest, selectedClientId]);
 
   const triggerTerminalSwitcherShortcut = useCallback(() => {
@@ -578,8 +597,13 @@ export default function App() {
       return;
     }
 
-    setAgentRecordExpandSignal((signal) => signal + 1);
-  }, [selectedClientId, selectedWindowId]);
+    setTerminalImmersive(false);
+    setTerminalControlsOpen(false);
+    setTerminalSwitcherOpen(false);
+    setNotificationCenterOpen(false);
+    agentRecordModal.setExpanded(true);
+    setAgentRecordModalOpen(true);
+  }, [agentRecordModal, selectedClientId, selectedWindowId]);
 
   const triggerLocateSelectedTerminal = useCallback(() => {
     if (selectedClientId === null || selectedWindowId === null) {
@@ -590,6 +614,21 @@ export default function App() {
     setTerminalImmersive(false);
     setTerminalControlsOpen(false);
     setTerminalListLocateSignal((signal) => signal + 1);
+  }, [selectedClientId, selectedWindowId]);
+
+  const triggerGitDiffBrowser = useCallback(() => {
+    if (selectedClientId === null || selectedWindowId === null) {
+      return;
+    }
+
+    setTerminalImmersive(false);
+    setTerminalControlsOpen(false);
+    setTerminalSwitcherOpen(false);
+    setProjectTerminalPickerOpen(false);
+    setNotificationCenterOpen(false);
+    setAgentRecordModalOpen(false);
+    setDetailPanelOpen(false);
+    setGitDiffBrowserOpen(true);
   }, [selectedClientId, selectedWindowId]);
 
   const triggerQuickInput = useCallback(() => {
@@ -638,7 +677,7 @@ export default function App() {
         return;
       }
 
-      if (terminalSwitcherOpen || notificationCenterOpen || showBootstrapForm || terminalControlsOpen) {
+      if (terminalSwitcherOpen || notificationCenterOpen || showBootstrapForm || terminalControlsOpen || gitDiffBrowserOpen) {
         return;
       }
 
@@ -663,6 +702,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
   }, [
     focusSelectedTerminal,
+    gitDiffBrowserOpen,
     notificationCenterOpen,
     selectedClientId,
     selectedWindowId,
@@ -706,6 +746,24 @@ export default function App() {
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
   }, [selectedClientId, selectedWindowId, triggerLocateSelectedTerminal]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!isGitDiffShortcut(event)) {
+        return;
+      }
+      if (selectedClientId === null || selectedWindowId === null) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      triggerGitDiffBrowser();
+    };
+
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
+  }, [selectedClientId, selectedWindowId, triggerGitDiffBrowser]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -764,6 +822,8 @@ export default function App() {
     setTerminalControlsOpen(false);
     setTerminalImmersive(false);
     setNotificationCenterOpen(false);
+    setGitDiffBrowserOpen(false);
+    setAgentRecordModalOpen(false);
   }, [selectedClientId]);
 
   useEffect(() => {
@@ -829,6 +889,7 @@ export default function App() {
     }
 
     setSelectedWindowId(null);
+    setAgentRecordModalOpen(false);
     writeTerminalRoute(selectedClientId, null, "replace");
   }, [routeSelectionRequest, selectedClientId, selectedWindowId, treeFolders, treeQuery.isFetching]);
 
@@ -891,6 +952,7 @@ export default function App() {
     setMobileTerminalActive(false);
     setDetailPanelOpen(false);
     setTerminalImmersive(false);
+    setAgentRecordModalOpen(false);
     writeTerminalRoute(clientId, null, "push");
   };
 
@@ -902,6 +964,7 @@ export default function App() {
     setRouteSelectionRequest(null);
     setSelectedWindowId(windowId);
     setDetailPanelOpen(false);
+    setAgentRecordModalOpen(false);
     writeTerminalRoute(selectedClientId, windowId, "push");
     focusSelectedTerminal();
   };
@@ -913,6 +976,7 @@ export default function App() {
 
     setRouteSelectionRequest(null);
     setSelectedWindowId(windowId);
+    setAgentRecordModalOpen(false);
     writeTerminalRoute(selectedClientId, windowId, "replace");
   }, [selectedClientId]);
 
@@ -984,6 +1048,7 @@ export default function App() {
     }
     setSelectedWindowId(notification.windowId);
     setDetailPanelOpen(false);
+    setAgentRecordModalOpen(false);
     setMobileTerminalActive(true);
     writeTerminalRoute(notification.clientId, notification.windowId, "push");
     focusSelectedTerminal();
@@ -1049,6 +1114,13 @@ export default function App() {
         onPress: triggerLocateSelectedTerminal
       },
       {
+        id: "git-diff",
+        label: "Git diff",
+        hint: "Alt+G",
+        disabled: selectedClientId === null || selectedWindowId === null,
+        onPress: triggerGitDiffBrowser
+      },
+      {
         id: "notifications",
         label: "通知中心",
         badge: unreadNotificationCount,
@@ -1067,6 +1139,7 @@ export default function App() {
       selectedClientOffline,
       selectedWindowId,
       triggerAgentRecordExpand,
+      triggerGitDiffBrowser,
       triggerLocateSelectedTerminal,
       triggerNewTerminalByProjectShortcut,
       triggerNewTerminalShortcut,
@@ -1263,6 +1336,19 @@ export default function App() {
                   type="button"
                   role="menuitem"
                   className="terminal-controls-row"
+                  disabled={selectedClientId === null || selectedWindowId === null}
+                  onClick={() => {
+                    triggerGitDiffBrowser();
+                    setTerminalControlsOpen(false);
+                  }}
+                >
+                  <span>Git diff</span>
+                  <strong>Alt+G</strong>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="terminal-controls-row"
                   onClick={() => {
                     setSettingsOpen(true);
                     setTerminalControlsOpen(false);
@@ -1321,10 +1407,29 @@ export default function App() {
           clientId={selectedClientId}
           windowId={selectedWindowId}
           gitWorktree={selectedTreeWindow?.git_worktree ?? null}
-          agentRecordExpandSignal={agentRecordExpandSignal}
         />
         <SearchPanel clientId={selectedClientId} onSelectWindowId={selectWindow} />
       </aside>
+      <AgentRecordModal
+        open={agentRecordModalOpen}
+        mode={agentRecordModal.mode}
+        chatRoleFilter={agentRecordModal.chatRoleFilter}
+        chatRecord={agentRecordModal.chatRecord}
+        detailRecord={agentRecordModal.detailRecord}
+        sessions={agentRecordModal.sessions}
+        isLoading={agentRecordModal.isLoading}
+        isError={agentRecordModal.isError}
+        isFetching={agentRecordModal.isFetching}
+        onModeChange={agentRecordModal.setMode}
+        onChatRoleFilterChange={agentRecordModal.setChatRoleFilter}
+        onClose={() => {
+          agentRecordModal.setExpanded(false);
+          setAgentRecordModalOpen(false);
+        }}
+        onSessionChange={agentRecordModal.resetPages}
+        onPreviousPage={agentRecordModal.previousPage}
+        onNextPage={agentRecordModal.nextPage}
+      />
       {detailPanelOpen && <button type="button" className="detail-backdrop" aria-label="Close details" onClick={() => setDetailPanelOpen(false)} />}
       {terminalImmersive && (
         <button
@@ -1381,6 +1486,17 @@ export default function App() {
         onDeleteNotification={handleDeleteNotification}
         onClearNotifications={handleClearNotifications}
       />
+      {gitDiffBrowserOpen && selectedClientId !== null && selectedWindowId !== null && (
+        <GitDiffBrowserModal
+          clientId={selectedClientId}
+          windowId={selectedWindowId}
+          isMobileLayout={isMobileLayout}
+          onClose={() => {
+            setGitDiffBrowserOpen(false);
+            focusSelectedTerminal();
+          }}
+        />
+      )}
       <MobileShortcutFab
         visible={
           isMobileLayout
@@ -1390,6 +1506,7 @@ export default function App() {
           && !settingsOpen
           && !showBootstrapForm
           && !terminalQuickInputOpen
+          && !gitDiffBrowserOpen
         }
         actions={mobileShortcutActions}
       />

@@ -96,7 +96,7 @@ exec {quoted_shell} -i
 
 def _direct_launcher(shell: str) -> str:
     return f"""{_agent_environment_script()}
-if [ -z "${{ANTHROPIC_API_KEY:-}}" ] && [ -z "${{ANTHROPIC_AUTH_TOKEN:-}}" ]; then
+if __web_terminal_missing_claude_env; then
   __web_terminal_load_zshrc_env
 fi
 exec {_exec_command(shell)}
@@ -118,6 +118,49 @@ def _agent_environment_script() -> str:
   done
   export CODEX_HOME="$WEB_TERMINAL_CODEX_HOME"
 }
+__web_terminal_export_env_line() {
+  case "$1" in
+    ANTHROPIC_*=*|CLAUDE_CODE_*=*|HTTP_PROXY=*|HTTPS_PROXY=*|NO_PROXY=*|http_proxy=*|https_proxy=*|no_proxy=*)
+      export "$1"
+      ;;
+  esac
+}
+__web_terminal_load_claude_settings_env() {
+  [ -r "$1" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  __web_terminal_settings_env=$(python3 - "$1" <<'WEB_TERMINAL_CLAUDE_SETTINGS_PY'
+import json
+import shlex
+import sys
+
+try:
+    env = json.load(open(sys.argv[1], encoding="utf-8")).get("env", {})
+except Exception:
+    env = {}
+
+if isinstance(env, dict):
+    for key, value in env.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            continue
+        if key.startswith(("ANTHROPIC_", "CLAUDE_CODE_")) or key in {
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "NO_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "no_proxy",
+        }:
+            print(f"{key}={shlex.quote(value)}")
+WEB_TERMINAL_CLAUDE_SETTINGS_PY
+  ) || return 0
+  while IFS= read -r __web_terminal_env_line; do
+    [ -n "$__web_terminal_env_line" ] || continue
+    eval "__web_terminal_export_env_line $__web_terminal_env_line"
+  done <<WEB_TERMINAL_CLAUDE_SETTINGS_ENV
+$__web_terminal_settings_env
+WEB_TERMINAL_CLAUDE_SETTINGS_ENV
+  unset __web_terminal_settings_env __web_terminal_env_line
+}
 __web_terminal_prepare_claude_code_home() {
   [ -n "$WEB_TERMINAL_CLAUDE_CODE_HOME" ] || return 0
   __web_terminal_source_claude_home="${WEB_TERMINAL_ORIGINAL_CLAUDE_CODE_HOME:-$HOME/.claude}"
@@ -125,11 +168,16 @@ __web_terminal_prepare_claude_code_home() {
     "~/"*) WEB_TERMINAL_CLAUDE_CODE_HOME="$HOME/${WEB_TERMINAL_CLAUDE_CODE_HOME#"~/"}" ;;
   esac
   mkdir -p "$WEB_TERMINAL_CLAUDE_CODE_HOME/projects" 2>/dev/null || true
+  __web_terminal_source_claude_json="${WEB_TERMINAL_ORIGINAL_CLAUDE_JSON:-$HOME/.claude.json}"
+  if [ -e "$__web_terminal_source_claude_json" ] && [ ! -e "$WEB_TERMINAL_CLAUDE_CODE_HOME/.claude.json" ]; then
+    ln -s "$__web_terminal_source_claude_json" "$WEB_TERMINAL_CLAUDE_CODE_HOME/.claude.json" 2>/dev/null || true
+  fi
   for __web_terminal_claude_item in settings.json commands hooks plugins api-key-helper.sh; do
     [ -e "$__web_terminal_source_claude_home/$__web_terminal_claude_item" ] || continue
     [ -e "$WEB_TERMINAL_CLAUDE_CODE_HOME/$__web_terminal_claude_item" ] && continue
     ln -s "$__web_terminal_source_claude_home/$__web_terminal_claude_item" "$WEB_TERMINAL_CLAUDE_CODE_HOME/$__web_terminal_claude_item" 2>/dev/null || true
   done
+  __web_terminal_load_claude_settings_env "$__web_terminal_source_claude_home/settings.json"
   export CLAUDE_CONFIG_DIR="$WEB_TERMINAL_CLAUDE_CODE_HOME"
 }
 __web_terminal_expand_home_path() {
@@ -191,6 +239,11 @@ __web_terminal_prepare_cursor_home() {
   export CURSOR_CONFIG_DIR="$managed_cursor"
   export CURSOR_DATA_DIR="$managed_cursor"
 }
+__web_terminal_missing_claude_env() {
+  { [ -n "${ANTHROPIC_API_KEY:-}" ] || [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ]; } || return 0
+  [ -n "${ANTHROPIC_BASE_URL:-}" ] || [ -n "${CLAUDE_CODE_API_BASE_URL:-}" ] || return 0
+  return 1
+}
 __web_terminal_load_zshrc_env() {
   [ -r "$HOME/.zshrc" ] || return 0
   command -v zsh >/dev/null 2>&1 || return 0
@@ -201,7 +254,7 @@ __web_terminal_load_zshrc_env() {
   while IFS= read -r __web_terminal_env_line; do
     case "$__web_terminal_env_line" in
       ANTHROPIC_*=*|CLAUDE_CODE_*=*|HTTP_PROXY=*|HTTPS_PROXY=*|NO_PROXY=*|http_proxy=*|https_proxy=*|no_proxy=*)
-        export "$__web_terminal_env_line"
+        __web_terminal_export_env_line "$__web_terminal_env_line"
         ;;
     esac
   done <<WEB_TERMINAL_ZSHRC_ENV
@@ -303,7 +356,7 @@ __web_terminal_should_capture_command() {
 
 def _bash_hook_script() -> str:
     return _common_hook_script() + r'''
-if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
+if __web_terminal_missing_claude_env; then
   __web_terminal_load_zshrc_env
 fi
 if [ -r "$HOME/.bashrc" ]; then

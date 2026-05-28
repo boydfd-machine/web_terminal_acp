@@ -6,7 +6,7 @@ import logging
 import posixpath
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -78,6 +78,7 @@ logger = logging.getLogger(__name__)
 
 AgentRecordLimit = Annotated[int, Query(ge=1, le=200)]
 AgentRecordOffset = Annotated[int, Query(ge=0)]
+AgentChatRole = Literal["all", "user", "agent"]
 CommandHistoryLimit = Annotated[int, Query(ge=1, le=200)]
 CommandHistoryOffset = Annotated[int, Query(ge=0)]
 _PROVIDER_ALIASES = {"claude": "claude_code"}
@@ -316,10 +317,11 @@ def _command_history_item_out(event: Event, finished_by_sequence: dict[str, Even
     )
 
 
-def _dedupe_chat_messages(events: list[Event]) -> list[AgentChatMessageOut]:
+def _dedupe_chat_messages(events: list[Event], role: AgentChatRole = "all") -> list[AgentChatMessageOut]:
     return [
         _chat_message_out(event, projection)
         for event, projection in _deduped_chat_projection_items(events)
+        if role == "all" or projection.role == role
     ]
 
 
@@ -708,6 +710,7 @@ async def read_window_agent_record_chat(
     window_id: UUID,
     messages_limit: AgentRecordLimit = 30,
     messages_offset: AgentRecordOffset = 0,
+    role: AgentChatRole = "all",
     session: AsyncSession = Depends(get_session),
 ) -> AgentChatRecordOut:
     await _require_window_for_agent_record(session, client_id, window_id)
@@ -731,7 +734,7 @@ async def read_window_agent_record_chat(
             )
         )
     )
-    messages = _dedupe_chat_messages(candidate_events)
+    messages = _dedupe_chat_messages(candidate_events, role)
     paged_messages = messages[messages_offset : messages_offset + messages_limit]
     return AgentChatRecordOut(
         window_id=window_id,

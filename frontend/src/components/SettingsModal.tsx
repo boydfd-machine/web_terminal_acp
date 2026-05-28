@@ -138,6 +138,8 @@ export function SettingsModal({
           >
             <option value="project-topic">项目 / 主题</option>
             <option value="topic">主题</option>
+            <option value="time-topic">时间 / 主题 / 子主题</option>
+            <option value="project-time-topic">项目 / 时间 / 主题 / 子主题</option>
           </select>
         </label>
 

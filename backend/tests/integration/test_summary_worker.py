@@ -279,7 +279,59 @@ async def test_invalid_folder_path_marks_summary_job_retryable_with_last_error(s
 
 
 @pytest.mark.asyncio
-async def test_non_leaf_folder_path_marks_summary_job_retryable_with_last_error(session_factory):
+async def test_non_leaf_folder_path_moves_window_to_summary_fallback_leaf(session_factory):
+    summarizer = ResultSummarizer(
+        SummaryResult(
+            title="Auto Title",
+            summary="Auto summary.",
+            tags=["auto"],
+            folder_path="/开发调试",
+        )
+    )
+    es_client = FakeElasticsearch()
+
+    async with session_factory() as session:
+        window = await create_local_window(session)
+        await get_or_create_folder_by_path(session, window.client_id, "/开发调试")
+        await get_or_create_folder_by_path(session, window.client_id, "/开发调试/后端摘要")
+        await enqueue_summary_job(session, window.id)
+        await session.commit()
+        client_id = str(window.client_id)
+        window_id = str(window.id)
+
+    async with session_factory() as session:
+        processed = await process_next_summary_job(session, summarizer, es_client=es_client)
+        await session.commit()
+        assert processed is True
+
+    async with session_factory() as session:
+        job = (await session.execute(select(SummaryJob))).scalar_one()
+        window = (
+            await session.execute(select(VirtualWindow).options(selectinload(VirtualWindow.folder)))
+        ).scalar_one()
+        assert job.status == SummaryJobStatus.succeeded
+        assert job.last_error is None
+        assert window.summary == "Auto summary."
+        assert window.folder.path == "/开发调试/未分类"
+    assert es_client.indexed_documents == [
+        {
+            "index": SUMMARIES_INDEX,
+            "id": window_id,
+            "document": {
+                "client_id": client_id,
+                "virtual_window_id": window_id,
+                "title": "Auto Title",
+                "tags": ["auto"],
+                "folder_path": "/开发调试/未分类",
+                "summary": "Auto summary.",
+                "text": "Auto Title auto /开发调试/未分类 Auto summary.",
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_manual_folder_lock_skips_invalid_llm_folder_but_updates_summary(session_factory):
     summarizer = ResultSummarizer(
         SummaryResult(
             title="Auto Title",
@@ -291,6 +343,9 @@ async def test_non_leaf_folder_path_marks_summary_job_retryable_with_last_error(
 
     async with session_factory() as session:
         window = await create_local_window(session)
+        manual_folder = await get_or_create_folder_by_path(session, window.client_id, "/manual-folder")
+        window.folder_id = manual_folder.id
+        window.folder_manually_overridden = True
         await get_or_create_folder_by_path(session, window.client_id, "/开发调试")
         await get_or_create_folder_by_path(session, window.client_id, "/开发调试/后端摘要")
         await enqueue_summary_job(session, window.id)
@@ -303,10 +358,15 @@ async def test_non_leaf_folder_path_marks_summary_job_retryable_with_last_error(
 
     async with session_factory() as session:
         job = (await session.execute(select(SummaryJob))).scalar_one()
-        window = (await session.execute(select(VirtualWindow))).scalar_one()
-        assert job.status == SummaryJobStatus.pending
-        assert "folder_path targets an existing non-leaf topic" in job.last_error
-        assert window.summary is None
+        window = (
+            await session.execute(select(VirtualWindow).options(selectinload(VirtualWindow.folder)))
+        ).scalar_one()
+        assert job.status == SummaryJobStatus.succeeded
+        assert job.last_error is None
+        assert window.folder.path == "/manual-folder"
+        assert window.folder_manually_overridden is True
+        assert window.summary == "Auto summary."
+        assert window.title_tags == ["auto"]
 
 
 @pytest.mark.asyncio

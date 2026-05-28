@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildProjectTimeTopicSwitcherTree,
   buildProjectTopicSwitcherTree,
+  buildTerminalSwitcherTree,
+  buildTimeTopicSwitcherTree,
+  buildTopicSwitcherTree,
   canCreateWindowAtGroupNode,
   collectCreatableProjectPaths,
   createWindowInputForGroupNode,
   findPathToSwitcherWindow,
   projectGroupLabel,
   projectPathFromRuntimeTags,
+  terminalGroupingModeHasProjectRoot,
   type SwitcherGroupNode
 } from "../src/terminalGrouping";
 import type { TreeFolder } from "../src/types";
@@ -79,6 +84,53 @@ describe("terminalGrouping", () => {
     expect(tree[0]?.children[0]?.children[0]?.type).toBe("window");
   });
 
+  it("builds topic hierarchy", () => {
+    const tree = buildTopicSwitcherTree(sampleFolders, "");
+    expect(tree).toHaveLength(2);
+    expect(tree[0]?.key).toBe("topic:/主题");
+    expect(tree[0]?.label).toBe("主题");
+    expect(tree[0]?.children[0]?.type).toBe("window");
+  });
+
+  it("builds time-topic hierarchy", () => {
+    const tree = buildTimeTopicSwitcherTree(sampleFolders, "");
+    const monthGroup = tree[0] as SwitcherGroupNode;
+    const dayGroup = monthGroup.children[0] as SwitcherGroupNode;
+    const topicGroup = dayGroup.children[0] as SwitcherGroupNode;
+
+    expect(monthGroup.key).toBe("time-topic:time:2026-05");
+    expect(monthGroup.label).toBe("2026-05");
+    expect(dayGroup.key).toBe("time-topic:time:2026-05:05-24");
+    expect(dayGroup.label).toBe("05-24");
+    expect(topicGroup.key).toBe("time-topic:time:2026-05:05-24:topic:/主题");
+    expect(topicGroup.label).toBe("主题");
+    expect(topicGroup.children[0]?.type).toBe("window");
+  });
+
+  it("builds project-time-topic hierarchy", () => {
+    const tree = buildProjectTimeTopicSwitcherTree(sampleFolders, new Map(), "");
+    const projectGroup = tree[0] as SwitcherGroupNode;
+    const monthGroup = projectGroup.children[0] as SwitcherGroupNode;
+    const dayGroup = monthGroup.children[0] as SwitcherGroupNode;
+    const topicGroup = dayGroup.children[0] as SwitcherGroupNode;
+
+    expect(projectGroup.key).toBe("project-time-topic:/workspace/project-a");
+    expect(projectGroup.projectPath).toBe("/workspace/project-a");
+    expect(monthGroup.key).toBe("project-time-topic:/workspace/project-a:time:2026-05");
+    expect(dayGroup.key).toBe("project-time-topic:/workspace/project-a:time:2026-05:05-24");
+    expect(topicGroup.key).toBe("project-time-topic:/workspace/project-a:time:2026-05:05-24:topic:/主题");
+    expect(topicGroup.children[0]?.type).toBe("window");
+  });
+
+  it("builds all terminal grouping modes", () => {
+    expect(buildTerminalSwitcherTree(sampleFolders, "project-topic", new Map(), "")).toHaveLength(2);
+    expect(buildTerminalSwitcherTree(sampleFolders, "topic", new Map(), "")).toHaveLength(2);
+    expect(buildTerminalSwitcherTree(sampleFolders, "time-topic", new Map(), "")[0]?.label).toBe("2026-05");
+    expect(buildTerminalSwitcherTree(sampleFolders, "project-time-topic", new Map(), "")[0]?.projectPath).toBe(
+      "/workspace/project-a"
+    );
+  });
+
   it("builds create-window input for project and topic groups", () => {
     const tree = buildProjectTopicSwitcherTree(sampleFolders, new Map(), "");
     const projectGroup = tree[0] as SwitcherGroupNode;
@@ -90,6 +142,13 @@ describe("terminalGrouping", () => {
     });
     expect(canCreateWindowAtGroupNode(topicGroup)).toBe(false);
     expect(createWindowInputForGroupNode(topicGroup)).toEqual({});
+  });
+
+  it("marks project-root grouping modes", () => {
+    expect(terminalGroupingModeHasProjectRoot("project-topic")).toBe(true);
+    expect(terminalGroupingModeHasProjectRoot("project-time-topic")).toBe(true);
+    expect(terminalGroupingModeHasProjectRoot("topic")).toBe(false);
+    expect(terminalGroupingModeHasProjectRoot("time-topic")).toBe(false);
   });
 
   it("collects only concrete project paths for project terminal creation", () => {

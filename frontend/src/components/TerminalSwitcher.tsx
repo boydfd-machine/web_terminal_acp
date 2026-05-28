@@ -6,22 +6,44 @@ import type { SummaryOutputLanguage } from "../userPreferences";
 import {
   buildTerminalSwitcherTree,
   canCreateWindowAtGroupNode,
+  terminalGroupingModeHasProjectRoot,
   type SwitcherGroupNode,
   type SwitcherNode
 } from "../terminalGrouping";
 import type { TerminalGroupingMode } from "../userPreferences";
 import type { ProjectSummary, TerminalRecent, TreeFolder, TreeWindow } from "../types";
-import { GitPendingBadge } from "./GitPendingBadge";
 import { TerminalUnreadDot } from "./NotificationCenter";
 import { WorkStatusDot } from "./WorkStatusBadge";
 
 const RECENTS_PAGE_SIZE = 20;
+
+const AGENT_TAG_LABELS: Record<string, string> = {
+  codex: "codex",
+  claude_code: "claude code",
+  cursor_cli: "cursor"
+};
+
+const TERMINAL_GROUPING_DESCRIPTIONS: Record<TerminalGroupingMode, string> = {
+  "project-topic": "按项目 / 主题浏览 · 项目分组可点击「总结」生成名称 · Alt+W 查看最近",
+  "topic": "按主题浏览 · Alt+W 查看最近使用的终端",
+  "time-topic": "按时间 / 主题 / 子主题浏览 · Alt+W 查看最近使用的终端",
+  "project-time-topic": "按项目 / 时间 / 主题 / 子主题浏览 · 项目分组可点击「总结」生成名称 · Alt+W 查看最近"
+};
 
 export type TerminalSwitcherMode = "recent" | "tree";
 
 type TerminalEntry = {
   window: TreeWindow;
   topicPath: string;
+};
+
+type TerminalMeta = {
+  agentLabel: string;
+  projectLabel: string | null;
+  projectPath: string | null;
+  timeValue: string;
+  timeLabel: string;
+  timeTitle: string;
 };
 
 type VisibleTreeItem = {
@@ -112,11 +134,97 @@ function findWindowInTree(folders: TreeFolder[], windowId: string): TreeWindow |
   return null;
 }
 
+function agentLabelFromRuntimeTags(runtimeTags: string[] | null | undefined): string {
+  for (const tag of runtimeTags ?? []) {
+    const normalized = tag.trim().toLocaleLowerCase();
+    const label = AGENT_TAG_LABELS[normalized];
+    if (label) {
+      return label;
+    }
+  }
+
+  return "无";
+}
+
+function projectPathFromRuntimeTags(runtimeTags: string[] | null | undefined): string | null {
+  for (const tag of runtimeTags ?? []) {
+    const normalized = tag.trim();
+    if (normalized.startsWith("/")) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function projectFallbackLabel(projectPath: string): string | null {
+  const segments = projectPath.split("/").filter(Boolean);
+  return segments[segments.length - 1] ?? null;
+}
+
+function formatTerminalTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString(undefined, {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function formatTerminalTimeTitle(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString();
+}
+
+function terminalMeta(
+  window: Pick<TreeWindow, "created_at" | "runtime_tags">,
+  projectSummaryLookup: Map<string, ProjectSummary>
+): TerminalMeta {
+  const projectPath = projectPathFromRuntimeTags(window.runtime_tags);
+  const summary = projectPath ? projectSummaryLookup.get(projectPath) : undefined;
+  const displayName = summary?.display_name?.trim() || null;
+
+  return {
+    agentLabel: agentLabelFromRuntimeTags(window.runtime_tags),
+    projectLabel: projectPath === null ? null : displayName ?? projectFallbackLabel(projectPath),
+    projectPath,
+    timeValue: window.created_at,
+    timeLabel: formatTerminalTime(window.created_at),
+    timeTitle: formatTerminalTimeTitle(window.created_at)
+  };
+}
+
+function TerminalWindowMeta({ meta }: { meta: TerminalMeta }) {
+  return (
+    <span className="switcher-window-meta" aria-label="Terminal metadata">
+      <span className="switcher-window-tag agent" title={`Agent: ${meta.agentLabel}`}>{meta.agentLabel}</span>
+      <time className="switcher-window-meta-text" dateTime={meta.timeValue} title={`Created: ${meta.timeTitle}`}>
+        {meta.timeLabel}
+      </time>
+      {meta.projectLabel !== null && (
+        <span className="switcher-window-meta-text" title={meta.projectPath ?? meta.projectLabel}>
+          {meta.projectLabel}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function SwitcherTreeNode({
   node,
   activeKey,
   expandedKeys,
   selectedWindowId,
+  projectSummaryLookup,
   summarizingProjectPath,
   hasUnreadNotification,
   onSelectEntry,
@@ -130,6 +238,7 @@ function SwitcherTreeNode({
   activeKey: string | null;
   expandedKeys: Set<string>;
   selectedWindowId: string | null;
+  projectSummaryLookup: Map<string, ProjectSummary>;
   summarizingProjectPath: string | null;
   hasUnreadNotification?: (windowId: string) => boolean;
   onSelectEntry: (entry: TerminalEntry) => void;
@@ -143,6 +252,7 @@ function SwitcherTreeNode({
     const isActive = node.key === activeKey;
     const isSelected = node.window.id === selectedWindowId;
     const showUnreadDot = hasUnreadNotification?.(node.window.id) ?? false;
+    const meta = terminalMeta(node.window, projectSummaryLookup);
 
     return (
       <li>
@@ -157,6 +267,7 @@ function SwitcherTreeNode({
         >
           <WorkStatusDot status={node.window.work_status} />
           <span className="switcher-window-title">{node.window.title}</span>
+          <TerminalWindowMeta meta={meta} />
           <TerminalUnreadDot visible={showUnreadDot} />
         </button>
       </li>
@@ -226,6 +337,7 @@ function SwitcherTreeNode({
               activeKey={activeKey}
               expandedKeys={expandedKeys}
               selectedWindowId={selectedWindowId}
+              projectSummaryLookup={projectSummaryLookup}
               summarizingProjectPath={summarizingProjectPath}
               hasUnreadNotification={hasUnreadNotification}
               onSelectEntry={onSelectEntry}
@@ -267,7 +379,7 @@ export function TerminalSwitcher({
   const projectSummariesQuery = useQuery({
     queryKey: ["project-summaries", clientId],
     queryFn: () => fetchProjectSummaries(clientId as string),
-    enabled: isOpen && clientId !== null && mode === "tree"
+    enabled: isOpen && clientId !== null
   });
   const projectSummaryLookup = useMemo(() => {
     const lookup = new Map<string, ProjectSummary>();
@@ -543,9 +655,7 @@ export function TerminalSwitcher({
             <p className="muted">
               {isRecentMode
                 ? "最近使用的终端 · Alt+W 按项目/主题浏览"
-                : terminalGroupingMode === "project-topic"
-                  ? "按项目 / 主题浏览 · 项目分组可点击「总结」生成名称 · Alt+W 查看最近"
-                  : "按主题浏览 · Alt+W 查看最近使用的终端"}
+                : TERMINAL_GROUPING_DESCRIPTIONS[terminalGroupingMode]}
             </p>
           </div>
           <button type="button" onClick={onClose}>
@@ -591,6 +701,7 @@ export function TerminalSwitcher({
                   const isActive = key === activeKey;
                   const isSelected = item.window_id === selectedWindowId;
                   const showUnreadDot = hasUnreadNotification?.(item.window_id) ?? false;
+                  const meta = treeWindow ? terminalMeta(treeWindow, projectSummaryLookup) : null;
 
                   return (
                     <li key={key}>
@@ -605,6 +716,7 @@ export function TerminalSwitcher({
                       >
                         {treeWindow ? <WorkStatusDot status={treeWindow.work_status} /> : <span className="switcher-window-placeholder" aria-hidden="true" />}
                         <span className="switcher-window-title">{item.title}</span>
+                        {meta !== null && <TerminalWindowMeta meta={meta} />}
                         <TerminalUnreadDot visible={showUnreadDot} />
                       </button>
                     </li>
@@ -650,12 +762,13 @@ export function TerminalSwitcher({
                 activeKey={activeKey}
                 expandedKeys={expandedKeys}
                 selectedWindowId={selectedWindowId}
+                projectSummaryLookup={projectSummaryLookup}
                 summarizingProjectPath={summarizingProjectPath}
                 hasUnreadNotification={hasUnreadNotification}
                 onSelectEntry={selectEntry}
                 onToggleGroup={toggleGroup}
                 onSummarizeProject={
-                  terminalGroupingMode === "project-topic" && clientId !== null
+                  terminalGroupingModeHasProjectRoot(terminalGroupingMode) && clientId !== null
                     ? (projectPath) => summarizeMutation.mutate(projectPath)
                     : undefined
                 }

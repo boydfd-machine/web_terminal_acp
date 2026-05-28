@@ -1,4 +1,5 @@
 import { createTerminalSocketOutputQueue } from "./terminalSocketOutputQueue";
+import { parseTerminalSocketControlMessage } from "./terminalSocketProtocol";
 
 type WorkerCommand =
   | { type: "connect"; url: string }
@@ -59,7 +60,12 @@ function connect(url: string): void {
     if (event.data instanceof ArrayBuffer) {
       outputQueue.queueOutput(new Uint8Array(event.data));
     } else {
-      outputQueue.queueOutput(String(event.data));
+      const data = String(event.data);
+      if (parseTerminalSocketControlMessage(data) !== null) {
+        outputQueue.queueControl(data);
+      } else {
+        outputQueue.queueOutput(data);
+      }
     }
   };
   nextSocket.onerror = () => {

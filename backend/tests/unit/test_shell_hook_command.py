@@ -36,13 +36,19 @@ def test_bash_managed_shell_command_contains_command_capture_hook() -> None:
     assert "export CODEX_HOME=\"$WEB_TERMINAL_CODEX_HOME\"" in managed.command
     assert "export CLAUDE_CONFIG_DIR=\"$WEB_TERMINAL_CLAUDE_CODE_HOME\"" in managed.command
     assert '__web_terminal_source_claude_home="${WEB_TERMINAL_ORIGINAL_CLAUDE_CODE_HOME:-$HOME/.claude}"' in managed.command
+    assert "__web_terminal_source_claude_json=\"${WEB_TERMINAL_ORIGINAL_CLAUDE_JSON:-$HOME/.claude.json}\"" in managed.command
+    assert "ln -s \"$__web_terminal_source_claude_json\" \"$WEB_TERMINAL_CLAUDE_CODE_HOME/.claude.json\"" in managed.command
     assert "for __web_terminal_claude_item in settings.json commands hooks plugins api-key-helper.sh" in managed.command
+    assert "__web_terminal_load_claude_settings_env \"$__web_terminal_source_claude_home/settings.json\"" in managed.command
+    assert "json.load(open(sys.argv[1], encoding=\"utf-8\")).get(\"env\", {})" in managed.command
     assert "__web_terminal_prepare_claude_code_home" in managed.command
     assert "export CURSOR_AGENT_HOME=\"$WEB_TERMINAL_CURSOR_HOME\"" in managed.command
     assert "__web_terminal_prepare_agent_homes" in managed.command
     assert '__web_terminal_prepend_path_once "~/.web-terminal-acp/npm-global/bin"' in managed.command
     assert "__web_terminal_load_zshrc_env" in managed.command
-    assert 'if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then' in managed.command
+    assert "__web_terminal_missing_claude_env" in managed.command
+    assert '[ -n "${ANTHROPIC_BASE_URL:-}" ] || [ -n "${CLAUDE_CODE_API_BASE_URL:-}" ] || return 0' in managed.command
+    assert "if __web_terminal_missing_claude_env; then" in managed.command
     assert "zsh -ic" in managed.command
     assert "ANTHROPIC_*=*|CLAUDE_CODE_*=*" in managed.command
     assert "CLAUDE_CONFIG_DIR=*" not in managed.command

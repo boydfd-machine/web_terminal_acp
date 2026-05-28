@@ -1,6 +1,14 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import type { AgentChatRecord, AgentEventProjection, AgentRecord, AgentRecordEvent, AgentSession } from "../types";
+import type {
+  AgentChatRecord,
+  AgentChatRoleFilter,
+  AgentEventProjection,
+  AgentRecord,
+  AgentRecordDisplayMode,
+  AgentRecordEvent,
+  AgentSession
+} from "../types";
 
 type EventTone =
   | "base-instructions"
@@ -19,21 +27,27 @@ type EventTone =
 type BodyFormat = "markdown" | "json";
 type EventView = { tone: EventTone; label: string; body: string; subtype: string | null; bodyFormat?: BodyFormat };
 type AgentNode = { id: string; label: string; meta: string; children: AgentNode[] };
-export type AgentRecordDisplayMode = "chat" | "detail";
-type Props = {
+type AgentRecordViewProps = {
   mode: AgentRecordDisplayMode;
+  chatRoleFilter: AgentChatRoleFilter;
   chatRecord: AgentChatRecord | null;
   detailRecord: AgentRecord | null;
   sessions: AgentSession[];
   isLoading?: boolean;
   isError?: boolean;
   isFetching?: boolean;
-  expandSignal?: number;
   onModeChange: (mode: AgentRecordDisplayMode) => void;
-  onExpandedChange?: (expanded: boolean) => void;
+  onChatRoleFilterChange: (role: AgentChatRoleFilter) => void;
   onSessionChange?: (sessionId: string) => void;
   onPreviousPage?: () => void;
   onNextPage?: () => void;
+};
+type AgentRecordViewerProps = AgentRecordViewProps & {
+  onExpand: () => void;
+};
+type AgentRecordModalProps = AgentRecordViewProps & {
+  open: boolean;
+  onClose: () => void;
 };
 type PageInfo = {
   total: number;
@@ -58,6 +72,12 @@ const EVENT_LABELS: Record<EventTone, string> = {
   subagent: "Subagent call",
   lifecycle: "Lifecycle",
   event: "Event"
+};
+
+const CHAT_ROLE_FILTER_LABELS: Record<AgentChatRoleFilter, string> = {
+  all: "All",
+  user: "User",
+  agent: "Agent"
 };
 
 function json(value: unknown): string {
@@ -413,8 +433,36 @@ function AgentRecordModeToggle({
   );
 }
 
+function AgentChatRoleFilterToggle({
+  value,
+  onChange,
+  disabled = false
+}: {
+  value: AgentChatRoleFilter;
+  onChange: (role: AgentChatRoleFilter) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="agent-record-role-toggle" role="group" aria-label="Agent chat message type">
+      {(Object.keys(CHAT_ROLE_FILTER_LABELS) as AgentChatRoleFilter[]).map((role) => (
+        <button
+          key={role}
+          type="button"
+          className={value === role ? "selected" : undefined}
+          aria-pressed={value === role}
+          disabled={disabled}
+          onClick={() => onChange(role)}
+        >
+          {CHAT_ROLE_FILTER_LABELS[role]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function recordMeta(
   mode: AgentRecordDisplayMode,
+  chatRoleFilter: AgentChatRoleFilter,
   chatRecord: AgentChatRecord | null,
   detailRecord: AgentRecord | null,
   isLoading: boolean,
@@ -424,7 +472,8 @@ function recordMeta(
   if (isError) return "Unavailable";
   if (mode === "chat") {
     if (chatRecord === null) return "No data";
-    return `${chatRecord.messages_total} chat messages`;
+    const scope = chatRoleFilter === "all" ? "chat messages" : `${CHAT_ROLE_FILTER_LABELS[chatRoleFilter].toLocaleLowerCase()} messages`;
+    return `${chatRecord.messages_total} ${scope}`;
   }
   if (detailRecord === null) return "No data";
   return `${detailRecord.sessions.length} agents · ${detailRecord.events_total} events`;
@@ -515,33 +564,22 @@ function AgentRecordPagination({
 
 export function AgentRecordViewer({
   mode,
+  chatRoleFilter,
   chatRecord,
   detailRecord,
   sessions,
   isLoading = false,
   isError = false,
   isFetching = false,
-  expandSignal = 0,
   onModeChange,
-  onExpandedChange,
+  onChatRoleFilterChange,
   onSessionChange,
   onPreviousPage,
-  onNextPage
-}: Props) {
-  const [expanded, setExpanded] = useState(false);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const sortedSessions = sortSessionsNewestFirst(sessions);
-  const hasMultipleSessions = sortedSessions.length > 1;
-  const activeSessionId = selectedSessionId ?? pickLatestSessionId(sortedSessions);
+  onNextPage,
+  onExpand
+}: AgentRecordViewerProps) {
   const activeRecord = mode === "chat" ? chatRecord : detailRecord;
   const canExpand = activeRecord !== null && !isLoading && !isError;
-  const expandedChatRecord = chatRecord && activeSessionId
-    ? filterChatRecordBySession(chatRecord, activeSessionId)
-    : chatRecord;
-  const expandedDetailRecord = detailRecord && activeSessionId
-    ? filterDetailRecordBySession(detailRecord, activeSessionId)
-    : detailRecord;
-  const expandedDisplayRecord = mode === "chat" ? expandedChatRecord : expandedDetailRecord;
   const activePageInfo = pageInfo(mode, chatRecord, detailRecord);
   const content = isLoading
     ? <p className="muted">Loading agent record...</p>
@@ -550,21 +588,68 @@ export function AgentRecordViewer({
       : mode === "chat"
         ? <AgentChatContent record={activeRecord as AgentChatRecord} />
         : <AgentRecordContent record={activeRecord as AgentRecord} />;
-  const meta = recordMeta(mode, chatRecord, detailRecord, isLoading, isError);
-
-  const setExpandedState = (nextExpanded: boolean) => {
-    setExpanded(nextExpanded);
-    onExpandedChange?.(nextExpanded);
-  };
+  const meta = recordMeta(mode, chatRoleFilter, chatRecord, detailRecord, isLoading, isError);
 
   const openExpanded = () => {
-    setSelectedSessionId(pickLatestSessionId(sortedSessions));
-    setExpandedState(true);
+    onExpand();
   };
 
-  const closeExpanded = () => {
-    setExpandedState(false);
-  };
+  return (
+    <section className="agent-record-viewer">
+      <div className="agent-record-header">
+        <div>
+          <h3>Agent Record</h3>
+          <small>{meta}</small>
+        </div>
+        <div className="agent-record-actions">
+          <AgentRecordModeToggle mode={mode} onModeChange={onModeChange} disabled={isLoading} />
+          {mode === "chat" && (
+            <AgentChatRoleFilterToggle
+              value={chatRoleFilter}
+              onChange={onChatRoleFilterChange}
+              disabled={isLoading}
+            />
+          )}
+          <button type="button" disabled={!canExpand} onClick={openExpanded} title="Alt+R">Expand</button>
+        </div>
+      </div>
+      <AgentRecordPagination info={activePageInfo} isFetching={isFetching && !isLoading} onPreviousPage={onPreviousPage} onNextPage={onNextPage} />
+      {content}
+    </section>
+  );
+}
+
+export function AgentRecordModal({
+  open,
+  mode,
+  chatRoleFilter,
+  chatRecord,
+  detailRecord,
+  sessions,
+  isLoading = false,
+  isError = false,
+  isFetching = false,
+  onModeChange,
+  onChatRoleFilterChange,
+  onSessionChange,
+  onPreviousPage,
+  onNextPage,
+  onClose
+}: AgentRecordModalProps) {
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const sortedSessions = useMemo(() => sortSessionsNewestFirst(sessions), [sessions]);
+  const hasMultipleSessions = sortedSessions.length > 1;
+  const activeSessionId = selectedSessionId ?? pickLatestSessionId(sortedSessions);
+  const activeRecord = mode === "chat" ? chatRecord : detailRecord;
+  const canRenderContent = activeRecord !== null && !isLoading && !isError;
+  const expandedChatRecord = chatRecord && activeSessionId
+    ? filterChatRecordBySession(chatRecord, activeSessionId)
+    : chatRecord;
+  const expandedDetailRecord = detailRecord && activeSessionId
+    ? filterDetailRecordBySession(detailRecord, activeSessionId)
+    : detailRecord;
+  const expandedDisplayRecord = mode === "chat" ? expandedChatRecord : expandedDetailRecord;
+  const activePageInfo = pageInfo(mode, chatRecord, detailRecord);
 
   const selectSession = (sessionId: string) => {
     setSelectedSessionId(sessionId);
@@ -572,15 +657,21 @@ export function AgentRecordViewer({
   };
 
   useEffect(() => {
-    if (expandSignal === 0 || !canExpand) {
+    if (!open) {
       return;
     }
-    setSelectedSessionId(pickLatestSessionId(sessions));
-    setExpandedState(true);
-  }, [canExpand, expandSignal, sessions]);
+    if (sortedSessions.length === 0) {
+      setSelectedSessionId(null);
+      return;
+    }
+    if (selectedSessionId !== null && sortedSessions.some((session) => session.id === selectedSessionId)) {
+      return;
+    }
+    setSelectedSessionId(pickLatestSessionId(sortedSessions));
+  }, [open, selectedSessionId, sortedSessions]);
 
   useEffect(() => {
-    if (!expanded) {
+    if (!open) {
       return;
     }
 
@@ -590,23 +681,12 @@ export function AgentRecordViewer({
       }
       event.preventDefault();
       event.stopPropagation();
-      closeExpanded();
+      onClose();
     };
 
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [expanded]);
-
-  useEffect(() => {
-    if (sortedSessions.length === 0) {
-      setSelectedSessionId(null);
-      return;
-    }
-    if (selectedSessionId !== null && sortedSessions.some((session) => session.id === selectedSessionId)) {
-      return;
-    }
-    setSelectedSessionId(pickLatestSessionId(sortedSessions));
-  }, [selectedSessionId, sortedSessions]);
+  }, [onClose, open]);
 
   const sessionTabs = hasMultipleSessions && activeSessionId
     ? (
@@ -618,44 +698,43 @@ export function AgentRecordViewer({
     )
     : null;
 
+  if (!open) {
+    return null;
+  }
+
   return (
-    <>
-      <section className="agent-record-viewer">
+    <div className="agent-record-modal" role="dialog" aria-modal="true" aria-label="Agent record">
+      <button type="button" className="agent-record-modal-backdrop" aria-label="Collapse agent record" onClick={onClose} />
+      <section className="agent-record-modal-panel">
         <div className="agent-record-header">
           <div>
             <h3>Agent Record</h3>
-            <small>{meta}</small>
+            <small>{recordMeta(mode, chatRoleFilter, chatRecord, detailRecord, isLoading, isError)}</small>
           </div>
           <div className="agent-record-actions">
             <AgentRecordModeToggle mode={mode} onModeChange={onModeChange} disabled={isLoading} />
-            <button type="button" disabled={!canExpand} onClick={openExpanded} title="Alt+R">Expand</button>
+            {mode === "chat" && (
+              <AgentChatRoleFilterToggle
+                value={chatRoleFilter}
+                onChange={onChatRoleFilterChange}
+                disabled={isLoading}
+              />
+            )}
+            <button type="button" onClick={onClose}>Collapse</button>
           </div>
         </div>
-        <AgentRecordPagination info={activePageInfo} isFetching={isFetching && !isLoading} onPreviousPage={onPreviousPage} onNextPage={onNextPage} />
-        {content}
+        {sessionTabs}
+        <AgentRecordPagination info={activePageInfo} isFetching={isFetching} onPreviousPage={onPreviousPage} onNextPage={onNextPage} />
+        {isLoading
+          ? <p className="muted">Loading agent record...</p>
+          : isError
+            ? <p className="error" role="alert">Failed to load agent record.</p>
+            : canRenderContent && expandedDisplayRecord
+              ? mode === "chat"
+                ? <AgentChatContent record={expandedDisplayRecord as AgentChatRecord} />
+                : <AgentRecordContent record={expandedDisplayRecord as AgentRecord} />
+              : <p className="muted">No agent record captured yet.</p>}
       </section>
-      {expanded && canExpand && expandedDisplayRecord && (
-        <div className="agent-record-modal" role="dialog" aria-modal="true" aria-label="Agent record">
-          <button type="button" className="agent-record-modal-backdrop" aria-label="Collapse agent record" onClick={closeExpanded} />
-          <section className="agent-record-modal-panel">
-            <div className="agent-record-header">
-              <div>
-                <h3>Agent Record</h3>
-                <small>{recordMeta(mode, chatRecord, detailRecord, false, false)}</small>
-              </div>
-              <div className="agent-record-actions">
-                <AgentRecordModeToggle mode={mode} onModeChange={onModeChange} />
-                <button type="button" onClick={closeExpanded}>Collapse</button>
-              </div>
-            </div>
-            {sessionTabs}
-            <AgentRecordPagination info={activePageInfo} isFetching={isFetching} onPreviousPage={onPreviousPage} onNextPage={onNextPage} />
-            {mode === "chat"
-              ? <AgentChatContent record={expandedDisplayRecord as AgentChatRecord} />
-              : <AgentRecordContent record={expandedDisplayRecord as AgentRecord} />}
-          </section>
-        </div>
-      )}
-    </>
+    </div>
   );
 }

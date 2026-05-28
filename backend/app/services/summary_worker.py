@@ -34,6 +34,8 @@ from app.services.ui_events import UiEventHub
 logger = logging.getLogger(__name__)
 
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
+NON_LEAF_SUMMARY_FALLBACK_SEGMENT = "未分类"
+MAX_NON_LEAF_SUMMARY_FALLBACK_ATTEMPTS = 100
 
 
 async def process_summary_jobs_once(
@@ -96,25 +98,19 @@ async def process_next_summary_job(
     try:
         context_items = await collect_summary_context(session, window)
         result = await summarizer.summarize(context_items)
-        if await folder_path_would_create_child_under_occupied_leaf(
-            session,
-            window.client_id,
-            result.folder_path,
-        ):
-            raise ValueError("folder_path would create a child under an occupied leaf topic")
-        folder = await get_or_create_folder_by_path(session, window.client_id, result.folder_path)
-        if await folder_has_children(session, folder.id):
-            raise ValueError("folder_path targets an existing non-leaf topic")
         allow_override = job.allow_title_folder_override
         update_title = allow_override or not window.title_manually_overridden
         update_folder = allow_override or not window.folder_manually_overridden
+        folder: Folder | None = None
+        if update_folder:
+            folder = await _resolve_summary_target_folder(session, window.client_id, result.folder_path)
         patch_values: dict[str, Any] = {
             "summary": result.summary,
             "title_tags": result.tags,
         }
         if update_title:
             patch_values["title"] = result.title
-        if update_folder:
+        if update_folder and folder is not None:
             patch_values["folder_id"] = folder.id
 
         updated_window = await patch_window(
@@ -131,7 +127,7 @@ async def process_next_summary_job(
         if update_folder:
             updated_window.folder_manually_overridden = False
         await session.flush()
-        if update_folder:
+        if update_folder and folder is not None:
             direct_window_count = await count_direct_windows_in_folder(
                 session, updated_window.client_id, folder.id
             )
@@ -155,11 +151,7 @@ async def process_next_summary_job(
     try:
         if active_es_client is None:
             active_es_client = get_es_client()
-        index_folder_path = folder.path
-        if updated_window.folder_id != folder.id and updated_window.folder_id is not None:
-            indexed_folder = await session.get(Folder, updated_window.folder_id)
-            if indexed_folder is not None:
-                index_folder_path = indexed_folder.path
+        index_folder_path = await _folder_path_for_window(session, updated_window)
         await index_summary(
             active_es_client,
             updated_window.client_id,
@@ -202,6 +194,45 @@ async def process_next_summary_job(
 
 async def _get_window(session: AsyncSession, window_id: UUID) -> VirtualWindow | None:
     return await session.get(VirtualWindow, window_id)
+
+
+async def _resolve_summary_target_folder(
+    session: AsyncSession,
+    client_id: UUID,
+    folder_path: str,
+) -> Folder:
+    if await folder_path_would_create_child_under_occupied_leaf(session, client_id, folder_path):
+        raise ValueError("folder_path would create a child under an occupied leaf topic")
+
+    folder = await get_or_create_folder_by_path(session, client_id, folder_path)
+    if not await folder_has_children(session, folder.id):
+        return folder
+
+    return await _resolve_non_leaf_summary_fallback_folder(session, client_id, folder)
+
+
+async def _resolve_non_leaf_summary_fallback_folder(
+    session: AsyncSession,
+    client_id: UUID,
+    folder: Folder,
+) -> Folder:
+    for attempt in range(1, MAX_NON_LEAF_SUMMARY_FALLBACK_ATTEMPTS + 1):
+        suffix = "" if attempt == 1 else f" {attempt}"
+        candidate_path = (
+            f"{folder.path.rstrip('/')}/{NON_LEAF_SUMMARY_FALLBACK_SEGMENT}{suffix}"
+        )
+        candidate = await get_or_create_folder_by_path(session, client_id, candidate_path)
+        if not await folder_has_children(session, candidate.id):
+            return candidate
+
+    raise ValueError("folder_path non-leaf fallback exhausted")
+
+
+async def _folder_path_for_window(session: AsyncSession, window: VirtualWindow) -> str:
+    if window.folder_id is None:
+        return ""
+    folder = await session.get(Folder, window.folder_id)
+    return folder.path if folder is not None else ""
 
 
 def _queue_ui_invalidation(

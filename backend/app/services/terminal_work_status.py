@@ -7,7 +7,7 @@ from uuid import UUID
 from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent_tools import agent_activity_source_types
+from app.agent_tools import agent_activity_source_types, get_agent_tool_registry
 from app.models import AiSession, Event, EventSourceType, VirtualWindow
 from app.schemas import WorkStatusOut
 from app.services.event_kinds import AGENT_WORK_PRESENCE_KIND
@@ -24,6 +24,14 @@ TERMINAL_ACTIVITY_KINDS = (
 TERMINAL_COMMAND_KIND = "terminal_input_command"
 TERMINAL_COMMAND_FINISHED_KIND = "terminal_command_finished"
 TERMINAL_OUTPUT_KIND = "terminal_output"
+AGENT_RESULT_CANDIDATE_KINDS = (
+    "assistant",
+    "assistant_message",
+    "event_msg",
+    "message",
+    "response_item",
+)
+AGENT_RESULT_SCAN_LIMIT_PER_WINDOW = 200
 
 
 @dataclass(frozen=True)
@@ -44,13 +52,20 @@ class TreeWindowActivity:
 
 
 @dataclass(frozen=True)
+class _AgentCommandFinished:
+    started_at: datetime
+    finished_at: datetime
+
+
+@dataclass(frozen=True)
 class _WindowActivityData:
     latest_activity: dict[UUID, datetime]
     latest_working_activity: dict[UUID, datetime]
     latest_ai_activity: dict[UUID, datetime]
     latest_commands: dict[UUID, Event]
     finished_sequences: dict[UUID, set[str]]
-    latest_agent_finished_at: dict[UUID, datetime]
+    agent_finished_commands: dict[UUID, list[_AgentCommandFinished]]
+    latest_agent_result_at: dict[UUID, datetime]
 
     @property
     def agent_commands_in_progress(self) -> set[UUID]:
@@ -308,11 +323,16 @@ async def _load_window_activity_data(
         finished_sequences=finished_sequences,
     )
 
-    latest_agent_finished_at = await _latest_agent_command_finished_at_by_window(
+    agent_finished_commands = await _agent_command_finished_by_window(
         session,
         client_id,
         window_ids,
         latest_commands,
+    )
+    latest_agent_result_at = await _latest_agent_result_at_by_window(
+        session,
+        client_id,
+        window_ids,
     )
 
     return _WindowActivityData(
@@ -321,7 +341,8 @@ async def _load_window_activity_data(
         latest_ai_activity=latest_ai,
         latest_commands=latest_commands,
         finished_sequences=finished_sequences,
-        latest_agent_finished_at=latest_agent_finished_at,
+        agent_finished_commands=agent_finished_commands,
+        latest_agent_result_at=latest_agent_result_at,
     )
 
 
@@ -332,59 +353,52 @@ def _last_agent_task_completed_at_from_activity(
     work_statuses: dict[UUID, TerminalWorkStatus],
     now: datetime | None,
 ) -> dict[UUID, datetime]:
-    latest_from_finished = _latest_agent_command_finished_at(activity)
-    latest_from_idle = _latest_agent_task_completed_from_idle_work(
-        window_ids,
-        activity=activity,
-        work_statuses=work_statuses,
-        now=now,
-    )
-
-    latest: dict[UUID, datetime] = {}
-    for window_id in window_ids:
-        finished_at = latest_from_finished.get(window_id)
-        if finished_at is not None:
-            latest[window_id] = _aware_utc(finished_at)
-            continue
-        idle_at = latest_from_idle.get(window_id)
-        if idle_at is not None:
-            latest[window_id] = _aware_utc(idle_at)
-    return latest
-
-
-def _latest_agent_command_finished_at(activity: _WindowActivityData) -> dict[UUID, datetime]:
-    return activity.latest_agent_finished_at
-
-
-def _latest_agent_task_completed_from_idle_work(
-    window_ids: list[UUID],
-    *,
-    activity: _WindowActivityData,
-    work_statuses: dict[UUID, TerminalWorkStatus],
-    now: datetime | None,
-) -> dict[UUID, datetime]:
     del now
     in_progress = activity.agent_commands_in_progress
     latest: dict[UUID, datetime] = {}
     for window_id in window_ids:
-        if window_id in in_progress:
+        result_at = activity.latest_agent_result_at.get(window_id)
+        if result_at is None:
             continue
-        working_at = activity.latest_working_activity.get(window_id)
-        if working_at is None:
+
+        result_at = _aware_utc(result_at)
+        finished = _finished_command_for_result(
+            result_at,
+            activity.agent_finished_commands.get(window_id, []),
+        )
+        if finished is not None:
+            finished_at = _aware_utc(finished.finished_at)
+            if finished_at - result_at <= timedelta(seconds=WORKING_WINDOW_SECONDS):
+                latest[window_id] = max(result_at, finished_at)
+            else:
+                latest[window_id] = result_at + timedelta(seconds=WORKING_WINDOW_SECONDS)
+            continue
+
+        if window_id in in_progress:
             continue
         status = work_statuses.get(window_id, long_idle_work_status())
         if status.state == "WORKING":
             continue
-        latest[window_id] = _aware_utc(working_at) + timedelta(seconds=WORKING_WINDOW_SECONDS)
+        latest[window_id] = result_at + timedelta(seconds=WORKING_WINDOW_SECONDS)
     return latest
 
 
-async def _latest_agent_command_finished_at_by_window(
+def _finished_command_for_result(
+    result_at: datetime,
+    finished_commands: list[_AgentCommandFinished],
+) -> _AgentCommandFinished | None:
+    for command in finished_commands:
+        if result_at >= _aware_utc(command.started_at):
+            return command
+    return None
+
+
+async def _agent_command_finished_by_window(
     session: AsyncSession,
     client_id: UUID,
     window_ids: list[UUID],
     latest_commands: dict[UUID, Event],
-) -> dict[UUID, datetime]:
+) -> dict[UUID, list[_AgentCommandFinished]]:
     if not window_ids:
         return {}
 
@@ -400,26 +414,9 @@ async def _latest_agent_command_finished_at_by_window(
         )
     )
 
-    latest: dict[UUID, datetime] = {}
-    deferred: list[Event] = []
-    for event in rows:
-        window_id = event.virtual_window_id
-        if window_id is None or window_id in latest:
-            continue
-        if _event_agent(event) is not None:
-            latest[window_id] = event.created_at
-            continue
-        sequence = event.payload_json.get("sequence")
-        if sequence is None:
-            continue
-        deferred.append(event)
-
-    if not deferred:
-        return latest
-
     sequence_pairs = [
         (event.virtual_window_id, str(event.payload_json["sequence"]))
-        for event in deferred
+        for event in rows
         if event.virtual_window_id is not None and event.payload_json.get("sequence") is not None
     ]
     input_by_window_sequence = await _input_commands_for_window_sequences(
@@ -428,14 +425,76 @@ async def _latest_agent_command_finished_at_by_window(
         sequence_pairs,
         latest_commands,
     )
-    for event in deferred:
+
+    finished_by_window: dict[UUID, list[_AgentCommandFinished]] = {}
+    for event in rows:
         window_id = event.virtual_window_id
         if window_id is None:
             continue
-        if _finished_event_is_agent(event, input_by_window_sequence):
-            current_latest = latest.get(window_id)
-            if current_latest is None or event.created_at > current_latest:
-                latest[window_id] = event.created_at
+        input_event = _input_event_for_finished_event(event, input_by_window_sequence)
+        if _event_agent(event) is None and _event_agent(input_event) is None:
+            continue
+        started_at = input_event.created_at if input_event is not None else event.created_at
+        finished_by_window.setdefault(window_id, []).append(
+            _AgentCommandFinished(
+                started_at=started_at,
+                finished_at=event.created_at,
+            )
+        )
+    return finished_by_window
+
+
+async def _latest_agent_result_at_by_window(
+    session: AsyncSession,
+    client_id: UUID,
+    window_ids: list[UUID],
+) -> dict[UUID, datetime]:
+    if not window_ids:
+        return {}
+
+    source_types = agent_activity_source_types()
+    if not source_types:
+        return {}
+
+    ranked = (
+        select(
+            Event.id.label("event_id"),
+            func.row_number()
+            .over(
+                partition_by=Event.virtual_window_id,
+                order_by=(desc(Event.created_at), desc(Event.id)),
+            )
+            .label("row_number"),
+        )
+        .where(
+            Event.client_id == client_id,
+            Event.virtual_window_id.in_(window_ids),
+            Event.source_type.in_(source_types),
+            Event.kind.in_(AGENT_RESULT_CANDIDATE_KINDS),
+        )
+        .subquery()
+    )
+
+    rows = list(
+        await session.scalars(
+            select(Event)
+            .join(ranked, Event.id == ranked.c.event_id)
+            .where(
+                Event.client_id == client_id,
+                Event.virtual_window_id.in_(window_ids),
+                ranked.c.row_number <= AGENT_RESULT_SCAN_LIMIT_PER_WINDOW,
+            )
+            .order_by(Event.virtual_window_id, desc(Event.created_at), desc(Event.id))
+        )
+    )
+
+    latest: dict[UUID, datetime] = {}
+    for event in rows:
+        window_id = event.virtual_window_id
+        if window_id is None or window_id in latest:
+            continue
+        if _event_is_agent_result(event):
+            latest[window_id] = event.created_at
     return latest
 
 
@@ -485,19 +544,58 @@ async def _input_commands_for_window_sequences(
     return indexed
 
 
-def _finished_event_is_agent(
+def _input_event_for_finished_event(
     event: Event,
     input_by_window_sequence: dict[tuple[UUID, str], Event],
-) -> bool:
-    if _event_agent(event) is not None:
-        return True
+) -> Event | None:
     if event.virtual_window_id is None:
-        return False
+        return None
     sequence = event.payload_json.get("sequence")
     if sequence is None:
+        return None
+    return input_by_window_sequence.get((event.virtual_window_id, str(sequence)))
+
+
+def _event_is_agent_result(event: Event) -> bool:
+    provider = event.payload_json.get("provider")
+    provider_name = provider.strip() if isinstance(provider, str) and provider.strip() else None
+    try:
+        adapter = get_agent_tool_registry().by_source_type(event.source_type, provider_name)
+        chat = adapter.project_chat(event)
+        return chat is not None and chat.role == "agent" and bool(chat.body.strip())
+    except (KeyError, ValueError):
+        return _fallback_event_is_agent_result(event)
+
+
+def _fallback_event_is_agent_result(event: Event) -> bool:
+    role = event.payload_json.get("role")
+    if role != "assistant":
+        message = event.payload_json.get("message")
+        role = message.get("role") if isinstance(message, dict) else None
+    if role != "assistant":
         return False
-    input_event = input_by_window_sequence.get((event.virtual_window_id, str(sequence)))
-    return _event_agent(input_event) is not None
+
+    content = event.payload_json.get("content")
+    if content is None:
+        message = event.payload_json.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        return any(_content_block_has_text(block) for block in content)
+    return False
+
+
+def _content_block_has_text(block: object) -> bool:
+    if isinstance(block, str):
+        return bool(block.strip())
+    if not isinstance(block, dict):
+        return False
+    block_type = block.get("type")
+    if block_type in {"tool_use", "tool_result"}:
+        return False
+    text = block.get("text")
+    return isinstance(text, str) and bool(text.strip())
 
 
 async def _latest_events_by_window(

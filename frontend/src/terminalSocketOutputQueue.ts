@@ -1,5 +1,5 @@
 export type TerminalSocketOutputChunk = string | Uint8Array;
-export type TerminalSocketOutputType = "output" | "interactive-output";
+export type TerminalSocketOutputType = "output" | "interactive-output" | "control";
 
 export type TerminalSocketOutputPost = {
   type: TerminalSocketOutputType;
@@ -8,7 +8,7 @@ export type TerminalSocketOutputPost = {
 
 type QueuedOutputChunk = {
   chunk: TerminalSocketOutputChunk;
-  interactive: boolean;
+  type: TerminalSocketOutputType;
 };
 
 type TerminalSocketOutputQueueOptions = {
@@ -57,9 +57,9 @@ export function createTerminalSocketOutputQueue(options: TerminalSocketOutputQue
     flushTimer = null;
   };
 
-  const postOutput = (chunk: TerminalSocketOutputChunk, interactive = false) => {
+  const postOutput = (chunk: TerminalSocketOutputChunk, type: TerminalSocketOutputType) => {
     outputInFlight = true;
-    options.post({ type: interactive ? "interactive-output" : "output", data: chunk });
+    options.post({ type, data: chunk });
   };
 
   const flushOutput = () => {
@@ -69,12 +69,20 @@ export function createTerminalSocketOutputQueue(options: TerminalSocketOutputQue
     }
 
     const first = outputQueue.shift() as QueuedOutputChunk;
-    const interactive = first.interactive;
+    if (first.type === "control") {
+      postOutput(first.chunk, "control");
+      if (outputQueue.length > 0) {
+        scheduleFlush();
+      }
+      return;
+    }
+
+    const type = first.type;
     if (typeof first.chunk === "string") {
       let data = first.chunk;
       while (
         outputQueue.length > 0
-        && outputQueue[0].interactive === interactive
+        && outputQueue[0].type === type
         && typeof outputQueue[0].chunk === "string"
       ) {
         const next = outputQueue[0].chunk as string;
@@ -84,13 +92,13 @@ export function createTerminalSocketOutputQueue(options: TerminalSocketOutputQue
         outputQueue.shift();
         data += next;
       }
-      postOutput(data, interactive);
+      postOutput(data, type);
     } else {
       const chunks = [first.chunk];
       let totalLength = first.chunk.byteLength;
       while (
         outputQueue.length > 0
-        && outputQueue[0].interactive === interactive
+        && outputQueue[0].type === type
         && outputQueue[0].chunk instanceof Uint8Array
       ) {
         const next = outputQueue[0].chunk as Uint8Array;
@@ -103,7 +111,7 @@ export function createTerminalSocketOutputQueue(options: TerminalSocketOutputQue
       }
 
       if (chunks.length === 1) {
-        postOutput(first.chunk, interactive);
+        postOutput(first.chunk, type);
       } else {
         const merged = new Uint8Array(totalLength);
         let offset = 0;
@@ -111,7 +119,7 @@ export function createTerminalSocketOutputQueue(options: TerminalSocketOutputQue
           merged.set(chunk, offset);
           offset += chunk.byteLength;
         }
-        postOutput(merged, interactive);
+        postOutput(merged, type);
       }
     }
 
@@ -134,10 +142,18 @@ export function createTerminalSocketOutputQueue(options: TerminalSocketOutputQue
     queueOutput(chunk: TerminalSocketOutputChunk): void {
       const interactive = now() - lastInputSentAt <= interactiveInputWindowMs;
       if (interactive && outputQueue.length === 0 && flushTimer === null && !outputInFlight) {
-        postOutput(chunk, true);
+        postOutput(chunk, "interactive-output");
         return;
       }
-      outputQueue.push({ chunk, interactive });
+      outputQueue.push({ chunk, type: interactive ? "interactive-output" : "output" });
+      scheduleFlush();
+    },
+    queueControl(chunk: string): void {
+      if (outputQueue.length === 0 && flushTimer === null && !outputInFlight) {
+        postOutput(chunk, "control");
+        return;
+      }
+      outputQueue.push({ chunk, type: "control" });
       scheduleFlush();
     },
     ackOutput(): void {
@@ -145,7 +161,7 @@ export function createTerminalSocketOutputQueue(options: TerminalSocketOutputQue
       if (outputQueue.length === 0) {
         return;
       }
-      if (outputQueue[0].interactive) {
+      if (outputQueue[0].type === "interactive-output" || outputQueue[0].type === "control") {
         cancelFlush();
         flushOutput();
         return;

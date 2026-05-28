@@ -1,6 +1,6 @@
 export type SummaryOutputLanguage = "中文" | "English";
 
-export type TerminalGroupingMode = "project-topic" | "topic";
+export type TerminalGroupingMode = "project-topic" | "topic" | "time-topic" | "project-time-topic";
 
 const SUMMARY_LANGUAGE_KEY = "web-terminal-acp:summary-output-language";
 const TERMINAL_GROUPING_KEY = "web-terminal-acp:terminal-grouping-mode";
@@ -34,7 +34,11 @@ export function readTerminalGroupingMode(): TerminalGroupingMode {
   }
 
   const stored = window.localStorage.getItem(TERMINAL_GROUPING_KEY);
-  return stored === "topic" ? "topic" : "project-topic";
+  if (stored === "topic" || stored === "time-topic" || stored === "project-time-topic") {
+    return stored;
+  }
+
+  return "project-topic";
 }
 
 export function writeTerminalGroupingMode(mode: TerminalGroupingMode): void {

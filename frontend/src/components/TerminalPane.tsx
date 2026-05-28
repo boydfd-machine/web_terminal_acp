@@ -3,6 +3,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffec
 
 import { terminalWebSocketUrl } from "../api";
 import { createTerminalOutputBuffer } from "../terminalOutputBuffer";
+import { parseTerminalSocketControlMessage } from "../terminalSocketProtocol";
 import {
   fitTerminalToContainer,
   isTerminalViewportFilled,
@@ -87,23 +88,6 @@ const VIEW_PRIORITY_RECONCILE_INTERVAL_MS = 750;
 const INPUT_VIEW_PRIORITY_CLAIM_INTERVAL_MS = 250;
 const PENDING_INPUT_QUEUE_MAX_SIZE = 64;
 const QUICK_INPUT_DRAFT_STORAGE_PREFIX = "web-terminal-acp:terminal-quick-input:";
-
-type TerminalStatusMessage = {
-  type?: unknown;
-  status?: unknown;
-  retry_after_ms?: unknown;
-  window_id?: unknown;
-  view_id?: unknown;
-};
-
-function parseTerminalStatusMessage(data: string): TerminalStatusMessage | null {
-  try {
-    const message = JSON.parse(data) as TerminalStatusMessage;
-    return message.type === "terminal_status" || message.type === "terminal_selection" ? message : null;
-  } catch {
-    return null;
-  }
-}
 
 function terminalStatusLabel(status: TerminalConnectionStatus): string {
   switch (status) {
@@ -821,6 +805,43 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
           }
           return;
         }
+        const handleControlMessage = (data: string) => {
+          const statusMessage = parseTerminalSocketControlMessage(data);
+          if (
+            statusMessage?.type === "terminal_selection"
+            && typeof statusMessage.window_id === "string"
+            && statusMessage.view_id === viewIdRef.current
+          ) {
+            activeWindowIdRef.current = statusMessage.window_id;
+            onTerminalSelectionRef.current?.(statusMessage.window_id);
+            worker.postMessage({ type: "output-ack" });
+            return true;
+          }
+          if (statusMessage?.status === "connected") {
+            reconnectAttempt = 0;
+            updateConnectionStatus("connected");
+            scheduleFitUntilFilled();
+            flushPendingInputs();
+          } else if (statusMessage?.status === "unavailable") {
+            updateConnectionStatus("unavailable");
+            const retryAfterMs = typeof statusMessage.retry_after_ms === "number"
+              ? statusMessage.retry_after_ms
+              : undefined;
+            closeSocketWorker(worker);
+            scheduleReconnect(retryAfterMs);
+          } else if (statusMessage?.status === "error") {
+            updateConnectionStatus("error");
+          } else if (statusMessage?.status === "reconnecting") {
+            updateConnectionStatus("reconnecting");
+          }
+          worker.postMessage({ type: "output-ack" });
+          return true;
+        };
+
+        if (event.data.type === "control" && typeof event.data.data === "string") {
+          handleControlMessage(event.data.data);
+          return;
+        }
         if (
           (event.data.type === "output" || event.data.type === "interactive-output")
           && event.data.data instanceof Uint8Array
@@ -865,36 +886,8 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
           && typeof event.data.data === "string"
         ) {
           const data = event.data.data;
-          const statusMessage = parseTerminalStatusMessage(data);
-          if (statusMessage !== null) {
-            if (
-              statusMessage.type === "terminal_selection"
-              && typeof statusMessage.window_id === "string"
-              && statusMessage.view_id === viewIdRef.current
-            ) {
-              activeWindowIdRef.current = statusMessage.window_id;
-              onTerminalSelectionRef.current?.(statusMessage.window_id);
-              worker.postMessage({ type: "output-ack" });
-              return;
-            }
-            if (statusMessage.status === "connected") {
-              reconnectAttempt = 0;
-              updateConnectionStatus("connected");
-              scheduleFitUntilFilled();
-              flushPendingInputs();
-            } else if (statusMessage.status === "unavailable") {
-              updateConnectionStatus("unavailable");
-              const retryAfterMs = typeof statusMessage.retry_after_ms === "number"
-                ? statusMessage.retry_after_ms
-                : undefined;
-              closeSocketWorker(worker);
-              scheduleReconnect(retryAfterMs);
-            } else if (statusMessage.status === "error") {
-              updateConnectionStatus("error");
-            } else if (statusMessage.status === "reconnecting") {
-              updateConnectionStatus("reconnecting");
-            }
-            worker.postMessage({ type: "output-ack" });
+          if (parseTerminalSocketControlMessage(data) !== null) {
+            handleControlMessage(data);
             return;
           }
 

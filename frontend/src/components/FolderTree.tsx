@@ -6,6 +6,7 @@ import {
   buildTerminalSwitcherTree,
   canCreateWindowAtGroupNode,
   findPathToSwitcherWindow,
+  terminalGroupingModeHasProjectRoot,
   type SwitcherGroupNode,
   type SwitcherNode,
   type TerminalGroupingMode
@@ -449,7 +450,7 @@ export function FolderTree({
             onDeleteWindow={onDeleteWindow}
             onToggleGroup={toggleGroup}
             onSummarizeProject={
-              groupingMode === "project-topic" && clientId !== null
+              terminalGroupingModeHasProjectRoot(groupingMode) && clientId !== null
                 ? (projectPath) => summarizeMutation.mutate(projectPath)
                 : undefined
             }

@@ -1,9 +1,10 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
-import { fetchAgentRecordChat, fetchAgentRecordDetail, fetchCommandHistory, fetchWindow, retrySummary, updateWindowTitle } from "../api";
+import { fetchCommandHistory, fetchWindow, retrySummary, updateWindowTitle } from "../api";
+import { useAgentRecordData } from "../hooks/useAgentRecordData";
 import type { GitWorktreeActivity, SummaryJob, TreeFolderCore, VirtualWindow } from "../types";
-import { AgentRecordViewer, type AgentRecordDisplayMode } from "./AgentRecordViewer";
+import { AgentRecordModal, AgentRecordViewer } from "./AgentRecordViewer";
 import { CommandHistoryViewer } from "./CommandHistoryViewer";
 import { DetailPanelTabs, type DetailPanelTab } from "./DetailPanelTabs";
 import { GitRunViewer } from "./GitRunViewer";
@@ -13,7 +14,6 @@ type WindowDetailProps = {
   clientId: string | null;
   windowId: string | null;
   gitWorktree?: GitWorktreeActivity | null;
-  agentRecordExpandSignal?: number;
 };
 
 type SummaryStatus = {
@@ -21,8 +21,6 @@ type SummaryStatus = {
   tone?: "muted" | "error";
 };
 
-const AGENT_RECORD_CHAT_PAGE_SIZE = 30;
-const AGENT_RECORD_DETAIL_PAGE_SIZE = 100;
 const COMMAND_HISTORY_PAGE_SIZE = 100;
 const MAX_TITLE_LENGTH = 255;
 
@@ -112,28 +110,24 @@ function renameTreeWindow(
 export function WindowDetail({
   clientId,
   windowId,
-  gitWorktree = null,
-  agentRecordExpandSignal = 0
+  gitWorktree = null
 }: WindowDetailProps) {
   const [allowTitleFolderOverride, setAllowTitleFolderOverride] = useState(false);
   const [detailTab, setDetailTab] = useState<DetailPanelTab>("overview");
-  const [agentRecordMode, setAgentRecordMode] = useState<AgentRecordDisplayMode>("chat");
-  const [agentChatPage, setAgentChatPage] = useState(0);
-  const [agentDetailPage, setAgentDetailPage] = useState(0);
   const [commandHistoryPage, setCommandHistoryPage] = useState(0);
-  const [agentRecordExpanded, setAgentRecordExpanded] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const queryClient = useQueryClient();
   const showGitTab = gitWorktree !== null;
+  const agentRecord = useAgentRecordData({
+    clientId,
+    windowId,
+    enabled: detailTab === "agent"
+  });
 
   useEffect(() => {
     setDetailTab("overview");
-    setAgentRecordMode("chat");
-    setAgentChatPage(0);
-    setAgentDetailPage(0);
     setCommandHistoryPage(0);
-    setAgentRecordExpanded(false);
     setIsEditingTitle(false);
     setTitleDraft("");
   }, [clientId, windowId]);
@@ -148,34 +142,6 @@ export function WindowDetail({
     queryKey: ["window", clientId, windowId],
     queryFn: () => fetchWindow(clientId as string, windowId as string),
     enabled: clientId !== null && windowId !== null,
-    refetchInterval: 10000
-  });
-  const agentChatRecordQuery = useQuery({
-    queryKey: ["agent-record", "chat", clientId, windowId, agentChatPage, AGENT_RECORD_CHAT_PAGE_SIZE],
-    queryFn: () => fetchAgentRecordChat(
-      clientId as string,
-      windowId as string,
-      AGENT_RECORD_CHAT_PAGE_SIZE,
-      agentChatPage * AGENT_RECORD_CHAT_PAGE_SIZE
-    ),
-    enabled: clientId !== null && windowId !== null && detailTab === "agent" && agentRecordMode === "chat",
-    placeholderData: keepPreviousData,
-    refetchInterval: 10000
-  });
-  const agentDetailRecordQuery = useQuery({
-    queryKey: ["agent-record", "detail", clientId, windowId, agentDetailPage, AGENT_RECORD_DETAIL_PAGE_SIZE],
-    queryFn: () => fetchAgentRecordDetail(
-      clientId as string,
-      windowId as string,
-      AGENT_RECORD_DETAIL_PAGE_SIZE,
-      agentDetailPage * AGENT_RECORD_DETAIL_PAGE_SIZE
-    ),
-    enabled:
-      clientId !== null
-      && windowId !== null
-      && detailTab === "agent"
-      && (agentRecordMode === "detail" || agentRecordExpanded),
-    placeholderData: keepPreviousData,
     refetchInterval: 10000
   });
   const commandHistoryQuery = useQuery({
@@ -254,8 +220,6 @@ export function WindowDetail({
     item.title_manually_overridden ? "title locked" : null,
     item.folder_manually_overridden ? "folder locked" : null
   ].filter((lock): lock is string => lock !== null);
-  const agentRecordQuery = agentRecordMode === "chat" ? agentChatRecordQuery : agentDetailRecordQuery;
-
   return (
     <div>
       <div className="window-title-header">
@@ -418,34 +382,41 @@ export function WindowDetail({
       )}
 
       {detailTab === "agent" && (
-        <AgentRecordViewer
-          mode={agentRecordMode}
-          chatRecord={agentChatRecordQuery.data ?? null}
-          detailRecord={agentDetailRecordQuery.data ?? null}
-          sessions={agentDetailRecordQuery.data?.sessions ?? []}
-          expandSignal={agentRecordExpandSignal}
-          isLoading={agentRecordQuery.isLoading}
-          isError={agentRecordQuery.isError}
-          isFetching={agentRecordQuery.isFetching}
-          onModeChange={(mode) => {
-            setAgentRecordMode(mode);
-            if (mode === "chat") setAgentChatPage(0);
-            else setAgentDetailPage(0);
-          }}
-          onExpandedChange={setAgentRecordExpanded}
-          onSessionChange={() => {
-            setAgentChatPage(0);
-            setAgentDetailPage(0);
-          }}
-          onPreviousPage={() => {
-            if (agentRecordMode === "chat") setAgentChatPage((page) => Math.max(0, page - 1));
-            else setAgentDetailPage((page) => Math.max(0, page - 1));
-          }}
-          onNextPage={() => {
-            if (agentRecordMode === "chat") setAgentChatPage((page) => page + 1);
-            else setAgentDetailPage((page) => page + 1);
-          }}
-        />
+        <>
+          <AgentRecordViewer
+            mode={agentRecord.mode}
+            chatRoleFilter={agentRecord.chatRoleFilter}
+            chatRecord={agentRecord.chatRecord}
+            detailRecord={agentRecord.detailRecord}
+            sessions={agentRecord.sessions}
+            isLoading={agentRecord.isLoading}
+            isError={agentRecord.isError}
+            isFetching={agentRecord.isFetching}
+            onModeChange={agentRecord.setMode}
+            onChatRoleFilterChange={agentRecord.setChatRoleFilter}
+            onExpand={() => agentRecord.setExpanded(true)}
+            onSessionChange={agentRecord.resetPages}
+            onPreviousPage={agentRecord.previousPage}
+            onNextPage={agentRecord.nextPage}
+          />
+          <AgentRecordModal
+            open={agentRecord.expanded}
+            mode={agentRecord.mode}
+            chatRoleFilter={agentRecord.chatRoleFilter}
+            chatRecord={agentRecord.chatRecord}
+            detailRecord={agentRecord.detailRecord}
+            sessions={agentRecord.sessions}
+            isLoading={agentRecord.isLoading}
+            isError={agentRecord.isError}
+            isFetching={agentRecord.isFetching}
+            onModeChange={agentRecord.setMode}
+            onChatRoleFilterChange={agentRecord.setChatRoleFilter}
+            onClose={() => agentRecord.setExpanded(false)}
+            onSessionChange={agentRecord.resetPages}
+            onPreviousPage={agentRecord.previousPage}
+            onNextPage={agentRecord.nextPage}
+          />
+        </>
       )}
 
       {detailTab === "history" && (

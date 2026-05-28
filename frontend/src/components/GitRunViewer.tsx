@@ -3,6 +3,20 @@ import { useQuery } from "@tanstack/react-query";
 import type { CSSProperties } from "react";
 
 import { fetchGitRuns } from "../api";
+import {
+  basename,
+  commitLabel,
+  displayPath,
+  fileCount,
+  fileDelta,
+  fileStatusTone,
+  formatGitDateTime,
+  gitRunTitle,
+  patchLines,
+  patchLineTone,
+  shortSha,
+  treeFileLabel
+} from "../gitDiff";
 import type { GitDiffCommit, GitDiffFile, GitWorktreeRun } from "../types";
 
 type GitRunViewerProps = {
@@ -24,23 +38,9 @@ type GitFileTreeNode = {
   files: GitDiffFile[];
 };
 
-type PatchLineTone = "addition" | "deletion" | "hunk" | "meta" | "context";
-
 type GitTreeDepthStyle = CSSProperties & {
   "--git-file-tree-depth": number;
 };
-
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
-}
-
-function shortSha(value: string | null | undefined): string {
-  return value ? value.slice(0, 8) : "?";
-}
 
 function snapshotText(run: GitWorktreeRun, key: "start_snapshot_json" | "end_snapshot_json", field: string): string {
   const snapshot = run[key];
@@ -48,58 +48,11 @@ function snapshotText(run: GitWorktreeRun, key: "start_snapshot_json" | "end_sna
   return typeof value === "string" && value.trim() ? value : "-";
 }
 
-function fileDelta(file: GitDiffFile): string {
-  const additions = fileCount(file.additions);
-  const deletions = fileCount(file.deletions);
-  return `+${additions} / -${deletions}`;
-}
-
-function fileCount(value: number | undefined): number {
-  return Number.isFinite(value) ? Number(value) : 0;
-}
-
-function displayPath(file: GitDiffFile): string {
-  if (file.old_path && file.old_path !== file.path) {
-    return `${file.old_path} -> ${file.path}`;
-  }
-  return file.path;
-}
-
-function commitLabel(commit: GitDiffCommit): string {
-  return `${shortSha(commit.short_sha || commit.sha)} ${commit.subject || "Untitled commit"}`;
-}
-
 function filterCommits(commits: GitDiffCommit[], selectedSha: string): GitDiffCommit[] {
   if (selectedSha === "all") {
     return commits;
   }
   return commits.filter((commit) => commit.sha === selectedSha);
-}
-
-function basename(path: string): string {
-  const parts = path.split("/").filter(Boolean);
-  return parts.length > 0 ? parts[parts.length - 1] : path;
-}
-
-function treeFileLabel(file: GitDiffFile): string {
-  if (file.old_path && file.old_path !== file.path) {
-    return `${basename(file.old_path)} -> ${basename(file.path)}`;
-  }
-  return basename(file.path);
-}
-
-function fileStatusTone(status: string | undefined): string {
-  const normalized = (status ?? "modified").toLowerCase();
-  if (normalized === "added" || normalized === "add" || normalized === "a") {
-    return "added";
-  }
-  if (normalized === "deleted" || normalized === "removed" || normalized === "delete" || normalized === "d") {
-    return "deleted";
-  }
-  if (normalized === "renamed" || normalized === "rename" || normalized === "r") {
-    return "renamed";
-  }
-  return "modified";
 }
 
 function buildFileTree(files: GitDiffFile[]): GitFileTreeNode {
@@ -132,40 +85,6 @@ function sortFileTree(node: GitFileTreeNode): void {
   node.children.forEach(sortFileTree);
 }
 
-function patchLineTone(line: string): PatchLineTone {
-  if (line.startsWith("@@")) {
-    return "hunk";
-  }
-  if (
-    line.startsWith("diff --git") ||
-    line.startsWith("index ") ||
-    line.startsWith("new file mode ") ||
-    line.startsWith("deleted file mode ") ||
-    line.startsWith("similarity index ") ||
-    line.startsWith("rename from ") ||
-    line.startsWith("rename to ") ||
-    line.startsWith("--- ") ||
-    line.startsWith("+++ ")
-  ) {
-    return "meta";
-  }
-  if (line.startsWith("+")) {
-    return "addition";
-  }
-  if (line.startsWith("-")) {
-    return "deletion";
-  }
-  return "context";
-}
-
-function patchLines(patch: string | undefined): string[] {
-  const text = patch?.trimEnd();
-  if (!text) {
-    return ["No textual patch captured for this file."];
-  }
-  return text.split("\n");
-}
-
 function RunCard({ run }: { run: GitWorktreeRun }) {
   const [selectedCommitSha, setSelectedCommitSha] = useState("all");
   const [selectedDiff, setSelectedDiff] = useState<SelectedDiff | null>(null);
@@ -176,9 +95,7 @@ function RunCard({ run }: { run: GitWorktreeRun }) {
     () => filterCommits(commits, selectedCommitSha),
     [commits, selectedCommitSha]
   );
-  const title = run.run_type === "tracking"
-    ? "Worktree baseline"
-    : `Agent run #${run.command_sequence}`;
+  const title = gitRunTitle(run);
 
   return (
     <article className="git-run-card">
@@ -198,9 +115,9 @@ function RunCard({ run }: { run: GitWorktreeRun }) {
         <dt>Discovery</dt>
         <dd>{run.discovery_method ?? "-"}</dd>
         <dt>Started</dt>
-        <dd>{formatDateTime(run.started_at)}</dd>
+        <dd>{formatGitDateTime(run.started_at)}</dd>
         <dt>Ended</dt>
-        <dd>{run.ended_at ? formatDateTime(run.ended_at) : "-"}</dd>
+        <dd>{run.ended_at ? formatGitDateTime(run.ended_at) : "-"}</dd>
         <dt>Pending commit</dt>
         <dd>{run.pending_commit ? "Yes" : "No"}</dd>
         {run.run_type === "tracking" && (
@@ -256,7 +173,7 @@ function RunCard({ run }: { run: GitWorktreeRun }) {
                     <strong>{commit.subject || "Untitled commit"}</strong>
                     <code>{shortSha(commit.short_sha || commit.sha)}</code>
                   </div>
-                  {commit.authored_at && <time>{formatDateTime(commit.authored_at)}</time>}
+                  {commit.authored_at && <time>{formatGitDateTime(commit.authored_at)}</time>}
                 </header>
                 <CommitFileBrowser
                   commit={commit}

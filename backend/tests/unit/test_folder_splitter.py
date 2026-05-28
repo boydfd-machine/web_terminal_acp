@@ -40,6 +40,26 @@ def test_parse_folder_split_response_accepts_two_children():
     )
 
 
+@pytest.mark.parametrize("fence", ["json", ""])
+def test_parse_folder_split_response_accepts_markdown_fenced_json(fence):
+    first_terminal_id = uuid4()
+    second_terminal_id = uuid4()
+    payload = _split_payload(
+        [
+            {"name": "Backend", "terminal_ids": [str(first_terminal_id)]},
+            {"name": "Frontend", "terminal_ids": [str(second_terminal_id)]},
+        ]
+    )
+
+    result = parse_folder_split_response(
+        f"```{fence}\n{payload}\n```",
+        allowed_terminal_ids=[first_terminal_id, second_terminal_id],
+        parent_name="Development",
+    )
+
+    assert len(result.children) == 2
+
+
 def test_parse_folder_split_response_rejects_invalid_json():
     with pytest.raises(ValueError, match="folder split response must be valid JSON"):
         parse_folder_split_response(

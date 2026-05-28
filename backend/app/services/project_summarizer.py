@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.models import AiSession, Event, VirtualWindow
+from app.services.llm_json import strip_json_markdown_fence
 from app.services.redaction import redact_secrets
 from app.services.summarizer import _extract_message_content
 
@@ -26,8 +27,9 @@ class ProjectSummaryResult:
 
 
 def parse_project_summary_response(text: str) -> ProjectSummaryResult:
+    normalized_text = strip_json_markdown_fence(text)
     try:
-        payload = json.loads(text)
+        payload = json.loads(normalized_text)
     except json.JSONDecodeError as exc:
         raise ValueError("project summary response must be valid JSON") from exc
 

@@ -252,6 +252,10 @@ export type AgentChatMessage = {
   created_at: string;
 };
 
+export type AgentChatRoleFilter = "all" | "user" | "agent";
+
+export type AgentRecordDisplayMode = "chat" | "detail";
+
 export type AgentChatRecord = {
   window_id: string;
   messages: AgentChatMessage[];
