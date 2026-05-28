@@ -12,6 +12,8 @@ from app.models import ClientRuntime
 from app.routers import clients as clients_router
 from app.repositories.clients import create_client, ensure_local_client
 from app.schemas import BootstrapClientIn
+from app.services import polling_response_cache
+from app.services.polling_response_cache import clear_polling_response_cache
 from app.services.bootstrap.installer import BootstrapConnectionError, BootstrapDependencyError
 from app.version import __version__
 
@@ -33,6 +35,7 @@ class DbClient:
 
 @pytest.fixture
 async def db_client(tmp_path):
+    clear_polling_response_cache()
     database_path = tmp_path / "clients.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -57,6 +60,7 @@ async def db_client(tmp_path):
         app.dependency_overrides.pop(get_session, None)
         app.dependency_overrides.pop(clients_router.get_bootstrap_runner, None)
         app.dependency_overrides.pop(clients_router.get_update_runner, None)
+        clear_polling_response_cache()
         await engine.dispose()
 
 
@@ -99,6 +103,42 @@ async def test_list_clients_returns_local_client(db_client):
 
 
 @pytest.mark.asyncio
+async def test_list_clients_hot_cache_skips_repository(db_client, monkeypatch):
+    first_response = await db_client.get("/api/clients")
+    assert first_response.status_code == 200
+
+    async def fail_list_clients(_session):
+        raise AssertionError("hot clients cache should avoid the repository")
+
+    monkeypatch.setattr(clients_router, "list_clients", fail_list_clients)
+
+    second_response = await db_client.get("/api/clients")
+
+    assert second_response.status_code == 200
+    assert second_response.json() == first_response.json()
+
+
+@pytest.mark.asyncio
+async def test_list_clients_expired_cache_serves_stale_response(db_client, monkeypatch):
+    first_response = await db_client.get("/api/clients")
+    assert first_response.status_code == 200
+    refreshes = []
+
+    async def fail_list_clients(_session):
+        raise AssertionError("expired clients cache should return stale before refresh")
+
+    monkeypatch.setattr(polling_response_cache, "_CACHE_TTL_SECONDS", -1.0)
+    monkeypatch.setattr(clients_router, "list_clients", fail_list_clients)
+    monkeypatch.setattr(clients_router, "_refresh_clients_cache", lambda cache_key: refreshes.append(cache_key))
+
+    second_response = await db_client.get("/api/clients")
+
+    assert second_response.status_code == 200
+    assert second_response.json() == first_response.json()
+    assert refreshes
+
+
+@pytest.mark.asyncio
 async def test_get_client_returns_metadata(db_client):
     list_response = await db_client.get("/api/clients")
     client_id = list_response.json()[0]["id"]
@@ -130,6 +170,19 @@ async def test_patch_client_renames_client(db_client):
 
     get_response = await db_client.get(f"/api/clients/{client_id}")
     assert get_response.json()["name"] == "Desk Mini"
+
+
+@pytest.mark.asyncio
+async def test_patch_client_invalidates_clients_hot_cache(db_client):
+    list_response = await db_client.get("/api/clients")
+    client_id = list_response.json()[0]["id"]
+
+    response = await db_client.patch(f"/api/clients/{client_id}", json={"name": "Desk Mini"})
+    assert response.status_code == 200
+
+    list_after_patch = await db_client.get("/api/clients")
+
+    assert list_after_patch.json()[0]["name"] == "Desk Mini"
 
 
 @pytest.mark.asyncio

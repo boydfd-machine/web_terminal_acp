@@ -7,7 +7,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.db import get_session
 from app.main import app
 from app.models import ClientRuntime
+from app.routers import folders as folders_router
 from app.repositories.clients import create_client, ensure_local_client
+from app.services import polling_response_cache
+from app.services.polling_response_cache import clear_polling_response_cache
 
 try:
     from app.db import Base
@@ -29,6 +32,7 @@ class FolderApiClient:
 
 @pytest.fixture
 async def sqlite_client(tmp_path):
+    clear_polling_response_cache()
     database_path = tmp_path / "folders.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -51,6 +55,7 @@ async def sqlite_client(tmp_path):
             yield FolderApiClient(test_client, session_factory)
     finally:
         app.dependency_overrides.pop(get_session, None)
+        clear_polling_response_cache()
         await engine.dispose()
 
 
@@ -105,6 +110,74 @@ async def test_folder_api_creates_path_and_returns_nested_tree(sqlite_client):
         "folders": [],
         "windows": [],
     }
+
+
+@pytest.mark.asyncio
+async def test_tree_hot_cache_skips_client_and_tree_queries(sqlite_client, monkeypatch):
+    client_id = await get_local_client_id(sqlite_client)
+    create_response = await sqlite_client.post(
+        f"/api/clients/{client_id}/folders", json={"path": "/2026-05/生产排障"}
+    )
+    assert create_response.status_code == 200
+    first_tree = await sqlite_client.get(f"/api/clients/{client_id}/tree")
+    assert first_tree.status_code == 200
+
+    async def fail_require_client(_session, _client_id):
+        raise AssertionError("hot tree cache should avoid client lookup")
+
+    async def fail_build_tree(_session, _client_id):
+        raise AssertionError("hot tree cache should avoid tree query")
+
+    monkeypatch.setattr(folders_router, "_require_client", fail_require_client)
+    monkeypatch.setattr(folders_router, "build_tree", fail_build_tree)
+
+    second_tree = await sqlite_client.get(f"/api/clients/{client_id}/tree")
+
+    assert second_tree.status_code == 200
+    assert second_tree.json() == first_tree.json()
+
+
+@pytest.mark.asyncio
+async def test_tree_expired_cache_serves_stale_response(sqlite_client, monkeypatch):
+    client_id = await get_local_client_id(sqlite_client)
+    create_response = await sqlite_client.post(
+        f"/api/clients/{client_id}/folders", json={"path": "/2026-05/生产排障"}
+    )
+    assert create_response.status_code == 200
+    first_tree = await sqlite_client.get(f"/api/clients/{client_id}/tree")
+    assert first_tree.status_code == 200
+    refreshes = []
+
+    async def fail_build_tree(_session, _client_id):
+        raise AssertionError("expired tree cache should return stale before refresh")
+
+    monkeypatch.setattr(polling_response_cache, "_CACHE_TTL_SECONDS", -1.0)
+    monkeypatch.setattr(folders_router, "build_tree", fail_build_tree)
+    monkeypatch.setattr(folders_router, "_refresh_response_cache", lambda cache_key, refresh: refreshes.append(cache_key))
+
+    second_tree = await sqlite_client.get(f"/api/clients/{client_id}/tree")
+
+    assert second_tree.status_code == 200
+    assert second_tree.json() == first_tree.json()
+    assert refreshes
+
+
+@pytest.mark.asyncio
+async def test_create_folder_invalidates_tree_hot_cache(sqlite_client):
+    client_id = await get_local_client_id(sqlite_client)
+    cached_empty_tree = await sqlite_client.get(f"/api/clients/{client_id}/tree")
+    assert cached_empty_tree.status_code == 200
+    assert cached_empty_tree.json() == []
+
+    create_response = await sqlite_client.post(
+        f"/api/clients/{client_id}/folders", json={"path": "/2026-05/生产排障"}
+    )
+    assert create_response.status_code == 200
+
+    tree_response = await sqlite_client.get(f"/api/clients/{client_id}/tree")
+
+    assert tree_response.status_code == 200
+    assert tree_response.json()[0]["path"] == "/2026-05"
 
 
 @pytest.mark.asyncio

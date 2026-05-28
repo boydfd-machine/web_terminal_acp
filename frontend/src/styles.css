@@ -25,7 +25,7 @@ textarea {
 .app-shell {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr) 360px;
-  height: 100dvh;
+  height: var(--web-terminal-viewport-height, 100dvh);
   min-height: 0;
   overflow: hidden;
 }
@@ -68,7 +68,7 @@ textarea {
 
 .terminal-immersive {
   display: block;
-  height: 100dvh;
+  height: var(--web-terminal-viewport-height, 100dvh);
 }
 
 .terminal-immersive .sidebar,
@@ -81,7 +81,7 @@ textarea {
 .terminal-immersive .workspace {
   display: flex;
   width: 100%;
-  height: 100dvh;
+  height: var(--web-terminal-viewport-height, 100dvh);
 }
 
 .terminal-immersive-exit {
@@ -2748,13 +2748,13 @@ html.electron-app .terminal-immersive .workspace {
 
   .app-shell {
     display: block;
-    height: 100dvh;
+    height: var(--web-terminal-viewport-height, 100dvh);
     overflow: hidden;
   }
 
   .sidebar,
   .workspace {
-    height: 100dvh;
+    height: var(--web-terminal-viewport-height, 100dvh);
     min-height: 0;
   }
 
@@ -2869,7 +2869,7 @@ html.electron-app .terminal-immersive .workspace {
     inset: 0 0 0 auto;
     z-index: 31;
     width: min(380px, 92vw);
-    height: 100dvh;
+    height: var(--web-terminal-viewport-height, 100dvh);
     border-left: 1px solid #334155;
     box-shadow: -16px 0 48px rgb(0 0 0 / 45%);
     transform: translateX(100%);

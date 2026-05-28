@@ -50,7 +50,7 @@ import {
   mergeTreeWithActivity,
   windowActivityMap
 } from "./terminalTree";
-import type { BootstrapClientInput, TreeFolder } from "./types";
+import type { BootstrapClientInput, Client, TreeFolder } from "./types";
 type TerminalViewportMode = "desktop" | "phone" | "fixed";
 
 const TERMINAL_VIEWPORT_STORAGE_KEY = "web-terminal-acp:terminal-viewport-mode";
@@ -240,7 +240,65 @@ function writeTerminalRoute(clientId: string | null, windowId: string | null, mo
   window.history[method]({ clientId, windowId }, "", nextPath);
 }
 
+function isRemoteClientOffline(client: Client | null | undefined): boolean {
+  if (client === null || client === undefined) {
+    return false;
+  }
+
+  return client.runtime === "remote" && client.status !== "ONLINE";
+}
+
+function useVisualViewportHeightCssVariable(): void {
+  useEffect(() => {
+    const root = document.documentElement;
+    let frame: number | null = null;
+    let lastHeight = "";
+
+    const sync = () => {
+      frame = null;
+      // Some mobile keyboards shrink visualViewport without changing the layout viewport used by 100dvh.
+      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+      if (viewportHeight <= 0) {
+        return;
+      }
+
+      const nextHeight = `${Math.round(viewportHeight)}px`;
+      if (nextHeight === lastHeight) {
+        return;
+      }
+
+      lastHeight = nextHeight;
+      root.style.setProperty("--web-terminal-viewport-height", nextHeight);
+    };
+
+    const scheduleSync = () => {
+      if (frame !== null) {
+        return;
+      }
+      frame = window.requestAnimationFrame(sync);
+    };
+
+    sync();
+    window.visualViewport?.addEventListener("resize", scheduleSync);
+    window.visualViewport?.addEventListener("scroll", scheduleSync);
+    window.addEventListener("resize", scheduleSync);
+    window.addEventListener("orientationchange", scheduleSync);
+    return () => {
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame);
+      }
+      window.visualViewport?.removeEventListener("resize", scheduleSync);
+      window.visualViewport?.removeEventListener("scroll", scheduleSync);
+      window.removeEventListener("resize", scheduleSync);
+      window.removeEventListener("orientationchange", scheduleSync);
+      root.style.removeProperty("--web-terminal-viewport-height");
+    };
+  }, []);
+}
+
 export default function App() {
+  useVisualViewportHeightCssVariable();
+
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [selectedWindowId, setSelectedWindowId] = useState<string | null>(null);
   const [routeSelectionRequest, setRouteSelectionRequest] = useState<TerminalRouteSelection | null>(
@@ -306,26 +364,15 @@ export default function App() {
     enabled: selectedClientId !== null,
     refetchInterval: 10000
   });
-  const needsRuntimeTags =
-    terminalGroupingMode === "project-topic" || terminalSwitcherOpen || projectTerminalPickerOpen;
   const windowActivityQuery = useQuery({
-    queryKey: ["window-activity", selectedClientId, false],
-    queryFn: () => fetchWindowActivity(selectedClientId as string),
+    queryKey: ["window-activity", selectedClientId],
+    queryFn: () => fetchWindowActivity(selectedClientId as string, { includeRuntimeTags: true }),
     enabled: selectedClientId !== null && treeQuery.isSuccess,
     refetchInterval: (query) => (activityHasWorkingTerminal(query.state.data) ? 3000 : 10000)
   });
-  const windowActivityTagsQuery = useQuery({
-    queryKey: ["window-activity", selectedClientId, true],
-    queryFn: () => fetchWindowActivity(selectedClientId as string, { includeRuntimeTags: true }),
-    enabled: selectedClientId !== null && treeQuery.isSuccess && needsRuntimeTags,
-    refetchInterval: (query) => (activityHasWorkingTerminal(query.state.data) ? 3000 : 10000)
-  });
-  const windowActivityData = needsRuntimeTags
-    ? windowActivityTagsQuery.data ?? windowActivityQuery.data
-    : windowActivityQuery.data;
   const treeFolders = useMemo(
-    () => mergeTreeWithActivity(treeQuery.data, windowActivityMap(windowActivityData)),
-    [treeQuery.data, windowActivityData]
+    () => mergeTreeWithActivity(treeQuery.data, windowActivityMap(windowActivityQuery.data)),
+    [treeQuery.data, windowActivityQuery.data]
   );
   const projectPaths = useMemo(
     () => collectCreatableProjectPaths(treeFolders ?? []),
@@ -473,7 +520,7 @@ export default function App() {
     }
 
     const client = clientsQuery.data?.find((candidate) => candidate.id === selectedClientId);
-    if (client?.runtime === "remote" && client.status !== "ONLINE") {
+    if (isRemoteClientOffline(client)) {
       return;
     }
 
@@ -486,7 +533,7 @@ export default function App() {
     }
 
     const client = clientsQuery.data?.find((candidate) => candidate.id === selectedClientId);
-    if (client?.runtime === "remote" && client.status !== "ONLINE") {
+    if (isRemoteClientOffline(client)) {
       return;
     }
 
@@ -500,7 +547,7 @@ export default function App() {
     }
 
     const client = clientsQuery.data?.find((candidate) => candidate.id === selectedClientId);
-    if (client?.runtime === "remote" && client.status !== "ONLINE") {
+    if (isRemoteClientOffline(client)) {
       return;
     }
 
@@ -516,7 +563,7 @@ export default function App() {
     }
 
     const client = clientsQuery.data?.find((candidate) => candidate.id === selectedClientId);
-    if (client?.runtime === "remote" && client.status !== "ONLINE") {
+    if (isRemoteClientOffline(client)) {
       return;
     }
 
@@ -692,7 +739,7 @@ export default function App() {
       }
 
       const client = clientsQuery.data?.find((candidate) => candidate.id === selectedClientId);
-      if (client?.runtime === "remote" && client.status !== "ONLINE") {
+      if (isRemoteClientOffline(client)) {
         return;
       }
 
@@ -809,7 +856,7 @@ export default function App() {
       terminalPaneRef.current?.refit();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [selectedWindowId, treeQuery.isSuccess, treeQuery.dataUpdatedAt, windowActivityData]);
+  }, [selectedWindowId, treeQuery.isSuccess]);
 
   useEffect(() => {
     if (!terminalControlsOpen) {
@@ -891,7 +938,7 @@ export default function App() {
   const hasUnreadNotification = (windowId: string) =>
     terminalNotifications.some((notification) => notification.windowId === windowId && !notification.read);
   const selectedClient = clientsQuery.data?.find((client) => client.id === selectedClientId) ?? null;
-  const selectedClientOffline = selectedClient?.runtime === "remote" && selectedClient.status !== "ONLINE";
+  const selectedClientOffline = isRemoteClientOffline(selectedClient);
   const createErrorMessage = createMutation.error instanceof Error
     ? createMutation.error.message
     : "Failed to create terminal.";
@@ -1307,7 +1354,7 @@ export default function App() {
         isOpen={projectTerminalPickerOpen}
         projectPaths={projectPaths}
         projectSummaries={projectSummariesQuery.data ?? []}
-        loadingProjects={treeQuery.isFetching || windowActivityTagsQuery.isFetching}
+        loadingProjects={treeQuery.isFetching || windowActivityQuery.isFetching}
         creatingTerminal={createMutation.isPending}
         createTerminalDisabled={selectedClientOffline}
         onClose={() => {

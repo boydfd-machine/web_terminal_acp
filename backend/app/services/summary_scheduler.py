@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import desc, or_, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_tools import agent_activity_source_types, get_agent_tool_registry
@@ -17,9 +18,15 @@ INPUT_INITIAL_MAX_WAIT_REASON = "input_initial_max_wait"
 INPUT_REPEAT_REASON = "input_repeat"
 AGENT_IDLE_REASON = "agent_idle"
 TERMINAL_INPUT_COMMAND_KIND = "terminal_input_command"
-TERMINAL_OUTPUT_KIND = "terminal_output"
 TERMINAL_COMMAND_FINISHED_KIND = "terminal_command_finished"
 AGENT_WORK_PRESENCE_KIND = "agent_work_presence"
+
+
+@dataclass(frozen=True)
+class _TerminalInputActivity:
+    first_event: Event
+    latest_event: Event
+    total: int
 
 
 async def schedule_summary_after_terminal_input(
@@ -31,16 +38,15 @@ async def schedule_summary_after_terminal_input(
     """Schedule a summary after shell user input goes idle."""
     del now
 
-    input_events = await _terminal_input_events(session, window.id)
-    input_times = [_event_input_time(event) for event in input_events]
-    if not input_times:
+    input_activity = await _terminal_input_activity(session, window)
+    if input_activity is None:
         return None
-    if _latest_command_agent(input_events) is not None:
+    if _command_agent(input_activity.latest_event) is not None:
         return None
 
     settings = get_settings()
-    first_input_at = input_times[0]
-    last_input_at = input_times[-1]
+    first_input_at = _event_input_time(input_activity.first_event)
+    last_input_at = _event_input_time(input_activity.latest_event)
     last_summary_at = await _last_summary_at(session, window.id)
 
     if last_summary_at is None:
@@ -58,7 +64,7 @@ async def schedule_summary_after_terminal_input(
         run_after = min(repeat_run_after, idle_run_after)
         trigger_reason = INPUT_REPEAT_REASON if repeat_run_after <= idle_run_after else INPUT_IDLE_REASON
 
-    input_generation = len(input_times)
+    input_generation = input_activity.total
     pending_job = await _pending_summary_job(session, window.id)
     if pending_job is None:
         pending_job = SummaryJob(
@@ -78,27 +84,34 @@ async def schedule_summary_after_agent_activity(
     session: AsyncSession,
     window: VirtualWindow,
     *,
+    event: Event | None = None,
     now: datetime | None = None,
 ) -> SummaryJob | None:
     """Schedule a summary after user agent chat or long-idle assistant activity."""
     del now
 
-    user_message_job = await _schedule_after_latest_agent_user_message(session, window)
+    activity_at = _agent_activity_time_from_event(event) if event is not None else None
+    if activity_at is not None:
+        _touch_agent_activity_state(window, event, activity_at)
+
+    user_message_job = await _schedule_after_latest_agent_user_message(session, window, event)
     if user_message_job is not None:
         return user_message_job
 
-    burst_start = await _current_agent_burst_start(session, window.id)
-    if burst_start is None:
+    burst_start = _ensure_aware(window.agent_activity_burst_start_at) if window.agent_activity_burst_start_at else None
+    last_activity_at = _ensure_aware(window.agent_activity_latest_at) if window.agent_activity_latest_at else None
+    if burst_start is None or last_activity_at is None:
         return None
-    if not await _was_idle_before(session, window.id, burst_start):
+    if not await _was_idle_before(
+        session,
+        window.id,
+        burst_start,
+        current_event_id=event.id if event is not None else None,
+    ):
         return None
 
     last_summary_at = await _last_summary_at(session, window.id)
     if last_summary_at is not None and last_summary_at >= burst_start:
-        return None
-
-    last_activity_at = await _last_agent_activity_at(session, window.id)
-    if last_activity_at is None:
         return None
 
     settings = get_settings()
@@ -114,7 +127,7 @@ async def schedule_summary_after_agent_activity(
 
     pending_job.run_after = run_after
     pending_job.trigger_reason = AGENT_IDLE_REASON
-    pending_job.input_generation = await _agent_activity_generation(session, window.id)
+    pending_job.input_generation = window.agent_activity_generation
     await session.flush()
     return pending_job
 
@@ -122,12 +135,13 @@ async def schedule_summary_after_agent_activity(
 async def _schedule_after_latest_agent_user_message(
     session: AsyncSession,
     window: VirtualWindow,
+    event: Event | None = None,
 ) -> SummaryJob | None:
-    user_message_events = await _agent_user_message_events(session, window.id)
-    if not user_message_events:
+    user_message_event = _current_user_message_event(window, event)
+    if user_message_event is None:
         return None
 
-    latest_user_message_at = _ensure_aware(user_message_events[-1].created_at)
+    latest_user_message_at = _ensure_aware(user_message_event.created_at)
     last_summary_at = await _last_summary_at(session, window.id)
     if last_summary_at is not None and last_summary_at >= latest_user_message_at:
         return None
@@ -145,36 +159,52 @@ async def _schedule_after_latest_agent_user_message(
 
     pending_job.run_after = run_after
     pending_job.trigger_reason = AGENT_IDLE_REASON
-    pending_job.input_generation = await _agent_activity_generation(session, window.id)
+    pending_job.input_generation = window.agent_activity_generation
     await session.flush()
     return pending_job
 
 
-async def _terminal_input_events(session: AsyncSession, window_id: UUID) -> list[Event]:
-    return list(
-        await session.scalars(
-            select(Event)
-            .where(
-                Event.virtual_window_id == window_id,
-                Event.kind == TERMINAL_INPUT_COMMAND_KIND,
-            )
-            .order_by(Event.created_at, Event.id)
-        )
+async def _terminal_input_activity(
+    session: AsyncSession,
+    window: VirtualWindow,
+) -> _TerminalInputActivity | None:
+    filters = (
+        Event.client_id == window.client_id,
+        Event.virtual_window_id == window.id,
+        Event.kind == TERMINAL_INPUT_COMMAND_KIND,
+    )
+    total = await session.scalar(select(func.count()).select_from(Event).where(*filters))
+    if not total:
+        return None
+
+    first_event = await session.scalar(
+        select(Event)
+        .where(*filters)
+        .order_by(Event.created_at, Event.id)
+        .limit(1)
+    )
+    latest_event = await session.scalar(
+        select(Event)
+        .where(*filters)
+        .order_by(desc(Event.created_at), desc(Event.id))
+        .limit(1)
+    )
+    if first_event is None or latest_event is None:
+        return None
+
+    return _TerminalInputActivity(
+        first_event=first_event,
+        latest_event=latest_event,
+        total=int(total),
     )
 
 
-async def _agent_user_message_events(session: AsyncSession, window_id: UUID) -> list[Event]:
-    events = list(
-        await session.scalars(
-            select(Event)
-            .where(
-                Event.virtual_window_id == window_id,
-                Event.source_type.in_(agent_activity_source_types()),
-            )
-            .order_by(Event.created_at, Event.id)
-        )
-    )
-    return [event for event in events if _is_agent_user_message(event)]
+def _current_user_message_event(window: VirtualWindow, event: Event | None) -> Event | None:
+    if event is None or not _is_agent_user_message(event):
+        return None
+    if window.agent_activity_latest_event_id is not None and event.id != window.agent_activity_latest_event_id:
+        return None
+    return event
 
 
 def _is_agent_user_message(event: Event) -> bool:
@@ -201,10 +231,8 @@ def _payload_role(payload: dict) -> str | None:
     return None
 
 
-def _latest_command_agent(input_events: list[Event]) -> str | None:
-    if not input_events:
-        return None
-    command = input_events[-1].payload_json.get("command")
+def _command_agent(event: Event) -> str | None:
+    command = event.payload_json.get("command")
     return agent_from_command(command if isinstance(command, str) else None)
 
 
@@ -218,104 +246,127 @@ def _event_input_time(event: Event) -> datetime:
     return _ensure_aware(event.created_at)
 
 
-async def _current_agent_burst_start(session: AsyncSession, window_id: UUID) -> datetime | None:
-    activity_times = await _agent_activity_times(session, window_id)
-    if not activity_times:
-        return None
-
+def _touch_agent_activity_state(window: VirtualWindow, event: Event, activity_at: datetime) -> None:
+    current = _ensure_aware(activity_at)
+    latest = _ensure_aware(window.agent_activity_latest_at) if window.agent_activity_latest_at else None
+    if latest is not None and current < latest:
+        return
+    if latest is not None and current == latest and event.id == window.agent_activity_latest_event_id:
+        return
     gap = timedelta(seconds=RECENT_ACTIVE_WINDOW_SECONDS)
-    burst_start = activity_times[-1]
-    for index in range(len(activity_times) - 1, 0, -1):
-        current = activity_times[index]
-        previous = activity_times[index - 1]
-        if current - previous > gap:
-            burst_start = current
-            break
-    else:
-        burst_start = activity_times[0]
-    return burst_start
+    if latest is None or current - latest > gap:
+        window.agent_activity_burst_start_at = current
+    window.agent_activity_latest_at = current
+    if event.id is not None:
+        window.agent_activity_latest_event_id = event.id
+    window.agent_activity_generation += 1
 
 
-async def _was_idle_before(session: AsyncSession, window_id: UUID, moment: datetime) -> bool:
-    moment_aware = _ensure_aware(moment)
-    rows = await session.scalars(
-        select(Event.created_at).where(
-            Event.virtual_window_id == window_id,
-            or_(
-                Event.kind.in_(
-                    [
-                        TERMINAL_INPUT_COMMAND_KIND,
-                        TERMINAL_OUTPUT_KIND,
-                        TERMINAL_COMMAND_FINISHED_KIND,
-                        AGENT_WORK_PRESENCE_KIND,
-                    ]
-                ),
-                Event.source_type.in_(agent_activity_source_types()),
-            ),
-        )
-    )
-    prior_times = [
-        _ensure_aware(created_at)
-        for created_at in rows
-        if created_at is not None and _ensure_aware(created_at) < moment_aware
-    ]
-    if not prior_times:
+def _agent_activity_time_from_event(event: Event | None) -> datetime | None:
+    if event is None or event.created_at is None:
+        return None
+    if event.kind == AGENT_WORK_PRESENCE_KIND:
+        return _ensure_aware(event.created_at)
+    if event.source_type in agent_activity_source_types():
+        return _ensure_aware(event.created_at)
+    if event.kind == TERMINAL_INPUT_COMMAND_KIND and _command_agent(event) is not None:
+        return _event_input_time(event)
+    return None
+
+
+async def _was_idle_before(
+    session: AsyncSession,
+    window_id: UUID,
+    moment: datetime,
+    *,
+    current_event_id: UUID | None = None,
+) -> bool:
+    window = await session.get(VirtualWindow, window_id)
+    if window is None:
         return True
-    latest_prior = max(prior_times)
+    moment_aware = _ensure_aware(moment)
+    activity_times = await _event_activity_times_before(
+        session,
+        window,
+        moment_aware,
+        current_event_id=current_event_id,
+    )
+    if window.terminal_last_output_at is not None:
+        terminal_output_at = _ensure_aware(window.terminal_last_output_at)
+        if terminal_output_at < moment_aware:
+            activity_times.append(terminal_output_at)
+    if not activity_times:
+        return True
+    latest_prior = max(activity_times)
     return moment_aware - latest_prior > timedelta(seconds=RECENT_ACTIVE_WINDOW_SECONDS)
 
 
-async def _agent_activity_times(session: AsyncSession, window_id: UUID) -> list[datetime]:
-    rows = await session.execute(
-        select(Event.created_at)
-        .where(
-            Event.virtual_window_id == window_id,
-            or_(
-                Event.kind == AGENT_WORK_PRESENCE_KIND,
-                Event.source_type.in_(agent_activity_source_types()),
-            ),
-        )
-        .order_by(Event.created_at, Event.id)
-    )
+async def _event_activity_times_before(
+    session: AsyncSession,
+    window: VirtualWindow,
+    moment: datetime,
+    *,
+    current_event_id: UUID | None = None,
+) -> list[datetime]:
     times: list[datetime] = []
-    for (created_at,) in rows:
-        if created_at is None:
-            continue
-        aware = _ensure_aware(created_at)
-        if not times or aware != times[-1]:
-            times.append(aware)
-
-    command_events = list(
-        await session.scalars(
-            select(Event)
-            .where(
-                Event.virtual_window_id == window_id,
-                Event.kind == TERMINAL_INPUT_COMMAND_KIND,
-            )
-            .order_by(Event.created_at, Event.id)
+    for kind in (
+        TERMINAL_INPUT_COMMAND_KIND,
+        TERMINAL_COMMAND_FINISHED_KIND,
+        AGENT_WORK_PRESENCE_KIND,
+    ):
+        filters = [
+            Event.client_id == window.client_id,
+            Event.virtual_window_id == window.id,
+            Event.kind == kind,
+            Event.created_at < moment,
+        ]
+        if current_event_id is not None:
+            filters.append(Event.id != current_event_id)
+        created_at = await session.scalar(
+            select(Event.created_at)
+            .where(*filters)
+            .order_by(desc(Event.created_at), desc(Event.id))
+            .limit(1)
+        )
+        if created_at is not None:
+            times.append(_ensure_aware(created_at))
+    times.extend(
+        await _agent_activity_times_before(
+            session,
+            window,
+            moment,
+            current_event_id=current_event_id,
         )
     )
-    for event in command_events:
-        command = event.payload_json.get("command")
-        if agent_from_command(command if isinstance(command, str) else None) is None:
-            continue
-        aware = _ensure_aware(event.created_at)
-        if not times or aware != times[-1]:
-            times.append(aware)
+    return sorted(set(times))
 
-    times.sort()
+
+async def _agent_activity_times_before(
+    session: AsyncSession,
+    window: VirtualWindow,
+    moment: datetime,
+    *,
+    current_event_id: UUID | None = None,
+) -> list[datetime]:
+    times: list[datetime] = []
+    for source_type in agent_activity_source_types():
+        filters = [
+            Event.client_id == window.client_id,
+            Event.virtual_window_id == window.id,
+            Event.source_type == source_type,
+            Event.created_at < moment,
+        ]
+        if current_event_id is not None:
+            filters.append(Event.id != current_event_id)
+        created_at = await session.scalar(
+            select(Event.created_at)
+            .where(*filters)
+            .order_by(desc(Event.created_at), desc(Event.id))
+            .limit(1)
+        )
+        if created_at is not None:
+            times.append(_ensure_aware(created_at))
     return times
-
-
-async def _last_agent_activity_at(session: AsyncSession, window_id: UUID) -> datetime | None:
-    times = await _agent_activity_times(session, window_id)
-    if not times:
-        return None
-    return times[-1]
-
-
-async def _agent_activity_generation(session: AsyncSession, window_id: UUID) -> int:
-    return len(await _agent_activity_times(session, window_id))
 
 
 async def _last_summary_at(session: AsyncSession, window_id: UUID) -> datetime | None:

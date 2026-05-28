@@ -2,12 +2,14 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.model_base import Base
 from app.models import Event, EventSourceType, VirtualWindow, WindowStatus
 from app.services.terminal_work_status import (
     load_last_agent_task_completed_at_by_window,
+    load_work_statuses,
     load_work_status,
     work_status_from_activity,
 )
@@ -21,6 +23,24 @@ async def db_session():
 
     async with AsyncSession(engine, expire_on_commit=False) as session:
         yield session
+
+    await engine.dispose()
+
+
+@pytest.fixture
+async def counted_db_session():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    statements: list[str] = []
+
+    @event.listens_for(engine.sync_engine, "before_cursor_execute")
+    def count_statement(_connection, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        yield session, statements
 
     await engine.dispose()
 
@@ -80,6 +100,54 @@ def test_work_status_from_activity_returns_recent_active_for_recent_input_only()
 
 
 @pytest.mark.asyncio
+async def test_load_work_statuses_batches_latest_activity_queries(counted_db_session) -> None:
+    db_session, statements = counted_db_session
+    now = datetime(2026, 5, 22, 12, 0, tzinfo=timezone.utc)
+    client_id = uuid4()
+    windows = [
+        VirtualWindow(id=uuid4(), client_id=client_id, title=f"Terminal {index}", status=WindowStatus.active)
+        for index in range(3)
+    ]
+    db_session.add_all(windows)
+    await db_session.flush()
+    windows[0].terminal_last_output_at = now - timedelta(seconds=15)
+    db_session.add_all(
+        [
+            Event(
+                client_id=client_id,
+                source_type=EventSourceType.agent_tool_record,
+                source_id="codex-session",
+                kind="assistant_message",
+                virtual_window_id=windows[1].id,
+                payload_json={"provider": "codex", "role": "assistant", "content": "working"},
+                fingerprint="agent-tool-record-latest",
+                created_at=now - timedelta(seconds=10),
+            ),
+        ]
+    )
+    await db_session.flush()
+    statements.clear()
+
+    statuses = await load_work_statuses(
+        db_session,
+        client_id,
+        [window.id for window in windows],
+        now=now,
+    )
+
+    assert statuses[windows[0].id].state == "RECENT_ACTIVE"
+    assert statuses[windows[1].id].state == "WORKING"
+    latest_activity_queries = [
+        statement
+        for statement in statements
+        if "events.created_at" in statement
+        and "virtual_windows" in statement
+        and "SELECT virtual_windows.id" in statement
+    ]
+    assert len(latest_activity_queries) <= 2
+
+
+@pytest.mark.asyncio
 async def test_load_work_status_treats_agent_tool_records_as_working_activity(db_session) -> None:
     now = datetime(2026, 5, 22, 12, 0, tzinfo=timezone.utc)
     client_id = uuid4()
@@ -108,24 +176,13 @@ async def test_load_work_status_treats_agent_tool_records_as_working_activity(db
 
 
 @pytest.mark.asyncio
-async def test_load_work_status_ignores_non_agent_terminal_output(db_session) -> None:
+async def test_load_work_status_uses_lightweight_terminal_output_activity(db_session) -> None:
     now = datetime(2026, 5, 22, 12, 0, tzinfo=timezone.utc)
     client_id = uuid4()
     window = VirtualWindow(id=uuid4(), client_id=client_id, title="Terminal", status=WindowStatus.active)
     db_session.add(window)
     await db_session.flush()
-    db_session.add(
-        Event(
-            client_id=client_id,
-            source_type=EventSourceType.terminal,
-            source_id=str(window.id),
-            kind="terminal_output",
-            virtual_window_id=window.id,
-            payload_json={"text": "prompt\n"},
-            fingerprint="terminal-output-only",
-            created_at=now - timedelta(seconds=5),
-        )
-    )
+    window.terminal_last_output_at = now - timedelta(seconds=5)
     await db_session.flush()
 
     status = await load_work_status(db_session, client_id, window.id, now=now)

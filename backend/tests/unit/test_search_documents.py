@@ -17,6 +17,7 @@ from app.services.search_index import (
     ensure_indexes,
     index_ai_event,
     index_terminal_chunk,
+    index_terminal_chunk_without_event,
     search_all,
     summary_doc,
     terminal_chunk_doc,
@@ -173,6 +174,29 @@ async def test_index_terminal_chunk_passes_client_and_deterministic_document_id(
             },
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_index_terminal_chunk_without_event_uses_stable_prefix_and_empty_source_events():
+    client = FakeIndexClient()
+    client_id = uuid4()
+    window_id = uuid4()
+
+    await index_terminal_chunk_without_event(
+        client,
+        client_id=client_id,
+        window_id=window_id,
+        text="screen bytes",
+    )
+
+    indexed = client.indexed_documents[0]
+    assert str(indexed["id"]).startswith(f"terminal-chunk:{window_id}:")
+    assert indexed["document"] == {
+        "client_id": str(client_id),
+        "virtual_window_id": str(window_id),
+        "text": "screen bytes",
+        "source_event_ids": [],
+    }
 
 
 @pytest.mark.asyncio

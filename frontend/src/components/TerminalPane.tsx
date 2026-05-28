@@ -29,6 +29,18 @@ type TerminalPaneProps = {
   onQuickInputOpenChange?: (open: boolean) => void;
 };
 
+type TerminalWriteTestHook = (data: string | Uint8Array, parsedAt: number) => void;
+type TerminalInteractiveOutputTestHook = (data: string | Uint8Array, receivedAt: number) => void;
+type TerminalDataTestHook = (data: string, onDataAt: number) => void;
+
+declare global {
+  interface Window {
+    __WEB_TERMINAL_TEST_ON_TERMINAL_WRITE__?: TerminalWriteTestHook;
+    __WEB_TERMINAL_TEST_ON_INTERACTIVE_OUTPUT__?: TerminalInteractiveOutputTestHook;
+    __WEB_TERMINAL_TEST_ON_TERMINAL_DATA__?: TerminalDataTestHook;
+  }
+}
+
 export type TerminalPaneHandle = {
   focus: () => void;
   refit: () => void;
@@ -67,14 +79,15 @@ const UNDERSIZED_REFIT_INTERVAL_MS = 2000;
 const OUTPUT_REFIT_DEBOUNCE_MS = 50;
 const WRITE_PARSED_REFIT_DEBOUNCE_MS = 100;
 const RESIZE_OBSERVER_DEBOUNCE_MS = 50;
-const TERMINAL_OUTPUT_FLUSH_CHARACTERS = 4 * 1024;
-const OUTPUT_FLUSH_DEFER_AFTER_INPUT_MS = 32;
+const TERMINAL_OUTPUT_FLUSH_CHARACTERS = 128 * 1024;
 const BACKGROUND_OUTPUT_FLUSH_DELAY_MS = 250;
 const BACKGROUND_OUTPUT_FLUSH_CHARACTERS = 1024;
 const LOW_PRIORITY_SOCKET_CLOSE_DELAY_MS = 1500;
 const VIEW_PRIORITY_RECONCILE_INTERVAL_MS = 750;
+const INPUT_VIEW_PRIORITY_CLAIM_INTERVAL_MS = 250;
 const PENDING_INPUT_QUEUE_MAX_SIZE = 64;
 const QUICK_INPUT_DRAFT_STORAGE_PREFIX = "web-terminal-acp:terminal-quick-input:";
+
 type TerminalStatusMessage = {
   type?: unknown;
   status?: unknown;
@@ -137,6 +150,10 @@ function clearQuickInputDraft(storageKey: string): void {
   } catch {
     return;
   }
+}
+
+function terminalOutputByteLength(data: string | Uint8Array): number {
+  return typeof data === "string" ? new TextEncoder().encode(data).byteLength : data.byteLength;
 }
 
 function isQuickInputShortcut(event: KeyboardEvent): boolean {
@@ -454,7 +471,9 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     let reconnectAttempt = 0;
     let reconnectTimer: number | null = null;
     let lowPriorityCloseTimer: number | null = null;
+    let inputPriorityClaimTimer: number | null = null;
     let lastSentResize: { cols: number; rows: number } | null = null;
+    let lastInputPriorityClaimedAt = 0;
     const pendingInputs: string[] = [];
 
     const terminalViewLease = { viewId: viewIdRef.current, clientId, windowId: initialWindowId };
@@ -471,6 +490,24 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     };
     claimActiveTerminalViewRef.current = claimCurrentTerminalView;
     claimVisibleCurrentTerminalView();
+
+    const scheduleInputPriorityClaim = () => {
+      if (inputPriorityClaimTimer !== null) {
+        return;
+      }
+      inputPriorityClaimTimer = window.setTimeout(() => {
+        inputPriorityClaimTimer = null;
+        if (!isActive()) {
+          return;
+        }
+        const now = Date.now();
+        if (now - lastInputPriorityClaimedAt < INPUT_VIEW_PRIORITY_CLAIM_INTERVAL_MS) {
+          return;
+        }
+        lastInputPriorityClaimedAt = now;
+        claimCurrentTerminalView();
+      }, INPUT_VIEW_PRIORITY_CLAIM_INTERVAL_MS);
+    };
 
     const focusCurrentTerminal = () => {
       const stage = stageRef.current;
@@ -499,17 +536,6 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
       });
     };
 
-    terminal.attachCustomKeyEventHandler((event) => {
-      if (event.key !== "Escape") {
-        return true;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-      restoreTerminalFocusAfterEscape();
-      return true;
-    });
-
     const clearFitUntilFilled = () => {
       if (fitUntilFilledTimer !== null) {
         window.clearTimeout(fitUntilFilledTimer);
@@ -518,8 +544,16 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     };
 
     const outputBuffer = createTerminalOutputBuffer({
-      write: (data) => {
-        terminal.write(data);
+      write: (data, onWrite) => {
+        const writeHook = window.__WEB_TERMINAL_TEST_ON_TERMINAL_WRITE__;
+        if (writeHook !== undefined) {
+          terminal.write(data, () => {
+            writeHook(data, performance.now());
+            onWrite?.();
+          });
+        } else {
+          terminal.write(data, onWrite);
+        }
         if (outputRefitTimer !== null) {
           return;
         }
@@ -571,13 +605,14 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
       worker.postMessage({ type: "json", data: JSON.stringify(payload) });
     };
 
+    const inputEncoder = new TextEncoder();
     const sendInputNow = (data: string) => {
       const worker = socketWorkerRef.current;
       if (worker === null || !socketOpenRef.current || connectionStatusRef.current !== "connected") {
         return false;
       }
 
-      const encoded = new TextEncoder().encode(data);
+      const encoded = inputEncoder.encode(data);
       worker.postMessage({ type: "input", data: encoded }, [encoded.buffer]);
       return true;
     };
@@ -604,6 +639,17 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
       reconcileViewPriority();
     };
     sendTerminalInputRef.current = sendOrQueueInput;
+
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.key !== "Escape") {
+        return true;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      restoreTerminalFocusAfterEscape();
+      return true;
+    });
 
     const sendResize = () => {
       const nextResize = { cols: terminal.cols, rows: terminal.rows };
@@ -775,17 +821,49 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
           }
           return;
         }
-        if (event.data.type === "output" && event.data.data instanceof Uint8Array) {
+        if (
+          (event.data.type === "output" || event.data.type === "interactive-output")
+          && event.data.data instanceof Uint8Array
+        ) {
           if (connectionStatusRef.current !== "connected") {
             reconnectAttempt = 0;
             updateConnectionStatus("connected");
             scheduleFitUntilFilled();
           }
           flushPendingInputs();
-          outputBuffer.enqueue(event.data.data);
+          const serverOutputBytes = event.data.data.byteLength;
+          const acknowledgeServerOutput = () => {
+            worker.postMessage({ type: "server-output-ack", bytes: serverOutputBytes });
+          };
+          if (event.data.type === "interactive-output") {
+            window.__WEB_TERMINAL_TEST_ON_INTERACTIVE_OUTPUT__?.(event.data.data, performance.now());
+            let outputAcknowledged = false;
+            const acknowledgeOutput = () => {
+              if (outputAcknowledged) {
+                return;
+              }
+              outputAcknowledged = true;
+              worker.postMessage({ type: "output-ack" });
+            };
+            const wroteImmediately = outputBuffer.enqueueInteractive(event.data.data, {
+              onWrite: () => {
+                acknowledgeServerOutput();
+                acknowledgeOutput();
+              },
+            });
+            if (!wroteImmediately) {
+              acknowledgeOutput();
+            }
+          } else {
+            outputBuffer.enqueue(event.data.data, { onWrite: acknowledgeServerOutput });
+            worker.postMessage({ type: "output-ack" });
+          }
           return;
         }
-        if (event.data.type === "output" && typeof event.data.data === "string") {
+        if (
+          (event.data.type === "output" || event.data.type === "interactive-output")
+          && typeof event.data.data === "string"
+        ) {
           const data = event.data.data;
           const statusMessage = parseTerminalStatusMessage(data);
           if (statusMessage !== null) {
@@ -796,6 +874,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
             ) {
               activeWindowIdRef.current = statusMessage.window_id;
               onTerminalSelectionRef.current?.(statusMessage.window_id);
+              worker.postMessage({ type: "output-ack" });
               return;
             }
             if (statusMessage.status === "connected") {
@@ -815,6 +894,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
             } else if (statusMessage.status === "reconnecting") {
               updateConnectionStatus("reconnecting");
             }
+            worker.postMessage({ type: "output-ack" });
             return;
           }
 
@@ -824,7 +904,33 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
             scheduleFitUntilFilled();
           }
           flushPendingInputs();
-          outputBuffer.enqueue(data);
+          const serverOutputBytes = terminalOutputByteLength(data);
+          const acknowledgeServerOutput = () => {
+            worker.postMessage({ type: "server-output-ack", bytes: serverOutputBytes });
+          };
+          if (event.data.type === "interactive-output") {
+            window.__WEB_TERMINAL_TEST_ON_INTERACTIVE_OUTPUT__?.(data, performance.now());
+            let outputAcknowledged = false;
+            const acknowledgeOutput = () => {
+              if (outputAcknowledged) {
+                return;
+              }
+              outputAcknowledged = true;
+              worker.postMessage({ type: "output-ack" });
+            };
+            const wroteImmediately = outputBuffer.enqueueInteractive(data, {
+              onWrite: () => {
+                acknowledgeServerOutput();
+                acknowledgeOutput();
+              },
+            });
+            if (!wroteImmediately) {
+              acknowledgeOutput();
+            }
+          } else {
+            outputBuffer.enqueue(data, { onWrite: acknowledgeServerOutput });
+            worker.postMessage({ type: "output-ack" });
+          }
           return;
         }
         if (event.data.type === "error") {
@@ -894,16 +1000,9 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     );
 
     const disposable = terminal.onData((data) => {
-      claimCurrentTerminalView();
-      reconcileViewPriority();
-      outputBuffer.deferFor(OUTPUT_FLUSH_DEFER_AFTER_INPUT_MS);
-      const worker = socketWorkerRef.current;
-      if (worker === null || !socketOpenRef.current || connectionStatusRef.current !== "connected") {
-        return;
-      }
-
-      const encoded = new TextEncoder().encode(data);
-      worker.postMessage({ type: "input", data: encoded }, [encoded.buffer]);
+      window.__WEB_TERMINAL_TEST_ON_TERMINAL_DATA__?.(data, performance.now());
+      sendOrQueueInput(data);
+      scheduleInputPriorityClaim();
     });
 
     let resizeDebounceTimer: number | null = null;
@@ -1024,6 +1123,9 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
       clearReconnectTimer();
       clearLowPriorityCloseTimer();
       clearFitUntilFilled();
+      if (inputPriorityClaimTimer !== null) {
+        window.clearTimeout(inputPriorityClaimTimer);
+      }
       if (outputRefitTimer !== null) {
         window.clearTimeout(outputRefitTimer);
       }

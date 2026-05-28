@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 import json
 import logging
 from pathlib import Path
+from time import monotonic
 from typing import Any
 from uuid import UUID
 
@@ -31,6 +32,12 @@ DEFAULT_READ_MAX_EVENTS = 25
 DEFAULT_READ_MAX_BYTES = 1024 * 1024
 DEFAULT_INDEX_BATCH_SIZE = 25
 DEFAULT_MAX_CHANGED_FILES_PER_PASS = 1
+DEFAULT_KNOWN_FILE_SCAN_LIMIT = 128
+DEFAULT_DISCOVERY_INTERVAL_SECONDS = 300.0
+
+
+async def _run_blocking(func, *args, **kwargs):
+    return await asyncio.to_thread(func, *args, **kwargs)
 
 
 def iter_jsonl_files(root: Path) -> list[Path]:
@@ -47,6 +54,54 @@ def initial_jsonl_offsets(root: Path) -> dict[Path, int]:
         except FileNotFoundError:
             continue
     return offsets
+
+
+def _changed_jsonl_offsets(
+    root: Path,
+    offsets: dict[Path, int],
+    *,
+    max_changed_files: int,
+    paths: list[Path] | None = None,
+    scan_cursor: int = 0,
+    max_files: int | None = None,
+) -> tuple[list[tuple[Path, int]], list[Path], int]:
+    discovered_paths = iter_jsonl_files(root) if paths is None else list(paths)
+    if not discovered_paths:
+        return [], discovered_paths, 0
+
+    total_paths = len(discovered_paths)
+    scan_count = total_paths if max_files is None else min(max_files, total_paths)
+    cursor = scan_cursor % total_paths
+    changed: list[tuple[Path, int]] = []
+    missing_paths: set[Path] = set()
+    scanned = 0
+    while scanned < scan_count:
+        path = discovered_paths[cursor]
+        offset = offsets.get(path, 0)
+        try:
+            size = path.stat().st_size
+        except FileNotFoundError:
+            offsets.pop(path, None)
+            missing_paths.add(path)
+            cursor = (cursor + 1) % total_paths
+            scanned += 1
+            continue
+        if size < offset:
+            offset = 0
+        if size != offset:
+            changed.append((path, offset))
+            if len(changed) >= max_changed_files:
+                cursor = (cursor + 1) % total_paths
+                if missing_paths:
+                    discovered_paths = [candidate for candidate in discovered_paths if candidate not in missing_paths]
+                    cursor = cursor % len(discovered_paths) if discovered_paths else 0
+                return changed, discovered_paths, cursor
+        cursor = (cursor + 1) % total_paths
+        scanned += 1
+    if missing_paths:
+        discovered_paths = [candidate for candidate in discovered_paths if candidate not in missing_paths]
+        cursor = cursor % len(discovered_paths) if discovered_paths else 0
+    return changed, discovered_paths, cursor
 
 
 def _skip_overlong_jsonl_line(file, line_start: int, first_chunk: bytes, max_line_bytes: int) -> int | None:
@@ -169,7 +224,13 @@ async def ingest_claude_jsonl_file(
     indexing is deliberately performed after the caller commits persisted rows.
     """
     _ = es_client
-    events, next_offset = read_new_jsonl_events(path, offset, max_events=max_events, max_bytes=max_bytes)
+    events, next_offset = await _run_blocking(
+        read_new_jsonl_events,
+        path,
+        offset,
+        max_events=max_events,
+        max_bytes=max_bytes,
+    )
     local_client = await ensure_local_client(session)
 
     for payload, line_offset in events:
@@ -197,7 +258,7 @@ async def ingest_claude_jsonl_file(
         if row.virtual_window_id is not None:
             window = await session.get(VirtualWindow, row.virtual_window_id)
             if window is not None:
-                await schedule_summary_after_agent_activity(session, window)
+                await schedule_summary_after_agent_activity(session, window, event=row)
 
     await session.flush()
     return next_offset
@@ -259,24 +320,24 @@ async def poll_claude_jsonl_directory_once(
     max_events: int = DEFAULT_READ_MAX_EVENTS,
     max_bytes: int = DEFAULT_READ_MAX_BYTES,
     max_changed_files: int = DEFAULT_MAX_CHANGED_FILES_PER_PASS,
-) -> None:
+    known_paths: list[Path] | None = None,
+    scan_cursor: int = 0,
+    max_files: int | None = None,
+    discover_new_files: bool = True,
+) -> int:
     """Run one bounded Claude JSONL poll pass for tests and scheduled loops."""
-    changed_files = 0
-    for path in iter_jsonl_files(root):
-        offset = offsets.get(path, 0)
-        try:
-            size = path.stat().st_size
-        except FileNotFoundError:
-            offsets.pop(path, None)
-            continue
-        if size < offset:
-            offset = 0
-        if size == offset:
-            continue
-        if changed_files >= max_changed_files:
-            break
-        changed_files += 1
-
+    changed_files, discovered_paths, next_scan_cursor = await _run_blocking(
+        _changed_jsonl_offsets,
+        root,
+        offsets,
+        max_changed_files=max_changed_files,
+        paths=None if discover_new_files or known_paths is None else known_paths,
+        scan_cursor=scan_cursor,
+        max_files=max_files,
+    )
+    if known_paths is not None:
+        known_paths[:] = discovered_paths
+    for path, offset in changed_files:
         try:
             async with session_factory() as session:
                 local_client = await ensure_local_client(session)
@@ -290,7 +351,7 @@ async def poll_claude_jsonl_directory_once(
                 await session.commit()
                 if ui_event_hub is not None and offsets[path] != offset:
                     await ui_event_hub.publish_invalidation(
-                        ["agent_record", "window", "tree", "search"],
+                        ["agent_record", "window", "search"],
                         client_id=local_client.id,
                         reason="claude_jsonl_ingested",
                     )
@@ -299,7 +360,7 @@ async def poll_claude_jsonl_directory_once(
         await asyncio.sleep(0)
 
     if es_client is None:
-        return
+        return next_scan_cursor
 
     try:
         async with session_factory() as session:
@@ -312,6 +373,7 @@ async def poll_claude_jsonl_directory_once(
                 )
     except Exception:
         logger.exception("Failed to reconcile Claude JSONL search index")
+    return next_scan_cursor
 
 
 async def poll_claude_jsonl_directory(
@@ -321,17 +383,28 @@ async def poll_claude_jsonl_directory(
     es_client: AsyncElasticsearch | None = None,
     ui_event_hub: UiEventHub | None = None,
 ) -> None:
-    offsets = initial_jsonl_offsets(root)
+    offsets = await _run_blocking(initial_jsonl_offsets, root)
+    known_paths = sorted(offsets)
+    scan_cursor = 0
+    next_discovery_at = monotonic() + DEFAULT_DISCOVERY_INTERVAL_SECONDS
 
     while True:
         try:
-            await poll_claude_jsonl_directory_once(
+            now = monotonic()
+            discover_new_files = now >= next_discovery_at or not known_paths
+            scan_cursor = await poll_claude_jsonl_directory_once(
                 session_factory,
                 root,
                 offsets,
                 es_client=es_client,
                 ui_event_hub=ui_event_hub,
+                known_paths=known_paths,
+                scan_cursor=scan_cursor,
+                max_files=DEFAULT_KNOWN_FILE_SCAN_LIMIT,
+                discover_new_files=discover_new_files,
             )
+            if discover_new_files:
+                next_discovery_at = now + DEFAULT_DISCOVERY_INTERVAL_SECONDS
         except Exception:
             logger.exception("Failed to poll Claude JSONL directory", extra={"root": str(root)})
         await asyncio.sleep(interval_seconds)

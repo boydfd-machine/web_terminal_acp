@@ -60,7 +60,7 @@ class _NoopIdleSupervisor:
     def register_window(self, window_id: UUID, project_path: str | None) -> None:
         return None
 
-    async def resume_window(self, window_id: UUID) -> None:
+    async def resume_window(self, window_id: UUID, *, allow_latest_session: bool = False) -> None:
         return None
 
 
@@ -70,6 +70,25 @@ class _NoopAgentToolWatcher:
 
     def remove_window(self, window_id: UUID) -> None:
         return None
+
+
+class _ExistingRuntime:
+    async def has_window(
+        self,
+        remote_window_id: str,
+        *,
+        remote_session_id: str | None = None,
+    ) -> bool:
+        return True
+
+    async def recreate_window(
+        self,
+        window_id: UUID,
+        *,
+        cwd: str | None = None,
+        shell_command: str | None = None,
+    ) -> ClientRuntimeWindow:
+        raise AssertionError("existing runtime window should not be recreated")
 
 
 def test_load_populates_required_fields_defaults_and_https_websocket_url(tmp_path: Path) -> None:
@@ -626,7 +645,7 @@ async def test_terminal_attach_marks_initial_pty_output_as_snapshot() -> None:
             name="edge-client",
             install_path=Path("/opt/web-terminal-acp-client"),
         ),
-        object(),
+        _ExistingRuntime(),
         FakeTerminalMultiplexer(),
         _NoopIdleSupervisor(),
         _NoopAgentToolWatcher(),
@@ -679,7 +698,7 @@ async def test_terminal_attach_keeps_later_pty_output_recordable() -> None:
             name="edge-client",
             install_path=Path("/opt/web-terminal-acp-client"),
         ),
-        object(),
+        _ExistingRuntime(),
         FakeTerminalMultiplexer(),
         _NoopIdleSupervisor(),
         _NoopAgentToolWatcher(),
@@ -738,7 +757,7 @@ async def test_silent_attach_snapshot_does_not_mark_later_pty_output_as_snapshot
             name="edge-client",
             install_path=Path("/opt/web-terminal-acp-client"),
         ),
-        object(),
+        _ExistingRuntime(),
         FakeTerminalMultiplexer(),
         _NoopIdleSupervisor(),
         _NoopAgentToolWatcher(),
@@ -803,7 +822,7 @@ async def test_terminal_detach_cancels_pending_attach_snapshot() -> None:
         control_writer,
         bulk_writer,
         config,
-        object(),
+        _ExistingRuntime(),
         terminal,
         _NoopIdleSupervisor(),
         _NoopAgentToolWatcher(),
@@ -823,7 +842,7 @@ async def test_terminal_detach_cancels_pending_attach_snapshot() -> None:
         control_writer,
         bulk_writer,
         config,
-        object(),
+        _ExistingRuntime(),
         terminal,
         _NoopIdleSupervisor(),
         _NoopAgentToolWatcher(),

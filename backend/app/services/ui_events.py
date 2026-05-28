@@ -6,8 +6,27 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from uuid import UUID
 
+from app.services.polling_response_cache import (
+    expire_polling_response_cache,
+    invalidate_polling_response_cache,
+)
+from app.services.window_activity_api import clear_client_windows_activity_cache
+
 UiEventSender = Callable[[str], Awaitable[None]]
 UiResource = str
+_EXPIRE_ONLY_REASONS = {
+    "agent_work_presence",
+    "ai_event",
+    "claude_jsonl_ingested",
+    "client_heartbeat",
+    "client_hello",
+    "client_inventory_seen",
+    "client_seen",
+    "git_worktree",
+    "terminal_command",
+    "terminal_output",
+    "trace_ingested",
+}
 
 
 @dataclass
@@ -45,6 +64,12 @@ class UiEventHub:
         normalized_resources = _normalize_resources(resources)
         if not normalized_resources:
             return
+        if reason in _EXPIRE_ONLY_REASONS:
+            expire_polling_response_cache(normalized_resources, client_id=client_id)
+        else:
+            invalidate_polling_response_cache(normalized_resources, client_id=client_id)
+            if {"tree", "window"} & set(normalized_resources):
+                clear_client_windows_activity_cache(client_id)
         await self._publish(
             {
                 "type": "invalidate",

@@ -182,6 +182,7 @@ type MockApiOptions = {
   slowTreeMs?: number;
   slowSocketMs?: number;
   tree?: ReturnType<typeof testTree>;
+  onRequest?: (url: URL) => void;
   onTerminalMessage?: (message: string | Buffer, ws: MockTerminalSocket) => void;
   afterTerminalConnected?: (ws: MockTerminalSocket) => void;
 };
@@ -291,6 +292,7 @@ async function startMockApiServer(options?: MockApiOptions): Promise<{ baseUrl: 
   const server: Server = createServer((request, response) => {
     void (async () => {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      options?.onRequest?.(url);
       if (request.method === "OPTIONS") {
         response.writeHead(204, corsHeaders());
         response.end();
@@ -370,17 +372,17 @@ async function startMockApiServer(options?: MockApiOptions): Promise<{ baseUrl: 
       }
       for (const message of decoded.messages) {
         options?.onTerminalMessage?.(message, ws);
-      if (typeof message !== "string") {
+        if (typeof message !== "string") {
           continue;
-      }
-      try {
-        const parsed = JSON.parse(message) as { type?: unknown };
-        if (parsed.type === "resize") {
-          ws.send(terminalOutput());
         }
-      } catch {
+        try {
+          const parsed = JSON.parse(message) as { type?: unknown };
+          if (parsed.type === "resize") {
+            ws.send(terminalOutput());
+          }
+        } catch {
           continue;
-      }
+        }
       }
     });
     setTimeout(() => {
@@ -434,6 +436,24 @@ test.describe("terminal viewport fit", () => {
     expect(metrics.renderedHeight).toBeGreaterThan(300);
     expect(metrics.visibleText).toContain("top marker");
     expect(metrics.visibleText).toContain("fit-row-40");
+  });
+
+  test("does not duplicate activity polling on initial terminal load", async ({ page }) => {
+    const activityQueries: string[] = [];
+    await mockApi(page, {
+      onRequest: (url) => {
+        if (url.pathname.endsWith("/windows/activity")) {
+          activityQueries.push(url.searchParams.toString());
+        }
+      },
+    });
+
+    await page.goto(terminalPath(), { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".xterm-rows", { timeout: 30_000 });
+    await waitForFilledTerminal(page, 0.9, 60_000, "fit-row-40");
+
+    expect(activityQueries).toHaveLength(1);
+    expect(activityQueries[0]).toBe("include_runtime_tags=true");
   });
 
   test("Alt+L locates the selected terminal in the sidebar list", async ({ page }) => {
@@ -569,6 +589,202 @@ test.describe("terminal viewport fit", () => {
     expect(metrics.visibleText).toContain("fit-row-40");
   });
 
+  test("stays responsive when mobile quick input squeezes virtual keys", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript(() => {
+      const visualViewportListeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
+      const dispatchVisualViewportEvent = (type: string) => {
+        const event = new Event(type);
+        for (const listener of visualViewportListeners.get(type) ?? []) {
+          if (typeof listener === "function") {
+            listener.call(window.visualViewport, event);
+          } else {
+            listener.handleEvent(event);
+          }
+        }
+      };
+      const visualViewport = {
+        width: 390,
+        height: 844,
+        offsetLeft: 0,
+        offsetTop: 0,
+        pageLeft: 0,
+        pageTop: 0,
+        scale: 1,
+        addEventListener: (type: string, listener: EventListenerOrEventListenerObject | null) => {
+          if (listener === null) {
+            return;
+          }
+          const listeners = visualViewportListeners.get(type) ?? new Set<EventListenerOrEventListenerObject>();
+          listeners.add(listener);
+          visualViewportListeners.set(type, listeners);
+        },
+        removeEventListener: (type: string, listener: EventListenerOrEventListenerObject | null) => {
+          if (listener === null) {
+            return;
+          }
+          visualViewportListeners.get(type)?.delete(listener);
+        },
+        dispatchEvent: (event: Event) => {
+          dispatchVisualViewportEvent(event.type);
+          return true;
+        },
+      };
+      Object.defineProperty(window, "visualViewport", {
+        value: visualViewport,
+        configurable: true,
+      });
+      Object.defineProperty(window, "__setVisualViewportHeight", {
+        value: (height: number) => {
+          visualViewport.height = height;
+          dispatchVisualViewportEvent("resize");
+        },
+        configurable: true,
+      });
+
+      const state = {
+        resizeObserverCallbacks: 0,
+        renderResizeObserverCallbacks: 0,
+        resizeMessages: 0,
+        maxTimerDelayMs: 0,
+        lastTickAt: performance.now(),
+      };
+      Object.defineProperty(window, "__mobileKeyboardSqueeze", {
+        value: state,
+        configurable: true,
+      });
+
+      window.setInterval(() => {
+        const now = performance.now();
+        state.maxTimerDelayMs = Math.max(state.maxTimerDelayMs, now - state.lastTickAt);
+        state.lastTickAt = now;
+      }, 50);
+
+      const NativeResizeObserver = window.ResizeObserver;
+      class InstrumentedResizeObserver extends NativeResizeObserver {
+        constructor(callback: ResizeObserverCallback) {
+          super((entries, observer) => {
+            state.resizeObserverCallbacks += 1;
+            if (entries.some((entry) => {
+              const target = entry.target;
+              return target instanceof HTMLElement
+                && (
+                  target.matches(".xterm-screen canvas")
+                  || target.matches(".xterm-rows")
+                );
+            })) {
+              state.renderResizeObserverCallbacks += 1;
+            }
+            callback(entries, observer);
+          });
+        }
+      }
+      Object.defineProperty(window, "ResizeObserver", {
+        value: InstrumentedResizeObserver,
+        configurable: true,
+      });
+
+      const originalPostMessage = Worker.prototype.postMessage;
+      Worker.prototype.postMessage = function postMessage(message: unknown, transfer?: Transferable[]) {
+        if (
+          typeof message === "object"
+          && message !== null
+          && "type" in message
+          && (message as { type?: unknown }).type === "json"
+        ) {
+          const rawData = (message as { data?: unknown }).data;
+          if (typeof rawData === "string") {
+            try {
+              const parsed = JSON.parse(rawData) as { type?: unknown };
+              if (parsed.type === "resize") {
+                state.resizeMessages += 1;
+              }
+            } catch {
+              // Ignore non-JSON worker payloads.
+            }
+          }
+        }
+        return originalPostMessage.call(this, message, transfer ?? []);
+      };
+    });
+    await mockApi(page);
+
+    await page.goto(terminalPath(), { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".mobile-terminal-active .xterm-rows", { timeout: 30_000 });
+    await waitForFilledTerminal(page, 0.9, 60_000, "fit-row-40");
+
+    await page.locator(".terminal-menu-button").evaluate((button) => {
+      if (!(button instanceof HTMLButtonElement)) {
+        throw new Error("terminal menu button is not a button");
+      }
+      button.click();
+    });
+    await page.getByRole("menuitem", { name: /Virtual keys/ }).click();
+    await expect(page.locator(".terminal-virtual-keys")).toBeVisible();
+
+    await page.keyboard.press("Alt+I");
+    const quickInput = page.getByLabel("Quick terminal input");
+    await expect(quickInput).toBeFocused();
+
+    const beforeSqueeze = await page.evaluate(() => ({
+      ...(window as Window & {
+        __mobileKeyboardSqueeze?: {
+          resizeObserverCallbacks: number;
+          renderResizeObserverCallbacks: number;
+          resizeMessages: number;
+          maxTimerDelayMs: number;
+          lastTickAt: number;
+        };
+      }).__mobileKeyboardSqueeze,
+    }));
+    await page.evaluate(() => {
+      const state = (window as Window & {
+        __mobileKeyboardSqueeze?: {
+          maxTimerDelayMs: number;
+          lastTickAt: number;
+        };
+      }).__mobileKeyboardSqueeze;
+      if (state !== undefined) {
+        state.maxTimerDelayMs = 0;
+        state.lastTickAt = performance.now();
+      }
+    });
+
+    await page.evaluate(() => {
+      (window as Window & {
+        __setVisualViewportHeight?: (height: number) => void;
+      }).__setVisualViewportHeight?.(340);
+    });
+    await quickInput.fill("soft keyboard squeeze");
+    await page.waitForTimeout(1500);
+
+    await expect(quickInput).toHaveValue("soft keyboard squeeze");
+    await expect(page.locator(".terminal-virtual-keys")).toBeVisible();
+    await expect.poll(
+      () => page.evaluate(() => {
+        const shell = document.querySelector(".app-shell");
+        return shell instanceof HTMLElement ? shell.getBoundingClientRect().height : 0;
+      }),
+      { timeout: 3000 },
+    ).toBeLessThanOrEqual(360);
+
+    const afterSqueeze = await page.evaluate(() => ({
+      ...(window as Window & {
+        __mobileKeyboardSqueeze?: {
+          resizeObserverCallbacks: number;
+          renderResizeObserverCallbacks: number;
+          resizeMessages: number;
+          maxTimerDelayMs: number;
+          lastTickAt: number;
+        };
+      }).__mobileKeyboardSqueeze,
+    }));
+    expect(afterSqueeze.resizeObserverCallbacks - beforeSqueeze.resizeObserverCallbacks).toBeLessThan(60);
+    expect(afterSqueeze.renderResizeObserverCallbacks - beforeSqueeze.renderResizeObserverCallbacks).toBeLessThan(20);
+    expect(afterSqueeze.resizeMessages - beforeSqueeze.resizeMessages).toBeLessThan(12);
+    expect(afterSqueeze.maxTimerDelayMs).toBeLessThan(250);
+  });
+
   test("fills workspace when tree API is slow", async ({ page }) => {
     await mockApi(page, { slowTreeMs: 6000 });
 
@@ -684,6 +900,7 @@ test.describe("terminal viewport fit", () => {
     const pendingInputs: ServerPendingInput[] = [];
     const browserDispatchDelays: number[] = [];
     const serverReceiveDelays: number[] = [];
+    const inputSequence = "bcdfhijklmqrsvwxyz!$";
     let burstTimer: ReturnType<typeof setTimeout> | null = null;
     let burstIndex = 0;
 
@@ -709,8 +926,12 @@ test.describe("terminal viewport fit", () => {
         key: string;
         text: string | null;
         keydownAt: number;
+        onDataAt?: number;
+        preHandlerDelayMs?: number;
         dispatchAt: number;
         delayMs: number;
+        echoAt?: number;
+        echoDelayMs?: number;
       };
       const records: BrowserInputRecord[] = [];
       const pending: Array<{ key: string; keydownAt: number }> = [];
@@ -720,6 +941,28 @@ test.describe("terminal viewport fit", () => {
         value: records,
         configurable: true,
       });
+      Object.defineProperty(window, "__terminalInputOnDataPending", {
+        value: pending,
+        configurable: true,
+      });
+
+      (window as Window & {
+        __WEB_TERMINAL_TEST_ON_TERMINAL_DATA__?: (data: string, onDataAt: number) => void;
+      }).__WEB_TERMINAL_TEST_ON_TERMINAL_DATA__ = (data, onDataAt) => {
+        const index = pending.findIndex((candidate) => data.includes(candidate.key));
+        if (index < 0) {
+          return;
+        }
+        const candidate = pending[index];
+        const existing = records.find((record) => (
+          record.key === candidate.key
+          && record.keydownAt === candidate.keydownAt
+        ));
+        if (existing !== undefined) {
+          existing.onDataAt = onDataAt;
+          existing.preHandlerDelayMs = onDataAt - candidate.keydownAt;
+        }
+      };
 
       window.addEventListener("keydown", (event) => {
         if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
@@ -745,6 +988,8 @@ test.describe("terminal viewport fit", () => {
               key: candidate.key,
               text,
               keydownAt: candidate.keydownAt,
+              onDataAt: dispatchAt,
+              preHandlerDelayMs: dispatchAt - candidate.keydownAt,
               dispatchAt,
               delayMs: dispatchAt - candidate.keydownAt,
             });
@@ -752,15 +997,29 @@ test.describe("terminal viewport fit", () => {
         }
         return originalPostMessage.call(this, message, transfer ?? []);
       };
+
+      (window as Window & {
+        __WEB_TERMINAL_TEST_ON_TERMINAL_WRITE__?: (data: string | Uint8Array, parsedAt: number) => void;
+      }).__WEB_TERMINAL_TEST_ON_TERMINAL_WRITE__ = (data, parsedAt) => {
+        const text = typeof data === "string" ? data : decoder.decode(data);
+        for (const record of records) {
+          if (record.echoAt !== undefined || record.text === null || !text.includes(record.key)) {
+            continue;
+          }
+          record.echoAt = parsedAt;
+          record.echoDelayMs = parsedAt - record.keydownAt;
+        }
+      };
     });
 
     await mockApi(page, {
-      onTerminalMessage: (message) => {
+      onTerminalMessage: (message, ws) => {
         if (!Buffer.isBuffer(message)) {
           return;
         }
         const text = message.toString("utf8");
         const index = pendingInputs.findIndex((pending) => text.includes(pending.expected));
+        ws.send(Buffer.from(text));
         if (index < 0) {
           return;
         }
@@ -788,7 +1047,7 @@ test.describe("terminal viewport fit", () => {
       await page.locator(".terminal-xterm-host").click({ position: { x: 20, y: 20 } });
       await page.waitForFunction(() => document.activeElement?.classList.contains("xterm-helper-textarea"));
 
-      for (const expected of "abcdefghijklmnopqrst") {
+      for (const expected of inputSequence) {
         const currentBrowserRecordCount = await page.evaluate(() => (
           (window as Window & { __terminalInputDispatchRecords?: unknown[] }).__terminalInputDispatchRecords?.length ?? 0
         ));
@@ -804,7 +1063,12 @@ test.describe("terminal viewport fit", () => {
         await browserDispatchPromise;
         const browserRecord = await page.evaluate(() => {
           const records = (window as Window & {
-            __terminalInputDispatchRecords?: Array<{ delayMs: number }>;
+            __terminalInputDispatchRecords?: Array<{
+              delayMs: number;
+              preHandlerDelayMs?: number;
+              dispatchAt: number;
+              onDataAt?: number;
+            }>;
           }).__terminalInputDispatchRecords ?? [];
           return records[records.length - 1] ?? null;
         });
@@ -823,12 +1087,604 @@ test.describe("terminal viewport fit", () => {
         pending.reject(new Error("Test finished before terminal input was observed"));
       }
     }
-
     const sorted = [...browserDispatchDelays].sort((left, right) => left - right);
     const p95 = sorted[Math.floor((sorted.length - 1) * 0.95)];
-    expect(browserDispatchDelays.length).toBe(20);
-    expect(Math.max(...browserDispatchDelays)).toBeLessThan(80);
-    expect(p95).toBeLessThan(40);
-    expect(serverReceiveDelays.length).toBe(20);
+    expect(browserDispatchDelays.length).toBe(inputSequence.length);
+    expect(Math.max(...browserDispatchDelays)).toBeLessThan(10);
+    expect(p95).toBeLessThan(10);
+    expect(serverReceiveDelays.length).toBe(inputSequence.length);
+  });
+
+  test("flushes echoed input promptly when output queue is idle", async ({ page }) => {
+    type BrowserInputRecord = {
+      key: string;
+      keydownAt: number;
+      dispatchAt?: number;
+      dispatchDelayMs?: number;
+      interactiveAt?: number;
+      interactiveDelayMs?: number;
+      writeAfterInteractiveMs?: number;
+      echoAt?: number;
+      echoDelayMs?: number;
+    };
+
+    await page.addInitScript(() => {
+      const records: BrowserInputRecord[] = [];
+      const pending: Array<{ key: string; keydownAt: number }> = [];
+      const decoder = new TextDecoder();
+
+      Object.defineProperty(window, "__terminalInputEchoRecords", {
+        value: records,
+        configurable: true,
+      });
+      Object.defineProperty(window, "__terminalLastWriteAt", {
+        value: { current: 0 },
+        configurable: true,
+      });
+
+      window.addEventListener("keydown", (event) => {
+        if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+          pending.push({ key: event.key, keydownAt: performance.now() });
+        }
+      }, { capture: true });
+
+      const originalPostMessage = Worker.prototype.postMessage;
+      Worker.prototype.postMessage = function postMessage(message: unknown, transfer?: Transferable[]) {
+        if (
+          typeof message === "object"
+          && message !== null
+          && "type" in message
+          && (message as { type?: unknown }).type === "input"
+        ) {
+          const data = (message as { data?: unknown }).data;
+          const text = ArrayBuffer.isView(data) ? decoder.decode(data) : null;
+          if (text !== null) {
+            const index = pending.findIndex((candidate) => text.includes(candidate.key));
+            if (index >= 0) {
+              const [candidate] = pending.splice(index, 1);
+              const dispatchAt = performance.now();
+              records.push({
+                key: candidate.key,
+                keydownAt: candidate.keydownAt,
+                dispatchAt,
+                dispatchDelayMs: dispatchAt - candidate.keydownAt,
+              });
+            }
+          }
+        }
+        return originalPostMessage.call(this, message, transfer ?? []);
+      };
+
+      (window as Window & {
+        __WEB_TERMINAL_TEST_ON_INTERACTIVE_OUTPUT__?: (data: string | Uint8Array, receivedAt: number) => void;
+      }).__WEB_TERMINAL_TEST_ON_INTERACTIVE_OUTPUT__ = (data, receivedAt) => {
+        const text = typeof data === "string" ? data : decoder.decode(data);
+        for (const record of records) {
+          if (record.interactiveAt !== undefined || !text.includes(record.key)) {
+            continue;
+          }
+          record.interactiveAt = receivedAt;
+          record.interactiveDelayMs = receivedAt - record.keydownAt;
+        }
+      };
+
+      (window as Window & {
+        __WEB_TERMINAL_TEST_ON_TERMINAL_WRITE__?: (data: string | Uint8Array, parsedAt: number) => void;
+      }).__WEB_TERMINAL_TEST_ON_TERMINAL_WRITE__ = (data, parsedAt) => {
+        ((window as Window & {
+          __terminalLastWriteAt?: { current: number };
+        }).__terminalLastWriteAt ??= { current: 0 }).current = parsedAt;
+        const text = typeof data === "string" ? data : decoder.decode(data);
+        for (const record of records) {
+          if (record.echoAt !== undefined || !text.includes(record.key)) {
+            continue;
+          }
+          record.echoAt = parsedAt;
+          record.echoDelayMs = parsedAt - record.keydownAt;
+          if (record.interactiveAt !== undefined) {
+            record.writeAfterInteractiveMs = parsedAt - record.interactiveAt;
+          }
+        }
+      };
+    });
+
+    await mockApi(page, {
+      onTerminalMessage: (message, ws) => {
+        if (Buffer.isBuffer(message)) {
+          ws.send(message);
+        }
+      },
+    });
+
+    await page.goto(terminalPath(), { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".xterm-rows", { timeout: 30_000 });
+    await waitForFilledTerminal(page, 0.9, 60_000, "fit-row-40");
+    await page.locator(".terminal-xterm-host").click({ position: { x: 20, y: 20 } });
+    await page.waitForFunction(() => document.activeElement?.classList.contains("xterm-helper-textarea"));
+    await expect.poll(
+      () => page.evaluate(() => {
+        const lastWriteAt = (window as Window & {
+          __terminalLastWriteAt?: { current: number };
+        }).__terminalLastWriteAt?.current ?? 0;
+        return lastWriteAt > 0 ? performance.now() - lastWriteAt : 0;
+      }),
+      { timeout: 3000 },
+    ).toBeGreaterThan(100);
+    await page.keyboard.type("z");
+
+    await expect.poll(
+      () => page.evaluate(() => {
+        const records = (window as Window & {
+          __terminalInputEchoRecords?: Array<{ echoDelayMs?: number }>;
+        }).__terminalInputEchoRecords ?? [];
+        return records.filter((record) => typeof record.echoDelayMs === "number").length;
+      }),
+      { timeout: 2000 },
+    ).toBe(1);
+
+    const record = await page.evaluate(() => {
+      const records = (window as Window & {
+        __terminalInputEchoRecords?: Array<{
+          dispatchDelayMs?: number;
+          interactiveDelayMs?: number;
+          writeAfterInteractiveMs?: number;
+          echoDelayMs?: number;
+        }>;
+      }).__terminalInputEchoRecords ?? [];
+      return records[0] ?? null;
+    });
+    expect(record).not.toBeNull();
+    expect(record?.dispatchDelayMs).toBeLessThan(10);
+    expect(record?.interactiveDelayMs).toBeLessThan(25);
+    expect(record?.writeAfterInteractiveMs).toBeLessThan(10);
+    expect(record?.echoDelayMs).toBeLessThan(35);
+  });
+
+  test("printable fast path marks xterm user input without duplicate send", async ({ page }) => {
+    await page.addInitScript(() => {
+      const decoder = new TextDecoder();
+      const state = {
+        inputMessages: [] as string[],
+        writeDelayMs: null as number | null,
+        keydownAt: 0,
+      };
+      Object.defineProperty(window, "__terminalFastPathUserInput", {
+        value: state,
+        configurable: true,
+      });
+
+      window.addEventListener("keydown", (event) => {
+        if (event.key === "q") {
+          state.keydownAt = performance.now();
+        }
+      }, { capture: true });
+
+      const originalPostMessage = Worker.prototype.postMessage;
+      Worker.prototype.postMessage = function postMessage(message: unknown, transfer?: Transferable[]) {
+        if (
+          typeof message === "object"
+          && message !== null
+          && "type" in message
+          && (message as { type?: unknown }).type === "input"
+        ) {
+          const data = (message as { data?: unknown }).data;
+          if (ArrayBuffer.isView(data)) {
+            state.inputMessages.push(decoder.decode(data));
+          }
+        }
+        return originalPostMessage.call(this, message, transfer ?? []);
+      };
+
+      (window as Window & {
+        __WEB_TERMINAL_TEST_ON_TERMINAL_WRITE__?: (data: string | Uint8Array, parsedAt: number) => void;
+      }).__WEB_TERMINAL_TEST_ON_TERMINAL_WRITE__ = (data, parsedAt) => {
+        const text = typeof data === "string" ? data : decoder.decode(data);
+        if (state.writeDelayMs === null && text.includes("q")) {
+          state.writeDelayMs = parsedAt - state.keydownAt;
+        }
+      };
+    });
+
+    await mockApi(page, {
+      onTerminalMessage: (message, ws) => {
+        if (Buffer.isBuffer(message) && message.toString("utf8") === "q") {
+          ws.send(Buffer.from("q"));
+        }
+      },
+    });
+
+    await page.goto(terminalPath(), { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".xterm-rows", { timeout: 30_000 });
+    await waitForFilledTerminal(page, 0.9, 60_000, "fit-row-40");
+    await page.locator(".terminal-xterm-host").click({ position: { x: 20, y: 20 } });
+    await page.waitForFunction(() => document.activeElement?.classList.contains("xterm-helper-textarea"));
+    await page.keyboard.type("q");
+
+    await expect.poll(
+      () => page.evaluate(() => {
+        return (window as Window & {
+          __terminalFastPathUserInput?: { writeDelayMs: number | null };
+        }).__terminalFastPathUserInput?.writeDelayMs ?? null;
+      }),
+      { timeout: 2000 },
+    ).not.toBeNull();
+
+    const state = await page.evaluate(() => {
+      return (window as Window & {
+        __terminalFastPathUserInput?: { inputMessages: string[]; writeDelayMs: number | null };
+      }).__terminalFastPathUserInput;
+    });
+    expect(state?.inputMessages.filter((message) => message === "q")).toHaveLength(1);
+    expect(state?.writeDelayMs).toBeLessThan(35);
+  });
+
+  test("worker waits for output ack before posting another burst chunk", async ({ page }) => {
+    await page.addInitScript(() => {
+      const NativeWorker = window.Worker;
+      const state = {
+        outputCount: 0,
+        outputCountBeforeFirstAck: null as number | null,
+      };
+      Object.defineProperty(window, "__terminalWorkerFlowControl", {
+        value: state,
+        configurable: true,
+      });
+
+      class InstrumentedWorker extends NativeWorker {
+        private messageHandler: ((this: Worker, event: MessageEvent) => unknown) | null = null;
+
+        constructor(scriptURL: string | URL, options?: WorkerOptions) {
+          super(scriptURL, options);
+          super.addEventListener("message", (event: MessageEvent) => {
+            const data = event.data as { type?: unknown } | null;
+            if (data?.type === "output" || data?.type === "interactive-output") {
+              state.outputCount += 1;
+              if (state.outputCount === 1) {
+                window.setTimeout(() => {
+                  state.outputCountBeforeFirstAck = state.outputCount;
+                  this.messageHandler?.call(this, event);
+                }, 80);
+                return;
+              }
+            }
+            this.messageHandler?.call(this, event);
+          });
+        }
+
+        get onmessage(): ((this: Worker, event: MessageEvent) => unknown) | null {
+          return this.messageHandler;
+        }
+
+        set onmessage(handler: ((this: Worker, event: MessageEvent) => unknown) | null) {
+          this.messageHandler = handler;
+        }
+      }
+
+      Object.defineProperty(window, "Worker", {
+        value: InstrumentedWorker,
+        configurable: true,
+      });
+    });
+
+    await mockApi(page, {
+      afterTerminalConnected: (ws) => {
+        ws.send(Buffer.from("flow-control-one\r\n"));
+        ws.send(Buffer.from("flow-control-two\r\n"));
+      },
+    });
+
+    await page.goto(terminalPath(), { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".xterm-rows", { timeout: 30_000 });
+
+    await expect.poll(
+      () => page.evaluate(() => {
+        return (window as Window & {
+          __terminalWorkerFlowControl?: { outputCountBeforeFirstAck: number | null };
+        }).__terminalWorkerFlowControl?.outputCountBeforeFirstAck ?? null;
+      }),
+      { timeout: 3000 },
+    ).toBe(1);
+
+    await expect.poll(
+      () => page.evaluate(() => {
+        return (window as Window & {
+          __terminalWorkerFlowControl?: { outputCount: number };
+        }).__terminalWorkerFlowControl?.outputCount ?? 0;
+      }),
+      { timeout: 3000 },
+    ).toBeGreaterThan(1);
+  });
+
+  test("browser releases worker output before terminal write callback", async ({ page }) => {
+    await page.addInitScript(() => {
+      const NativeWorker = window.Worker;
+      const decoder = new TextDecoder();
+      const marker = "worker-ack-before-write";
+      const state = {
+        markerOutputDelivered: false,
+        markerWriteCalled: false,
+        outputAckBeforeMarkerWrite: false,
+      };
+      Object.defineProperty(window, "__terminalWorkerAckFlow", {
+        value: state,
+        configurable: true,
+      });
+
+      (window as Window & {
+        __WEB_TERMINAL_TEST_ON_TERMINAL_WRITE__?: (data: string | Uint8Array, parsedAt: number) => void;
+      }).__WEB_TERMINAL_TEST_ON_TERMINAL_WRITE__ = (data) => {
+        const text = typeof data === "string" ? data : decoder.decode(data);
+        if (text.includes(marker)) {
+          state.markerWriteCalled = true;
+        }
+      };
+
+      class InstrumentedWorker extends NativeWorker {
+        private messageHandler: ((this: Worker, event: MessageEvent) => unknown) | null = null;
+
+        constructor(scriptURL: string | URL, options?: WorkerOptions) {
+          super(scriptURL, options);
+          super.addEventListener("message", (event: MessageEvent) => {
+            const data = event.data as { type?: unknown; data?: unknown } | null;
+            if (data?.type === "output" || data?.type === "interactive-output") {
+              const chunk = data.data;
+              const text = typeof chunk === "string" ? chunk : decoder.decode(chunk as Uint8Array);
+              if (text.includes(marker)) {
+                state.markerOutputDelivered = true;
+              }
+            }
+            this.messageHandler?.call(this, event);
+          });
+        }
+
+        get onmessage(): ((this: Worker, event: MessageEvent) => unknown) | null {
+          return this.messageHandler;
+        }
+
+        set onmessage(handler: ((this: Worker, event: MessageEvent) => unknown) | null) {
+          this.messageHandler = handler;
+        }
+      }
+
+      const originalPostMessage = NativeWorker.prototype.postMessage;
+      InstrumentedWorker.prototype.postMessage = function postMessage(message: unknown, transfer?: Transferable[]) {
+        if (
+          typeof message === "object"
+          && message !== null
+          && "type" in message
+          && (message as { type?: unknown }).type === "output-ack"
+          && state.markerOutputDelivered
+          && !state.markerWriteCalled
+        ) {
+          state.outputAckBeforeMarkerWrite = true;
+        }
+        return originalPostMessage.call(this, message, transfer ?? []);
+      };
+
+      Object.defineProperty(window, "Worker", {
+        value: InstrumentedWorker,
+        configurable: true,
+      });
+    });
+
+    await mockApi(page, {
+      afterTerminalConnected: (ws) => {
+        ws.send(Buffer.from("worker-ack-before-write\r\n"));
+      },
+    });
+
+    await page.goto(terminalPath(), { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".xterm-rows", { timeout: 30_000 });
+
+    await expect.poll(
+      () => page.evaluate(() => {
+        return (window as Window & {
+          __terminalWorkerAckFlow?: { outputAckBeforeMarkerWrite: boolean };
+        }).__terminalWorkerAckFlow?.outputAckBeforeMarkerWrite ?? false;
+      }),
+      { timeout: 3000 },
+    ).toBe(true);
+  });
+
+  test("worker preserves queued output before echoed input", async ({ page }) => {
+    await page.addInitScript(() => {
+      const NativeWorker = window.Worker;
+      const state = {
+        delivered: [] as string[],
+        delayingStale: false,
+        delayedFirstStale: false,
+        releaseDelayedStale: null as null | (() => void),
+      };
+      Object.defineProperty(window, "__terminalWorkerInputOrdering", {
+        value: state,
+        configurable: true,
+      });
+
+      class InstrumentedWorker extends NativeWorker {
+        private messageHandler: ((this: Worker, event: MessageEvent) => unknown) | null = null;
+
+        constructor(scriptURL: string | URL, options?: WorkerOptions) {
+          super(scriptURL, options);
+          super.addEventListener("message", (event: MessageEvent) => {
+            const data = event.data as { type?: unknown; data?: unknown } | null;
+            if (data?.type === "output" || data?.type === "interactive-output") {
+              const chunk = data.data;
+              const text = typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk as Uint8Array);
+              state.delivered.push(text);
+              if (!state.delayedFirstStale && text.includes("stale-before-input-0")) {
+                state.delayedFirstStale = true;
+                state.delayingStale = true;
+                state.releaseDelayedStale = () => {
+                  state.delayingStale = false;
+                  state.releaseDelayedStale = null;
+                  this.messageHandler?.call(this, event);
+                };
+                return;
+              }
+            }
+            this.messageHandler?.call(this, event);
+          });
+        }
+
+        get onmessage(): ((this: Worker, event: MessageEvent) => unknown) | null {
+          return this.messageHandler;
+        }
+
+        set onmessage(handler: ((this: Worker, event: MessageEvent) => unknown) | null) {
+          this.messageHandler = handler;
+        }
+      }
+
+      Object.defineProperty(window, "Worker", {
+        value: InstrumentedWorker,
+        configurable: true,
+      });
+    });
+
+    let burstTimer: NodeJS.Timeout | null = null;
+    await mockApi(page, {
+      afterTerminalConnected: (ws) => {
+        ws.send(Buffer.from("stale-before-input-0\r\n"));
+        for (let index = 1; index < 20; index += 1) {
+          ws.send(Buffer.from(`stale-before-input-${index}\r\n`));
+        }
+      },
+      onTerminalMessage: (message, ws) => {
+        if (!Buffer.isBuffer(message)) {
+          return;
+        }
+        const text = message.toString("utf8");
+        if (!text.includes("~")) {
+          return;
+        }
+        burstTimer = setTimeout(() => {
+          ws.send(Buffer.from("~"));
+        }, 0);
+      },
+    });
+
+    try {
+      await page.goto(terminalPath(), { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".xterm-rows", { timeout: 30_000 });
+      await page.locator(".terminal-xterm-host").click({ position: { x: 20, y: 20 } });
+      await page.waitForFunction(() => document.activeElement?.classList.contains("xterm-helper-textarea"));
+      await expect.poll(
+        () => page.evaluate(() => {
+          return (window as Window & {
+            __terminalWorkerInputOrdering?: { delayingStale: boolean };
+          }).__terminalWorkerInputOrdering?.delayingStale ?? false;
+        }),
+        { timeout: 3000 },
+      ).toBe(true);
+
+      await page.keyboard.type("~");
+      await page.waitForTimeout(50);
+      await page.evaluate(() => {
+        (window as Window & {
+          __terminalWorkerInputOrdering?: { releaseDelayedStale: null | (() => void) };
+        }).__terminalWorkerInputOrdering?.releaseDelayedStale?.();
+      });
+
+      await expect.poll(
+        () => page.evaluate(() => {
+          const state = (window as Window & {
+            __terminalWorkerInputOrdering?: { delivered: string[] };
+          }).__terminalWorkerInputOrdering;
+          return state?.delivered.find((chunk) => chunk.includes("~")) ?? null;
+        }),
+        { timeout: 3000 },
+      ).toBe("~");
+
+      const delivered = await page.evaluate(() => {
+        return (window as Window & {
+          __terminalWorkerInputOrdering?: { delivered: string[] };
+        }).__terminalWorkerInputOrdering?.delivered ?? [];
+      });
+      const joined = delivered.join("");
+      const firstStaleIndex = joined.indexOf("stale-before-input-0");
+      const lastStaleIndex = joined.indexOf("stale-before-input-19");
+      const echoIndex = joined.indexOf("~");
+      expect(firstStaleIndex).toBeGreaterThanOrEqual(0);
+      expect(lastStaleIndex).toBeGreaterThan(firstStaleIndex);
+      expect(echoIndex).toBeGreaterThan(lastStaleIndex);
+    } finally {
+      if (burstTimer !== null) {
+        clearTimeout(burstTimer);
+      }
+    }
+  });
+
+  test("browser sends server output ack only after terminal write callback", async ({ page }) => {
+    await page.addInitScript(() => {
+      const NativeWorker = window.Worker;
+      const state = {
+        ackedBytes: [] as number[],
+        serverAckBeforeWrite: false,
+        serverAckCount: 0,
+        writeHookCalled: false,
+      };
+      Object.defineProperty(window, "__terminalServerAckFlow", {
+        value: state,
+        configurable: true,
+      });
+
+      (window as Window & {
+        __WEB_TERMINAL_TEST_ON_TERMINAL_WRITE__?: (data: string | Uint8Array, parsedAt: number) => void;
+      }).__WEB_TERMINAL_TEST_ON_TERMINAL_WRITE__ = () => {
+        state.writeHookCalled = true;
+      };
+
+      const originalPostMessage = NativeWorker.prototype.postMessage;
+      NativeWorker.prototype.postMessage = function postMessage(message: unknown, transfer?: Transferable[]) {
+        if (
+          typeof message === "object"
+          && message !== null
+          && "type" in message
+          && (message as { type?: unknown }).type === "server-output-ack"
+        ) {
+          state.serverAckCount += 1;
+          const bytes = (message as { bytes?: unknown }).bytes;
+          if (typeof bytes === "number") {
+            state.ackedBytes.push(bytes);
+          }
+          if (!state.writeHookCalled) {
+            state.serverAckBeforeWrite = true;
+          }
+        }
+        return originalPostMessage.call(this, message, transfer ?? []);
+      };
+    });
+
+    await mockApi(page, {
+      afterTerminalConnected: (ws) => {
+        ws.send(Buffer.from("server-ack-after-write\r\n"));
+      },
+    });
+
+    await page.goto(terminalPath(), { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".xterm-rows", { timeout: 30_000 });
+
+    await expect.poll(
+      () => page.evaluate(() => {
+        return (window as Window & {
+          __terminalServerAckFlow?: { serverAckCount: number };
+        }).__terminalServerAckFlow?.serverAckCount ?? 0;
+      }),
+      { timeout: 3000 },
+    ).toBeGreaterThan(0);
+
+    const state = await page.evaluate(() => {
+      return (window as Window & {
+        __terminalServerAckFlow?: {
+          ackedBytes: number[];
+          serverAckBeforeWrite: boolean;
+          serverAckCount: number;
+          writeHookCalled: boolean;
+        };
+      }).__terminalServerAckFlow;
+    });
+    expect(state?.writeHookCalled).toBe(true);
+    expect(state?.serverAckBeforeWrite).toBe(false);
+    expect(state?.ackedBytes.some((bytes) => bytes > 0)).toBe(true);
   });
 });

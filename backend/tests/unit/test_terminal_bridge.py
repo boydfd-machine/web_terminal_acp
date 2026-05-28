@@ -11,6 +11,7 @@ import pytest
 from app.services.runtime.local import LocalTerminalRuntime, _LocalTerminalSession
 from app.services.runtime.types import RuntimeWindow
 from app.services.terminal_bridge import (
+    OutputAckControl,
     ResizeControl,
     SelectWindowControl,
     apply_pty_resize,
@@ -30,6 +31,14 @@ def test_parse_text_input_returns_select_window_control_for_select_json():
     action = parse_text_input('{"type":"select_window","window_id":"87654321-4321-8765-4321-876543218765"}')
 
     assert action == SelectWindowControl(window_id=UUID("87654321-4321-8765-4321-876543218765"))
+
+
+def test_parse_text_input_returns_output_ack_control_for_ack_json():
+    assert parse_text_input('{"type":"output_ack"}') == OutputAckControl()
+
+
+def test_parse_text_input_returns_output_ack_control_with_byte_count():
+    assert parse_text_input('{"type":"output_ack","bytes":131072}') == OutputAckControl(bytes_acked=131072)
 
 
 def test_parse_text_input_keeps_ordinary_text_as_bytes():

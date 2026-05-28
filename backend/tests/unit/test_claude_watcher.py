@@ -35,6 +35,14 @@ class FailingElasticsearch:
         raise RuntimeError("search index unavailable")
 
 
+class FakeUiEventHub:
+    def __init__(self):
+        self.invalidations = []
+
+    async def publish_invalidation(self, resources, **kwargs):
+        self.invalidations.append((list(resources), kwargs))
+
+
 @pytest.fixture
 async def db_session():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -339,6 +347,79 @@ async def test_poll_claude_jsonl_directory_once_limits_changed_files_per_pass(tm
 
 
 @pytest.mark.asyncio
+async def test_poll_claude_jsonl_directory_once_offloads_jsonl_scan(monkeypatch, tmp_path):
+    import app.services.ingest.claude_watcher as claude_watcher
+
+    root = tmp_path / "claude"
+    root.mkdir()
+    observed = []
+
+    async def fake_run_blocking(func, *args, **kwargs):
+        observed.append((func, args, kwargs))
+        return [], [], 0
+
+    monkeypatch.setattr(claude_watcher, "_run_blocking", fake_run_blocking)
+
+    @asynccontextmanager
+    async def session_factory():
+        raise AssertionError("empty scan should not open a database session")
+        yield
+
+    await poll_claude_jsonl_directory_once(session_factory, root, {})
+
+    assert observed == [
+        (
+            claude_watcher._changed_jsonl_offsets,
+            (root, {}),
+            {
+                "max_changed_files": claude_watcher.DEFAULT_MAX_CHANGED_FILES_PER_PASS,
+                "max_files": None,
+                "paths": None,
+                "scan_cursor": 0,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_poll_claude_jsonl_directory_once_scans_known_files_in_chunks(tmp_path):
+    root = tmp_path / "claude"
+    root.mkdir()
+    files = []
+    for index in range(5):
+        path = root / f"{index}.jsonl"
+        write_jsonl(path, {"type": "user", "message": {"content": str(index)}, "sessionId": str(index)})
+        files.append(path)
+    offsets = {path: path.stat().st_size for path in files}
+    known_paths = list(files)
+    append_offset = offsets[files[2]]
+    with files[2].open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"type": "assistant", "message": {"content": "new"}, "sessionId": "2"}) + "\n")
+
+    opened = []
+
+    @asynccontextmanager
+    async def session_factory():
+        opened.append(True)
+        raise AssertionError("unchanged scan window should not open a database session")
+        yield
+
+    next_cursor = await poll_claude_jsonl_directory_once(
+        session_factory,
+        root,
+        offsets,
+        known_paths=known_paths,
+        scan_cursor=0,
+        max_files=2,
+        discover_new_files=False,
+    )
+
+    assert next_cursor == 2
+    assert opened == []
+    assert offsets[files[2]] == append_offset
+
+
+@pytest.mark.asyncio
 async def test_poll_claude_jsonl_directory_once_persists_commits_and_indexes(tmp_path):
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
@@ -365,6 +446,45 @@ async def test_poll_claude_jsonl_directory_once_persists_commits_and_indexes(tmp
     assert row is not None
     assert row.indexed_at is not None
     assert len(es_client.indexed_documents) == 1
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_claude_jsonl_ingest_invalidation_does_not_expire_tree_cache(tmp_path):
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    @asynccontextmanager
+    async def session_factory():
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            yield session
+
+    root = tmp_path / "claude"
+    root.mkdir()
+    path = root / "session.jsonl"
+    write_jsonl(path, {"type": "user", "message": {"content": "hello"}, "sessionId": "s1"})
+    ui_event_hub = FakeUiEventHub()
+
+    await poll_claude_jsonl_directory_once(
+        session_factory,
+        root,
+        {},
+        ui_event_hub=ui_event_hub,
+    )
+
+    assert ui_event_hub.invalidations == [
+        (
+            ["agent_record", "window", "search"],
+            {
+                "client_id": next(
+                    kwargs["client_id"] for _resources, kwargs in ui_event_hub.invalidations
+                ),
+                "reason": "claude_jsonl_ingested",
+            },
+        )
+    ]
 
     await engine.dispose()
 

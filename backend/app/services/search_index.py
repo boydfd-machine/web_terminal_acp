@@ -1,6 +1,6 @@
 import json
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from elasticsearch import AsyncElasticsearch
 
@@ -187,6 +187,23 @@ async def index_terminal_chunk(
     if document_id is not None:
         index_kwargs["id"] = document_id
     return await client.index(**index_kwargs)
+
+
+async def index_terminal_chunk_without_event(
+    client: AsyncElasticsearch,
+    client_id: UUID,
+    window_id: UUID,
+    text: str,
+) -> Any:
+    document_id = f"terminal-chunk:{window_id}:{uuid4()}"
+    return await index_terminal_chunk(
+        client,
+        client_id,
+        window_id,
+        text,
+        [],
+        document_id=document_id,
+    )
 
 
 async def index_ai_event(

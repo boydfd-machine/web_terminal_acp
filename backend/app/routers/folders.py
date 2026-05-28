@@ -1,25 +1,32 @@
-import json
-from time import monotonic
 from uuid import UUID
 
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from fastapi.encoders import jsonable_encoder
-from pydantic import BaseModel
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import get_session
-from app.models import Client, Folder, VirtualWindow
+from app.db import SessionLocal, get_session
+from app.models import Client
 from app.repositories.clients import ensure_local_client, get_client
 from app.repositories.folders import build_tree, get_or_create_folder_by_path
 from app.routers.ui_events import ui_event_hub_from_state
 from app.schemas import ClientWindowsActivityOut, FolderCreateIn, FolderOut, TreeFolderOut
+from app.services.polling_response_cache import (
+    CachedJsonResponse,
+    begin_response_cache_refresh,
+    cached_or_stale_json_response,
+    cached_json_response,
+    finish_response_cache_refresh,
+    response_cache_scope,
+    store_json_response,
+)
 from app.services.window_activity_api import load_client_windows_activity
 
 router = APIRouter(prefix="/api", tags=["folders"])
-_RESPONSE_CACHE_TTL_SECONDS = 10.0
-_response_cache: dict[tuple[object, ...], tuple[float, str]] = {}
+logger = logging.getLogger(__name__)
 
 
 async def _require_client(session: AsyncSession, client_id: UUID) -> Client:
@@ -31,13 +38,23 @@ async def _require_client(session: AsyncSession, client_id: UUID) -> Client:
 
 @router.get("/clients/{client_id}/tree", response_model=list[TreeFolderOut], response_model_exclude_none=True)
 async def get_client_tree(client_id: UUID, session: AsyncSession = Depends(get_session)):
-    await _require_client(session, client_id)
-    cache_key = ("tree", client_id, await _tree_cache_fingerprint(session, client_id))
-    cached = _cached_response(cache_key)
+    cache_key = ("tree", response_cache_scope(session), client_id)
+    cached = _cached_or_stale_response(cache_key)
+    if cached is not None and not cached.expired:
+        return cached.response
     if cached is not None:
-        return cached
+        _refresh_response_cache(
+            cache_key,
+            lambda refresh_session: _build_tree_response(
+                refresh_session,
+                client_id,
+                require_client=True,
+            ),
+        )
+        return cached.response
+    await _require_client(session, client_id)
     tree = await build_tree(session, client_id)
-    return _store_response(cache_key, tree)
+    return _store_response(cache_key, tree, resources={"tree"}, client_id=client_id)
 
 
 @router.get(
@@ -50,34 +67,49 @@ async def get_client_windows_activity(
     include_runtime_tags: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ) -> ClientWindowsActivityOut | Response:
-    await _require_client(session, client_id)
-    cache_key = (
-        "activity",
-        client_id,
-        include_runtime_tags,
-        await _tree_cache_fingerprint(session, client_id),
-    )
-    cached = _cached_response(cache_key)
+    cache_key = ("activity", response_cache_scope(session), client_id, include_runtime_tags)
+    cached = _cached_or_stale_response(cache_key)
+    if cached is not None and not cached.expired:
+        return cached.response
     if cached is not None:
-        return cached
+        _refresh_response_cache(
+            cache_key,
+            lambda refresh_session: _build_activity_response(
+                refresh_session,
+                client_id,
+                include_runtime_tags=include_runtime_tags,
+            ),
+        )
+        return cached.response
+    await _require_client(session, client_id)
     activity = await load_client_windows_activity(
         session,
         client_id,
         include_runtime_tags=include_runtime_tags,
     )
-    return _store_response(cache_key, activity)
+    return _store_response(cache_key, activity, resources={"window", "tree"}, client_id=client_id)
 
 
 @router.get("/tree", response_model=list[TreeFolderOut], response_model_exclude_none=True)
 async def get_tree(session: AsyncSession = Depends(get_session)):
     client = await ensure_local_client(session)
-    cache_key = ("tree", client.id, await _tree_cache_fingerprint(session, client.id))
-    cached = _cached_response(cache_key)
+    cache_key = ("tree", response_cache_scope(session), client.id)
+    cached = _cached_or_stale_response(cache_key)
+    if cached is not None and not cached.expired:
+        return cached.response
     if cached is not None:
-        return cached
+        _refresh_response_cache(
+            cache_key,
+            lambda refresh_session: _build_tree_response(
+                refresh_session,
+                client.id,
+                require_client=False,
+            ),
+        )
+        return cached.response
     tree = await build_tree(session, client.id)
     await session.commit()
-    return _store_response(cache_key, tree)
+    return _store_response(cache_key, tree, resources={"tree"}, client_id=client.id)
 
 
 async def _get_or_create_folder_and_commit(session: AsyncSession, client_id: UUID, path: str):
@@ -111,69 +143,73 @@ async def _create_folder_for_client(
     return FolderOut(id=folder.id, name=folder.name, path=folder.path)
 
 
-async def _tree_window_ids(session: AsyncSession, client_id: UUID) -> tuple[UUID, ...]:
-    return tuple(
-        await session.scalars(
-            select(VirtualWindow.id)
-            .where(
-                VirtualWindow.client_id == client_id,
-                VirtualWindow.folder_id.is_not(None),
-            )
-            .order_by(VirtualWindow.id)
-        )
-    )
-
-
-async def _tree_window_fingerprint(
-    session: AsyncSession, client_id: UUID
-) -> tuple[tuple[UUID, UUID | None], ...]:
-    rows = await session.execute(
-        select(VirtualWindow.id, VirtualWindow.folder_id)
-        .where(
-            VirtualWindow.client_id == client_id,
-            VirtualWindow.folder_id.is_not(None),
-        )
-        .order_by(VirtualWindow.id)
-    )
-    return tuple(rows)
-
-
-async def _tree_cache_fingerprint(
-    session: AsyncSession, client_id: UUID
-) -> tuple[tuple[object, ...], ...]:
-    folder_rows = await session.execute(
-        select(Folder.path, Folder.id, Folder.parent_id)
-        .where(Folder.client_id == client_id)
-        .order_by(Folder.path, Folder.id)
-    )
-    window_rows = await _tree_window_fingerprint(session, client_id)
-    return tuple(
-        ("folder", path, folder_id, parent_id)
-        for path, folder_id, parent_id in folder_rows
-    ) + tuple(("window", window_id, folder_id) for window_id, folder_id in window_rows)
-
-
 def _cached_response(cache_key: tuple[object, ...]) -> Response | None:
-    cached = _response_cache.get(cache_key)
-    if cached is None:
-        return None
-    created_at, content = cached
-    if monotonic() - created_at > _RESPONSE_CACHE_TTL_SECONDS:
-        _response_cache.pop(cache_key, None)
-        return None
-    return Response(content=content, media_type="application/json")
+    return cached_json_response(cache_key)
 
 
-def _store_response(cache_key: tuple[object, ...], payload: object) -> Response:
-    content = json.dumps(_response_payload(payload), separators=(",", ":"))
-    _response_cache[cache_key] = (monotonic(), content)
-    return Response(content=content, media_type="application/json")
+def _cached_or_stale_response(cache_key: tuple[object, ...]) -> CachedJsonResponse | None:
+    return cached_or_stale_json_response(cache_key)
 
 
-def _response_payload(payload: object) -> object:
-    if isinstance(payload, BaseModel):
-        return jsonable_encoder(payload.model_dump(exclude_none=True))
-    return jsonable_encoder(payload, exclude_none=True)
+def _store_response(
+    cache_key: tuple[object, ...],
+    payload: object,
+    *,
+    resources: set[str],
+    client_id: UUID,
+) -> Response:
+    return store_json_response(cache_key, payload, resources=resources, client_id=client_id)
+
+
+async def _build_tree_response(
+    session: AsyncSession,
+    client_id: UUID,
+    *,
+    require_client: bool,
+) -> Response:
+    if require_client:
+        await _require_client(session, client_id)
+    tree = await build_tree(session, client_id)
+    return _store_response(("tree", response_cache_scope(session), client_id), tree, resources={"tree"}, client_id=client_id)
+
+
+async def _build_activity_response(
+    session: AsyncSession,
+    client_id: UUID,
+    *,
+    include_runtime_tags: bool,
+) -> Response:
+    await _require_client(session, client_id)
+    activity = await load_client_windows_activity(
+        session,
+        client_id,
+        include_runtime_tags=include_runtime_tags,
+    )
+    return _store_response(
+        ("activity", response_cache_scope(session), client_id, include_runtime_tags),
+        activity,
+        resources={"window", "tree"},
+        client_id=client_id,
+    )
+
+
+def _refresh_response_cache(
+    cache_key: tuple[object, ...],
+    refresh: Callable[[AsyncSession], Awaitable[Response]],
+) -> None:
+    if not begin_response_cache_refresh(cache_key):
+        return
+
+    async def refresh_task() -> None:
+        try:
+            async with SessionLocal() as refresh_session:
+                await refresh(refresh_session)
+        except Exception:
+            logger.exception("polling response cache refresh failed", extra={"cache_key": repr(cache_key)})
+        finally:
+            finish_response_cache_refresh(cache_key)
+
+    asyncio.create_task(refresh_task())
 
 
 @router.post("/clients/{client_id}/folders", response_model=FolderOut)

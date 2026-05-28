@@ -10,7 +10,6 @@ from sqlalchemy.orm import load_only
 from app.models import VirtualWindow
 from app.repositories.git_worktree import list_window_git_bindings, pending_commit_window_ids
 from app.schemas import ClientWindowsActivityOut, GitWorktreeActivityOut, WindowActivityOut
-from app.services.git_worktree_agent_markers import materialize_agent_worktree_markers
 from app.services.terminal_work_status import (
     load_tree_window_activity,
     long_idle_work_status,
@@ -20,6 +19,15 @@ from app.services.window_runtime_tags import runtime_tags_for_window
 
 _ACTIVITY_CACHE_TTL_SECONDS = 10.0
 _activity_cache: dict[tuple[UUID, bool, tuple[UUID, ...]], tuple[float, ClientWindowsActivityOut]] = {}
+
+
+def clear_client_windows_activity_cache(client_id: UUID | None = None) -> None:
+    if client_id is None:
+        _activity_cache.clear()
+        return
+    stale_keys = [key for key in _activity_cache if key[0] == client_id]
+    for key in stale_keys:
+        _activity_cache.pop(key, None)
 
 
 async def load_client_windows_activity(
@@ -61,13 +69,6 @@ async def load_client_windows_activity(
         )
     )
     windows_by_id = {window.id: window for window in windows}
-    materialized = await materialize_agent_worktree_markers(
-        session,
-        client_id=client_id,
-        window_ids=window_ids,
-    )
-    if materialized:
-        await session.commit()
     git_worktrees = await _load_git_worktree_activity(session, window_ids)
 
     items: list[WindowActivityOut] = []

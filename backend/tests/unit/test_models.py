@@ -217,6 +217,7 @@ def test_metadata_schema_constraints_match_spec():
         ("events", ("virtual_window_id",)),
         ("events", ("ai_session_id",)),
         ("events", ("source_type", "source_id")),
+        ("events", ("source_type", "created_at", "id")),
         ("summary_jobs", ("virtual_window_id",)),
         ("summary_jobs", ("status", "run_after")),
     }
@@ -235,6 +236,10 @@ def test_metadata_schema_constraints_match_spec():
     assert VirtualWindow.__table__.c.remote_window_id.nullable is True
     assert VirtualWindow.__table__.c.title_manually_overridden.nullable is False
     assert VirtualWindow.__table__.c.folder_manually_overridden.nullable is False
+    assert VirtualWindow.__table__.c.agent_activity_latest_at.nullable is True
+    assert VirtualWindow.__table__.c.agent_activity_latest_event_id.nullable is True
+    assert VirtualWindow.__table__.c.agent_activity_burst_start_at.nullable is True
+    assert VirtualWindow.__table__.c.agent_activity_generation.nullable is False
     assert AiSession.__table__.c.client_id.nullable is False
     assert Event.__table__.c.client_id.nullable is False
 
@@ -242,6 +247,7 @@ def test_metadata_schema_constraints_match_spec():
     assert VirtualWindow.__table__.c.status.server_default is not None
     assert VirtualWindow.__table__.c.title_manually_overridden.server_default is not None
     assert VirtualWindow.__table__.c.folder_manually_overridden.server_default is not None
+    assert VirtualWindow.__table__.c.agent_activity_generation.server_default is not None
     assert SummaryJob.__table__.c.status.server_default is not None
     assert SummaryJob.__table__.c.attempts.server_default is not None
     assert SummaryJob.__table__.c.allow_title_folder_override.nullable is False

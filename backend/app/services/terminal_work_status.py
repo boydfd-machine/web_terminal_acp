@@ -19,7 +19,6 @@ RECENT_ACTIVE_WINDOW_SECONDS = 5 * 60
 TERMINAL_ACTIVITY_KINDS = (
     "terminal_input_command",
     "terminal_command_finished",
-    "terminal_output",
     AGENT_WORK_PRESENCE_KIND,
 )
 TERMINAL_COMMAND_KIND = "terminal_input_command"
@@ -275,8 +274,23 @@ async def _load_window_activity_data(
         window_ids,
         kind=TERMINAL_COMMAND_KIND,
     )
-    latest_activity = await _latest_activity_by_window(session, client_id, window_ids)
     latest_ai = await _latest_ai_activity_by_window(session, client_id, window_ids)
+    latest_terminal_events = await _latest_created_at_by_window_and_kinds(
+        session,
+        client_id,
+        window_ids,
+        kinds=TERMINAL_ACTIVITY_KINDS,
+    )
+    latest_terminal_output = await _latest_terminal_output_activity_by_window(
+        session,
+        client_id,
+        window_ids,
+    )
+    latest_activity = _merge_latest_created_at(
+        latest_terminal_events,
+        latest_terminal_output,
+        latest_ai,
+    )
     agent_command_windows = [
         window_id
         for window_id, event in latest_commands.items()
@@ -600,7 +614,12 @@ async def _latest_activity_by_window(
         window_ids,
         source_types=agent_activity_source_types(),
     )
-    return _merge_latest_created_at(latest_by_kind, latest_by_source)
+    latest_terminal_output = await _latest_terminal_output_activity_by_window(
+        session,
+        client_id,
+        window_ids,
+    )
+    return _merge_latest_created_at(latest_by_kind, latest_terminal_output, latest_by_source)
 
 
 async def _latest_ai_activity_by_window(
@@ -616,6 +635,24 @@ async def _latest_ai_activity_by_window(
     )
 
 
+async def _latest_terminal_output_activity_by_window(
+    session: AsyncSession,
+    client_id: UUID,
+    window_ids: list[UUID],
+) -> dict[UUID, datetime]:
+    if not window_ids:
+        return {}
+
+    rows = await session.execute(
+        select(VirtualWindow.id, VirtualWindow.terminal_last_output_at).where(
+            VirtualWindow.client_id == client_id,
+            VirtualWindow.id.in_(window_ids),
+            VirtualWindow.terminal_last_output_at.is_not(None),
+        )
+    )
+    return {window_id: activity_at for window_id, activity_at in rows if activity_at is not None}
+
+
 async def _latest_created_at_by_window_and_kinds(
     session: AsyncSession,
     client_id: UUID,
@@ -623,14 +660,13 @@ async def _latest_created_at_by_window_and_kinds(
     *,
     kinds: tuple[str, ...],
 ) -> dict[UUID, datetime]:
-    latest = await _latest_created_at_by_window_for_event_values(
+    return await _latest_created_at_by_window_for_event_values(
         session,
         client_id,
         window_ids,
         value_column=Event.kind,
         values=kinds,
     )
-    return _merge_latest_created_at(*latest)
 
 
 async def _latest_created_at_by_window_and_sources(
@@ -640,14 +676,13 @@ async def _latest_created_at_by_window_and_sources(
     *,
     source_types: tuple[EventSourceType, ...],
 ) -> dict[UUID, datetime]:
-    latest = await _latest_created_at_by_window_for_event_values(
+    return await _latest_created_at_by_window_for_event_values(
         session,
         client_id,
         window_ids,
         value_column=Event.source_type,
         values=source_types,
     )
-    return _merge_latest_created_at(*latest)
 
 
 async def _latest_created_at_by_window_for_event_values(
@@ -657,12 +692,12 @@ async def _latest_created_at_by_window_for_event_values(
     *,
     value_column,
     values: tuple,
-) -> list[dict[UUID, datetime]]:
+) -> dict[UUID, datetime]:
     if not window_ids or not values:
-        return []
+        return {}
 
-    latest_by_value: list[dict[UUID, datetime]] = []
-    for value in values:
+    columns = [VirtualWindow.id]
+    for index, value in enumerate(values):
         latest_created_at = (
             select(Event.created_at)
             .where(
@@ -673,17 +708,23 @@ async def _latest_created_at_by_window_for_event_values(
             .order_by(desc(Event.created_at))
             .limit(1)
             .scalar_subquery()
+            .label(f"latest_created_at_{index}")
         )
-        rows = await session.execute(
-            select(VirtualWindow.id, latest_created_at.label("created_at")).where(
-                VirtualWindow.client_id == client_id,
-                VirtualWindow.id.in_(window_ids),
-            )
+        columns.append(latest_created_at)
+
+    rows = await session.execute(
+        select(*columns).where(
+            VirtualWindow.client_id == client_id,
+            VirtualWindow.id.in_(window_ids),
         )
-        latest_by_value.append(
-            {window_id: created_at for window_id, created_at in rows if created_at is not None}
-        )
-    return latest_by_value
+    )
+    latest: dict[UUID, datetime] = {}
+    for row in rows:
+        window_id = row[0]
+        candidates = [created_at for created_at in row[1:] if created_at is not None]
+        if candidates:
+            latest[window_id] = max(candidates)
+    return latest
 
 
 def _merge_latest_created_at(*items: dict[UUID, datetime]) -> dict[UUID, datetime]:

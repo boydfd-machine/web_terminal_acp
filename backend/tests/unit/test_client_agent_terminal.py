@@ -106,6 +106,80 @@ async def test_send_input_is_not_blocked_by_default_executor_starvation(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_small_send_input_uses_immediate_writable_pty_fast_path(monkeypatch) -> None:
+    writes: list[tuple[int, bytes]] = []
+    control_calls: list[tuple[object, ...]] = []
+    keepalive = asyncio.create_task(asyncio.sleep(10))
+
+    def fake_select(read_list, write_list, error_list, timeout):
+        assert read_list == []
+        assert write_list == [123]
+        assert error_list == []
+        assert timeout == 0
+        return [], [123], []
+
+    def fake_write(fd: int, data: bytes) -> int:
+        writes.append((fd, bytes(data)))
+        return len(data)
+
+    async def fake_run_pty_control(*args) -> None:
+        control_calls.append(args)
+
+    monkeypatch.setattr(client_terminal.select, "select", fake_select)
+    monkeypatch.setattr(client_terminal.os, "write", fake_write)
+    monkeypatch.setattr(client_terminal, "_run_pty_control", fake_run_pty_control)
+
+    multiplexer = ClientTerminalMultiplexer()
+    multiplexer._attached[str(WINDOW_ID)] = _AttachedTerminal(
+        master_fd=123,
+        process=object(),
+        shadow_session="web_terminal_view__7",
+        task=keepalive,
+    )
+    try:
+        await multiplexer.send_input(WINDOW_ID, b"x")
+    finally:
+        keepalive.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await keepalive
+
+    assert writes == [(123, b"x")]
+    assert control_calls == []
+
+
+@pytest.mark.asyncio
+async def test_send_input_falls_back_to_executor_when_pty_is_not_immediately_writable(monkeypatch) -> None:
+    writes: list[tuple[int, bytes]] = []
+    keepalive = asyncio.create_task(asyncio.sleep(10))
+
+    def fake_select(_read_list, _write_list, _error_list, _timeout):
+        return [], [], []
+
+    def fake_write(fd: int, data: bytes) -> int:
+        writes.append((fd, bytes(data)))
+        return len(data)
+
+    monkeypatch.setattr(client_terminal.select, "select", fake_select)
+    monkeypatch.setattr(client_terminal.os, "write", fake_write)
+
+    multiplexer = ClientTerminalMultiplexer()
+    multiplexer._attached[str(WINDOW_ID)] = _AttachedTerminal(
+        master_fd=123,
+        process=object(),
+        shadow_session="web_terminal_view__7",
+        task=keepalive,
+    )
+    try:
+        await multiplexer.send_input(WINDOW_ID, b"x")
+    finally:
+        keepalive.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await keepalive
+
+    assert writes == [(123, b"x")]
+
+
+@pytest.mark.asyncio
 async def test_resize_applies_dimensions_to_attached_pty_and_shadow_tmux_window(monkeypatch) -> None:
     resizes: list[tuple[int, int, int]] = []
     signals: list[int] = []

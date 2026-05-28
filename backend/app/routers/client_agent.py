@@ -62,6 +62,8 @@ BACKGROUND_MESSAGE_QUEUE_WARN_SECONDS = 1.0
 TERMINAL_OUTPUT_QUEUE_MAX_SIZE = BACKGROUND_MESSAGE_QUEUE_MAX_SIZE
 LOW_PRIORITY_BACKGROUND_QUEUE_MAX_SIZE = 0
 LOW_PRIORITY_BACKGROUND_QUEUE_WARN_SIZE = 10000
+TERMINAL_OUTPUT_RECORD_BATCH_BYTES = 32 * 1024
+TERMINAL_OUTPUT_RECORD_BATCH_DELAY_SECONDS = 0.02
 
 
 @dataclass(frozen=True)
@@ -71,6 +73,10 @@ class _TerminalOutputRecordingJob:
     clean_data: bytes
     commands: tuple[ParsedCommandMarker, ...]
     worktree_markers: tuple[ParsedWorktreeMarker, ...]
+
+
+def _can_batch_terminal_output_recording(job: _TerminalOutputRecordingJob) -> bool:
+    return bool(job.clean_data) and not job.commands and not job.worktree_markers
 
 
 @dataclass(frozen=True)
@@ -319,14 +325,17 @@ async def _handle_inventory_message(websocket: WebSocket, client_id: UUID, messa
         _mark_client_seen(client)
         changed_count = await reconcile_inventory(session, client_id, inventory)
         await session.commit()
-        resources = ["clients"]
-        if changed_count:
-            resources.extend(["tree", "window"])
         await _ui_event_hub(websocket).publish_invalidation(
-            resources,
+            ["clients"],
             client_id=client_id,
-            reason="client_inventory",
+            reason="client_inventory_seen",
         )
+        if changed_count:
+            await _ui_event_hub(websocket).publish_invalidation(
+                ["tree", "window"],
+                client_id=client_id,
+                reason="client_inventory",
+            )
         return True
 
 
@@ -466,7 +475,7 @@ async def _handle_ai_event_message_with_ack_sender(
             if await index_managed_agent_event_if_ready(session, _ready_es_client(websocket), row):
                 await _commit_session(session)
         await _ui_event_hub(websocket).publish_invalidation(
-            ["agent_record", "window", "tree", "search"],
+            ["agent_record", "window", "search"],
             client_id=client_id,
             window_id=message.window_id,
             reason="ai_event",
@@ -559,7 +568,7 @@ async def _handle_agent_work_presence_message(
         )
         await _commit_session(session)
     await _ui_event_hub(websocket).publish_invalidation(
-        ["window", "tree"],
+        ["window"],
         client_id=client_id,
         window_id=message.window_id,
         reason="agent_work_presence",
@@ -682,25 +691,25 @@ async def _record_terminal_output_job(
         if command_events:
             with contextlib.suppress(Exception):
                 await _ui_event_hub(websocket).publish_invalidation(
-                    ["agent_record", "command_history", "window", "tree", "search"],
+                    ["agent_record", "command_history", "window", "search"],
                     client_id=job.client_id,
                     window_id=job.window_id,
                     reason="terminal_command",
                 )
-        output_event = None
+        output_recorded = False
         if job.clean_data:
-            output_event = await record_terminal_output_chunk(
+            output_recorded = await record_terminal_output_chunk(
                 session,
                 job.client_id,
                 job.window_id,
                 job.clean_data,
                 _ready_es_client(websocket),
             )
-        if output_event is not None:
+        if output_recorded:
             with contextlib.suppress(Exception):
                 await _ui_event_hub(websocket).publish_debounced_invalidation(
                     ("terminal_output", job.client_id, job.window_id),
-                    ["window", "tree", "search"],
+                    ["window", "search"],
                     client_id=job.client_id,
                     window_id=job.window_id,
                     reason="terminal_output",
@@ -886,9 +895,82 @@ async def _terminal_output_recording_worker(
     queue: asyncio.Queue[_TerminalOutputRecordingJob],
     handler,
 ) -> None:
-    while True:
-        job = await queue.get()
+    pending_client_id: UUID | None = None
+    pending_window_id: UUID | None = None
+    pending_data = bytearray()
+    pending_done_count = 0
+
+    async def flush_pending() -> None:
+        nonlocal pending_client_id, pending_window_id, pending_data, pending_done_count
+        if pending_client_id is None or pending_window_id is None or not pending_data:
+            return
+        job = _TerminalOutputRecordingJob(
+            client_id=pending_client_id,
+            window_id=pending_window_id,
+            clean_data=bytes(pending_data),
+            commands=(),
+            worktree_markers=(),
+        )
+        done_count = pending_done_count
+        pending_client_id = None
+        pending_window_id = None
+        pending_data = bytearray()
+        pending_done_count = 0
         try:
+            await handler(job)
+        finally:
+            for _ in range(done_count):
+                queue.task_done()
+
+    async def flush_pending_and_log() -> None:
+        target_window_id = pending_window_id
+        try:
+            await flush_pending()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "client-agent terminal output recording handler failed",
+                extra={"client_id": str(client_id), "window_id": str(target_window_id)},
+            )
+
+    while True:
+        if pending_data and len(pending_data) >= TERMINAL_OUTPUT_RECORD_BATCH_BYTES:
+            await flush_pending_and_log()
+            continue
+
+        try:
+            if pending_data:
+                job = await asyncio.wait_for(
+                    queue.get(),
+                    timeout=TERMINAL_OUTPUT_RECORD_BATCH_DELAY_SECONDS,
+                )
+            else:
+                job = await queue.get()
+        except asyncio.TimeoutError:
+            await flush_pending_and_log()
+            continue
+
+        task_done_now = True
+        try:
+            if _can_batch_terminal_output_recording(job):
+                if (
+                    pending_window_id is not None
+                    and (
+                        pending_client_id != job.client_id
+                        or pending_window_id != job.window_id
+                        or len(pending_data) + len(job.clean_data) > TERMINAL_OUTPUT_RECORD_BATCH_BYTES
+                    )
+                ):
+                    await flush_pending_and_log()
+                pending_client_id = job.client_id
+                pending_window_id = job.window_id
+                pending_data.extend(job.clean_data)
+                pending_done_count += 1
+                task_done_now = False
+                continue
+
+            await flush_pending_and_log()
             await handler(job)
         except asyncio.CancelledError:
             raise
@@ -901,7 +983,8 @@ async def _terminal_output_recording_worker(
                 },
             )
         finally:
-            queue.task_done()
+            if task_done_now:
+                queue.task_done()
 
 
 async def _git_worktree_tracking_worker(

@@ -25,6 +25,7 @@ function notification(id: string, read: boolean): TerminalNotification {
 const CLIENT_ID = "client-1";
 const WINDOW_ID = "window-1";
 const COMPLETED_AT = "2026-05-24T12:00:00.000Z";
+const COMPLETED_AT_WITHOUT_MILLIS = "2026-05-24T12:00:00Z";
 
 function treeWithCompletion(completedAt: string): TreeFolder[] {
   return [
@@ -85,6 +86,15 @@ describe("clearTerminalNotifications", () => {
     expect(next).toEqual([]);
     expect(loadStoredNotifications(CLIENT_ID)).toEqual([]);
     expect(syncTerminalNotifications(CLIENT_ID, treeWithCompletion(COMPLETED_AT))).toEqual([]);
+  });
+
+  it("keeps cleared notifications hidden when the same completion time changes ISO format", () => {
+    syncTerminalNotifications(CLIENT_ID, treeWithCompletion(COMPLETED_AT));
+
+    const next = clearTerminalNotifications(CLIENT_ID);
+
+    expect(next).toEqual([]);
+    expect(syncTerminalNotifications(CLIENT_ID, treeWithCompletion(COMPLETED_AT_WITHOUT_MILLIS))).toEqual([]);
   });
 });
 

@@ -20,6 +20,25 @@ function ackStorageKey(clientId: string, windowId: string): string {
   return `${ACK_STORAGE_PREFIX}${clientId}:${windowId}`;
 }
 
+function completionTimeMillis(value: string): number | null {
+  const millis = Date.parse(value);
+  return Number.isNaN(millis) ? null : millis;
+}
+
+function acknowledgedAtOrAfter(acknowledgedAt: string | null, completedAt: string): boolean {
+  if (acknowledgedAt === null) {
+    return false;
+  }
+
+  const acknowledgedMillis = completionTimeMillis(acknowledgedAt);
+  const completedMillis = completionTimeMillis(completedAt);
+  if (acknowledgedMillis === null || completedMillis === null) {
+    return acknowledgedAt >= completedAt;
+  }
+
+  return acknowledgedMillis >= completedMillis;
+}
+
 export function flattenTreeWindows(folders: TreeFolder[] | undefined): TreeWindow[] {
   if (!folders) {
     return [];
@@ -54,6 +73,11 @@ export function writeAcknowledgedCompletionAt(
   completedAt: string
 ): void {
   if (typeof window === "undefined") {
+    return;
+  }
+
+  const currentAcknowledgedAt = readAcknowledgedCompletionAt(clientId, windowId);
+  if (acknowledgedAtOrAfter(currentAcknowledgedAt, completedAt)) {
     return;
   }
 
@@ -112,10 +136,10 @@ export function syncTerminalNotifications(
     const id = `${clientId}:${treeWindow.id}:${completedAt}`;
     const previous = existingById.get(id);
     const acknowledgedAt = readAcknowledgedCompletionAt(clientId, treeWindow.id);
-    if (previous === undefined && acknowledgedAt !== null && acknowledgedAt >= completedAt) {
+    if (previous === undefined && acknowledgedAtOrAfter(acknowledgedAt, completedAt)) {
       continue;
     }
-    const read = previous?.read ?? (acknowledgedAt !== null && acknowledgedAt >= completedAt);
+    const read = previous?.read ?? acknowledgedAtOrAfter(acknowledgedAt, completedAt);
 
     next.push({
       id,
@@ -201,7 +225,7 @@ export function hasUnreadTerminalNotification(
   }
 
   const acknowledgedAt = readAcknowledgedCompletionAt(clientId, windowId);
-  return acknowledgedAt === null || acknowledgedAt < completedAt;
+  return !acknowledgedAtOrAfter(acknowledgedAt, completedAt);
 }
 
 function isTerminalNotification(value: unknown): value is TerminalNotification {

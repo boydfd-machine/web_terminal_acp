@@ -3,7 +3,12 @@ from uuid import UUID
 
 import pytest
 
-from app.routers.client_agent import _WindowFairMessageQueue, _enqueue_background_message
+from app.routers.client_agent import (
+    _TerminalOutputRecordingJob,
+    _WindowFairMessageQueue,
+    _enqueue_background_message,
+    _terminal_output_recording_worker,
+)
 from app.services.runtime.protocol import AgentMessage
 
 
@@ -125,3 +130,113 @@ async def test_ai_event_enqueue_waits_when_queue_is_full_without_dropping() -> N
     await asyncio.wait_for(enqueue_task, timeout=0.1)
     assert queue.get_nowait() is newest
     queue.task_done()
+
+
+@pytest.mark.asyncio
+async def test_terminal_output_recording_worker_batches_plain_output_by_window(monkeypatch) -> None:
+    monkeypatch.setattr("app.routers.client_agent.TERMINAL_OUTPUT_RECORD_BATCH_DELAY_SECONDS", 0.001)
+    queue: asyncio.Queue[_TerminalOutputRecordingJob] = asyncio.Queue()
+    handled: list[_TerminalOutputRecordingJob] = []
+
+    async def handler(job: _TerminalOutputRecordingJob) -> None:
+        handled.append(job)
+
+    worker = asyncio.create_task(
+        _terminal_output_recording_worker(client_id=CLIENT_ID, queue=queue, handler=handler)
+    )
+    try:
+        await queue.put(_terminal_output_job(b"first"))
+        await queue.put(_terminal_output_job(b"second"))
+        await asyncio.wait_for(queue.join(), timeout=0.2)
+    finally:
+        worker.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await worker
+
+    assert [(job.window_id, job.clean_data) for job in handled] == [(WINDOW_ID, b"firstsecond")]
+
+
+@pytest.mark.asyncio
+async def test_terminal_output_recording_worker_flushes_before_marker_job(monkeypatch) -> None:
+    monkeypatch.setattr("app.routers.client_agent.TERMINAL_OUTPUT_RECORD_BATCH_DELAY_SECONDS", 1.0)
+    queue: asyncio.Queue[_TerminalOutputRecordingJob] = asyncio.Queue()
+    handled: list[_TerminalOutputRecordingJob] = []
+
+    async def handler(job: _TerminalOutputRecordingJob) -> None:
+        handled.append(job)
+
+    marker = {"command": "echo marker", "window_id": str(WINDOW_ID)}
+    worker = asyncio.create_task(
+        _terminal_output_recording_worker(client_id=CLIENT_ID, queue=queue, handler=handler)
+    )
+    try:
+        await queue.put(_terminal_output_job(b"plain"))
+        await queue.put(_terminal_output_job(b"", commands=(marker,)))
+        await asyncio.wait_for(queue.join(), timeout=0.2)
+    finally:
+        worker.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await worker
+
+    assert len(handled) == 2
+    assert handled[0].clean_data == b"plain"
+    assert handled[0].commands == ()
+    assert handled[1].clean_data == b""
+    assert handled[1].commands == (marker,)
+
+
+@pytest.mark.asyncio
+async def test_terminal_output_recording_worker_does_not_join_before_batch_flush(monkeypatch) -> None:
+    monkeypatch.setattr("app.routers.client_agent.TERMINAL_OUTPUT_RECORD_BATCH_DELAY_SECONDS", 0.05)
+    queue: asyncio.Queue[_TerminalOutputRecordingJob] = asyncio.Queue()
+    handled: list[_TerminalOutputRecordingJob] = []
+    release_handler = asyncio.Event()
+
+    async def handler(job: _TerminalOutputRecordingJob) -> None:
+        handled.append(job)
+        await release_handler.wait()
+
+    worker = asyncio.create_task(
+        _terminal_output_recording_worker(client_id=CLIENT_ID, queue=queue, handler=handler)
+    )
+    join_task: asyncio.Task[None] | None = None
+    try:
+        await queue.put(_terminal_output_job(b"pending"))
+        join_task = asyncio.create_task(queue.join())
+        await asyncio.sleep(0.01)
+
+        assert not join_task.done()
+
+        await asyncio.wait_for(_handled_count(handled, 1), timeout=0.2)
+        assert not join_task.done()
+
+        release_handler.set()
+        await asyncio.wait_for(join_task, timeout=0.2)
+    finally:
+        if join_task is not None and not join_task.done():
+            join_task.cancel()
+        worker.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await worker
+
+    assert handled[0].clean_data == b"pending"
+
+
+def _terminal_output_job(
+    clean_data: bytes,
+    *,
+    window_id: UUID = WINDOW_ID,
+    commands: tuple[dict, ...] = (),
+) -> _TerminalOutputRecordingJob:
+    return _TerminalOutputRecordingJob(
+        client_id=CLIENT_ID,
+        window_id=window_id,
+        clean_data=clean_data,
+        commands=commands,
+        worktree_markers=(),
+    )
+
+
+async def _handled_count(handled: list[_TerminalOutputRecordingJob], count: int) -> None:
+    while len(handled) < count:
+        await asyncio.sleep(0)

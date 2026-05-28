@@ -66,6 +66,7 @@ async def test_attach_recreates_missing_tmux_window_before_shadow_attach(monkeyp
     monkeypatch.setattr(local_runtime, "configure_pty_slave", lambda fd: None)
     monkeypatch.setattr(local_runtime.os, "close", lambda fd: None)
     monkeypatch.setattr(local_runtime.os, "read", fake_read)
+    monkeypatch.setattr(local_runtime.os, "set_blocking", lambda fd, blocking: (_ for _ in ()).throw(OSError))
     monkeypatch.setattr(local_runtime.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
     runtime = LocalTerminalRuntime(FakeTmuxManager())
@@ -219,6 +220,80 @@ async def test_send_input_is_not_blocked_by_default_executor_starvation(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_small_send_input_uses_immediate_writable_pty_fast_path(monkeypatch) -> None:
+    writes: list[tuple[int, bytes]] = []
+    control_calls: list[tuple[object, ...]] = []
+    keepalive = asyncio.create_task(asyncio.sleep(10))
+    window = RuntimeWindow(session_id="web-terminal", window_id="@7")
+
+    def fake_select(read_list, write_list, error_list, timeout):
+        assert read_list == []
+        assert write_list == [123]
+        assert error_list == []
+        assert timeout == 0
+        return [], [123], []
+
+    def fake_write(fd: int, data: bytes) -> int:
+        writes.append((fd, bytes(data)))
+        return len(data)
+
+    async def fake_run_pty_control(*args) -> None:
+        control_calls.append(args)
+
+    monkeypatch.setattr(local_runtime.select, "select", fake_select)
+    monkeypatch.setattr(local_runtime.os, "write", fake_write)
+    monkeypatch.setattr(local_runtime, "_run_pty_control", fake_run_pty_control)
+
+    runtime = LocalTerminalRuntime(object())
+    runtime._sessions[(window.session_id, window.window_id)] = _LocalTerminalSession(
+        master_fd=123,
+        process=object(),
+        task=keepalive,
+    )
+    try:
+        await runtime.send_input(window, b"x")
+    finally:
+        keepalive.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await keepalive
+
+    assert writes == [(123, b"x")]
+    assert control_calls == []
+
+
+@pytest.mark.asyncio
+async def test_send_input_falls_back_to_executor_when_pty_is_not_immediately_writable(monkeypatch) -> None:
+    writes: list[tuple[int, bytes]] = []
+    keepalive = asyncio.create_task(asyncio.sleep(10))
+    window = RuntimeWindow(session_id="web-terminal", window_id="@7")
+
+    def fake_select(_read_list, _write_list, _error_list, _timeout):
+        return [], [], []
+
+    def fake_write(fd: int, data: bytes) -> int:
+        writes.append((fd, bytes(data)))
+        return len(data)
+
+    monkeypatch.setattr(local_runtime.select, "select", fake_select)
+    monkeypatch.setattr(local_runtime.os, "write", fake_write)
+
+    runtime = LocalTerminalRuntime(object())
+    runtime._sessions[(window.session_id, window.window_id)] = _LocalTerminalSession(
+        master_fd=123,
+        process=object(),
+        task=keepalive,
+    )
+    try:
+        await runtime.send_input(window, b"x")
+    finally:
+        keepalive.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await keepalive
+
+    assert writes == [(123, b"x")]
+
+
+@pytest.mark.asyncio
 async def test_resize_returns_before_shadow_tmux_resize_completes(monkeypatch) -> None:
     resizes: list[tuple[int, int, int]] = []
     shadow_resize_started = asyncio.Event()
@@ -307,3 +382,44 @@ async def test_pipe_output_keeps_draining_pty_when_sender_is_backpressured(monke
         await asyncio.wait_for(output_task, timeout=1)
 
     assert received == [b"first", b"second"]
+
+
+@pytest.mark.asyncio
+async def test_pipe_output_uses_event_loop_fd_reader_for_prompt_output() -> None:
+    received: list[bytes] = []
+    window = RuntimeWindow(session_id="web-terminal", window_id="@7")
+    read_fd, write_fd = local_runtime.os.pipe()
+
+    class FakeProcess:
+        returncode = 0
+
+        def terminate(self) -> None:
+            self.returncode = -15
+
+        async def wait(self) -> int:
+            return self.returncode or 0
+
+    session = _LocalTerminalSession(master_fd=read_fd, process=FakeProcess())
+
+    async def sender(data: bytes) -> None:
+        received.append(data)
+
+    runtime = LocalTerminalRuntime(object())
+    output_task = asyncio.create_task(
+        runtime._pipe_output((window.session_id, window.window_id), session, sender)
+    )
+    try:
+        local_runtime.os.write(write_fd, b"prompt")
+        deadline = asyncio.get_event_loop().time() + 1
+        while received != [b"prompt"]:
+            if asyncio.get_event_loop().time() > deadline:
+                raise AssertionError(f"event-loop fd reader did not deliver output: {received!r}")
+            await asyncio.sleep(0.01)
+    finally:
+        with contextlib.suppress(OSError):
+            local_runtime.os.close(write_fd)
+        output_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await output_task
+
+    assert session.reader_task is None

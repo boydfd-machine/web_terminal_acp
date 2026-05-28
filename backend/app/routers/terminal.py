@@ -5,6 +5,7 @@ import contextlib
 import json
 import logging
 import time
+from dataclasses import dataclass
 from uuid import UUID
 
 from elasticsearch import AsyncElasticsearch
@@ -22,7 +23,7 @@ from app.services.runtime.client_connections import ClientConnectionRegistry
 from app.services.runtime.local import LocalTerminalRuntime
 from app.services.runtime.remote import RemoteClientUnavailable, RemoteRuntime, RemoteTerminalError
 from app.services.runtime.types import RuntimeWindow
-from app.services.terminal_bridge import ResizeControl, SelectWindowControl, parse_text_input
+from app.services.terminal_bridge import OutputAckControl, ResizeControl, SelectWindowControl, parse_text_input
 from app.services.terminal_stream_markers import TerminalStreamMarkerExtractor
 from app.services.git_worktree_coordinator import (
     commands_need_git_worktree_tracking,
@@ -42,6 +43,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["terminal"])
 REMOTE_RECONNECT_RETRY_AFTER_MS = 5000
 ATTACH_SNAPSHOT_GRACE_SECONDS = 0.5
+LOCAL_OUTPUT_RECORD_BATCH_BYTES = 32 * 1024
+LOCAL_OUTPUT_RECORD_BATCH_DELAY_SECONDS = 0.02
+
+
+@dataclass(frozen=True)
+class _LocalTerminalOutputRecordJob:
+    target_window_id: UUID
+    clean_data: bytes
+    commands: list
+    worktree_markers: list
+    is_attach_snapshot: bool
 
 
 def mark_window_error(window: VirtualWindow) -> None:
@@ -251,6 +263,8 @@ async def terminal_websocket(
     current_runtime_window = runtime_window
     browser_input_seen = False
     attach_started_at = time.monotonic()
+    local_output_record_queue: asyncio.Queue[_LocalTerminalOutputRecordJob] = asyncio.Queue()
+    local_output_record_worker: asyncio.Task[None] | None = None
 
     async def publish_selection(selected_runtime_window: RuntimeWindow) -> None:
         nonlocal current_window_id, current_runtime_window, marker_extractor
@@ -290,25 +304,25 @@ async def terminal_websocket(
                 if command_events:
                     with contextlib.suppress(Exception):
                         await _ui_event_hub(websocket).publish_invalidation(
-                            ["agent_record", "command_history", "window", "tree", "search"],
+                            ["agent_record", "command_history", "window", "search"],
                             client_id=client_id,
                             window_id=target_window_id,
                             reason="terminal_command",
                         )
-                output_event = None
+                output_recorded = False
                 if clean_data:
-                    output_event = await record_terminal_output_chunk(
+                    output_recorded = await record_terminal_output_chunk(
                         session,
                         client_id,
                         target_window_id,
                         clean_data,
                         _ready_es_client(websocket),
                     )
-                if output_event is not None:
+                if output_recorded:
                     with contextlib.suppress(Exception):
                         await _ui_event_hub(websocket).publish_debounced_invalidation(
                             ("terminal_output", client_id, target_window_id),
-                            ["window", "tree", "search"],
+                            ["window", "search"],
                             client_id=client_id,
                             window_id=target_window_id,
                             reason="terminal_output",
@@ -415,6 +429,86 @@ async def terminal_websocket(
                 )
             )
 
+    def _can_batch_local_output_recording(job: _LocalTerminalOutputRecordJob) -> bool:
+        return (
+            bool(job.clean_data)
+            and not job.commands
+            and not job.worktree_markers
+            and not job.is_attach_snapshot
+        )
+
+    async def _local_output_recording_worker() -> None:
+        pending_window_id: UUID | None = None
+        pending_data = bytearray()
+
+        async def flush_pending() -> None:
+            nonlocal pending_window_id, pending_data
+            if pending_window_id is None or not pending_data:
+                return
+            target_window_id = pending_window_id
+            data = bytes(pending_data)
+            pending_window_id = None
+            pending_data = bytearray()
+            await _record_local_terminal_output_task(
+                target_window_id,
+                data,
+                [],
+                [],
+                is_attach_snapshot=False,
+            )
+
+        while True:
+            if pending_data and len(pending_data) >= LOCAL_OUTPUT_RECORD_BATCH_BYTES:
+                await flush_pending()
+                continue
+
+            try:
+                if pending_data:
+                    job = await asyncio.wait_for(
+                        local_output_record_queue.get(),
+                        timeout=LOCAL_OUTPUT_RECORD_BATCH_DELAY_SECONDS,
+                    )
+                else:
+                    job = local_output_record_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            except asyncio.TimeoutError:
+                await flush_pending()
+                if local_output_record_queue.empty():
+                    return
+                continue
+
+            try:
+                if _can_batch_local_output_recording(job):
+                    if (
+                        pending_window_id is not None
+                        and (
+                            pending_window_id != job.target_window_id
+                            or len(pending_data) + len(job.clean_data) > LOCAL_OUTPUT_RECORD_BATCH_BYTES
+                        )
+                    ):
+                        await flush_pending()
+                    pending_window_id = job.target_window_id
+                    pending_data.extend(job.clean_data)
+                    continue
+
+                await flush_pending()
+                await _record_local_terminal_output_task(
+                    job.target_window_id,
+                    job.clean_data,
+                    job.commands,
+                    job.worktree_markers,
+                    is_attach_snapshot=job.is_attach_snapshot,
+                )
+            finally:
+                local_output_record_queue.task_done()
+
+    def _queue_local_output_recording(job: _LocalTerminalOutputRecordJob) -> None:
+        nonlocal local_output_record_worker
+        local_output_record_queue.put_nowait(job)
+        if local_output_record_worker is None or local_output_record_worker.done():
+            local_output_record_worker = asyncio.create_task(_local_output_recording_worker())
+
     async def record_and_publish_output(data: bytes) -> None:
         target_window_id = current_window_id
         clean_data, commands, worktree_markers = marker_extractor.feed(data)
@@ -426,8 +520,8 @@ async def terminal_websocket(
         if clean_data:
             await broker.publish_view_output(client_id, view_id, clean_data)
         if (commands or worktree_markers or clean_data) and not is_attach_snapshot:
-            asyncio.create_task(
-                _record_local_terminal_output_task(
+            _queue_local_output_recording(
+                _LocalTerminalOutputRecordJob(
                     target_window_id,
                     clean_data,
                     commands,
@@ -484,7 +578,8 @@ async def terminal_websocket(
         return True
 
     await websocket.accept()
-    await broker.subscribe(client_id, view_id, websocket.send_bytes, websocket.send_text)
+    output_sender = websocket.send_bytes
+    await broker.subscribe(client_id, view_id, output_sender, websocket.send_text)
     try:
         try:
             attached_runtime_window = await broker.attach(
@@ -599,6 +694,13 @@ async def terminal_websocket(
                         )
                         await websocket.close(code=1013)
                         return
+                elif isinstance(action, OutputAckControl):
+                    await broker.acknowledge_output(
+                        client_id,
+                        view_id,
+                        output_sender,
+                        bytes_acked=action.bytes_acked,
+                    )
                 elif isinstance(action, bytes):
                     browser_input_seen = True
                     try:
@@ -628,7 +730,7 @@ async def terminal_websocket(
         await websocket.close(code=1013)
         return
     finally:
-        await broker.unsubscribe(client_id, view_id, websocket.send_bytes, websocket.send_text)
+        await broker.unsubscribe(client_id, view_id, output_sender, websocket.send_text)
 
 
 @router.websocket("/api/terminal/{window_id}")

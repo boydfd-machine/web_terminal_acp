@@ -1,13 +1,14 @@
 {
   "name": "web-terminal-acp-frontend",
   "private": true,
-  "version": "2.6.4",
+  "version": "2.6.16",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "test": "vitest run --environment jsdom tests/terminalGrouping.test.ts tests/terminalNotifications.test.ts tests/terminalTree.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:docker": "playwright test --config=playwright.config.docker.ts",
     "electron:dev": "concurrently -k \"vite\" \"wait-on http://127.0.0.1:5173 && cross-env ELECTRON_DEV=1 electron .\"",
@@ -36,8 +37,10 @@
     "cross-env": "^7.0.3",
     "electron": "^35.0.0",
     "electron-builder": "^25.1.8",
+    "jsdom": "^25.0.1",
     "typescript": "^5.5.4",
     "vite": "^5.4.2",
+    "vitest": "^2.1.9",
     "wait-on": "^8.0.2"
   }
 }

@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.config import Settings
@@ -23,6 +23,24 @@ async def session_factory(tmp_path):
     Session = async_sessionmaker(engine, expire_on_commit=False)
     try:
         yield Session
+    finally:
+        await engine.dispose()
+
+
+@pytest.fixture
+async def counted_session_factory(tmp_path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/counted.db")
+    statements: list[str] = []
+
+    @event.listens_for(engine.sync_engine, "before_cursor_execute")
+    def record_statement(_connection, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement)
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        yield Session, statements
     finally:
         await engine.dispose()
 
@@ -594,6 +612,43 @@ async def test_collect_summary_context_over_budget_keeps_recent_commands_and_mar
         "truncated": True,
         "budget_bytes": 1600,
     }
+
+
+@pytest.mark.asyncio
+async def test_collect_summary_context_uses_index_friendly_agent_event_reads(
+    counted_session_factory,
+):
+    session_factory, statements = counted_session_factory
+    created_at = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
+    async with session_factory() as session:
+        window = await create_local_window(session)
+        session.add(
+            Event(
+                client_id=window.client_id,
+                source_type=EventSourceType.agent_tool_record,
+                source_id="agent-record",
+                kind="response_item",
+                virtual_window_id=window.id,
+                payload_json={"provider": "codex", "role": "assistant", "content": "working"},
+                fingerprint="agent-record-index-friendly",
+                created_at=created_at,
+            )
+        )
+        await session.commit()
+
+    statements.clear()
+    async with session_factory() as session:
+        window = (await session.execute(select(VirtualWindow))).scalar_one()
+        await collect_summary_context(session, window)
+
+    event_reads = [
+        statement
+        for statement in statements
+        if "FROM events" in statement and "SELECT events" in statement
+    ]
+    assert event_reads
+    assert all("events.client_id" in statement for statement in event_reads)
+    assert all("source_type IN" not in statement for statement in event_reads)
 
 
 def test_settings_default_terminal_summary_input_context_max_bytes():

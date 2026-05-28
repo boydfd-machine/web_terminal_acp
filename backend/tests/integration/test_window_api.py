@@ -26,10 +26,14 @@ from app.models import (
 )
 from app.repositories.clients import create_client, ensure_local_client
 from app.repositories.windows import create_window
+from app.routers import folders as folders_router
 from app.routers import windows as windows_router
 from app.routers.windows import get_tmux_manager
+from app.services import polling_response_cache
+from app.services.polling_response_cache import clear_polling_response_cache
 from app.services.runtime.client_connections import ClientConnectionClosed
 from app.services.runtime.protocol import AgentMessage
+from app.services.window_activity_api import clear_client_windows_activity_cache
 
 try:
     from app.db import Base
@@ -52,6 +56,44 @@ class FakeTmuxManager:
 
     async def kill_window(self, target: object) -> None:
         self.killed_targets.append(target)
+
+
+class CommitFailingOnSecondCallTmuxManager(FakeTmuxManager):
+    commit_calls = 0
+
+
+class ObservingTmuxManager(FakeTmuxManager):
+    observed_in_transaction: bool | None = None
+
+    async def create_window(
+        self,
+        cwd: str | None,
+        shell_command: str | None,
+        *,
+        client_id: UUID | str | None = None,
+        window_id: UUID | str | None = None,
+    ):
+        observed_session = getattr(windows_router, "_TEST_OBSERVED_SESSION", None)
+        if observed_session is not None:
+            self.__class__.observed_in_transaction = observed_session.in_transaction()
+        return await super().create_window(
+            cwd,
+            shell_command,
+            client_id=client_id,
+            window_id=window_id,
+        )
+
+
+class CancellingTmuxManager(FakeTmuxManager):
+    async def create_window(
+        self,
+        cwd: str | None,
+        shell_command: str | None,
+        *,
+        client_id: UUID | str | None = None,
+        window_id: UUID | str | None = None,
+    ):
+        raise asyncio.CancelledError()
 
 
 class FakeRemoteConnection:
@@ -87,6 +129,16 @@ class FailingRemoteConnection(FakeRemoteConnection):
         raise self.exc
 
 
+class ObservingRemoteConnection(FakeRemoteConnection):
+    observed_in_transaction: bool | None = None
+
+    async def request(self, message: AgentMessage, *, timeout: float) -> AgentMessage:
+        observed_session = getattr(windows_router, "_TEST_OBSERVED_SESSION", None)
+        if observed_session is not None:
+            self.__class__.observed_in_transaction = observed_session.in_transaction()
+        return await super().request(message, timeout=timeout)
+
+
 class FakeConnectionRegistry:
     def __init__(self, connection: FakeRemoteConnection | None = None) -> None:
         self.connection = connection
@@ -117,6 +169,8 @@ class DbClient:
 
 @pytest.fixture
 async def db_client(tmp_path):
+    clear_polling_response_cache()
+    clear_client_windows_activity_cache()
     database_path = tmp_path / "windows.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -145,6 +199,8 @@ async def db_client(tmp_path):
         for state_name in ("client_connections", "terminal_broker"):
             if hasattr(app.state, state_name):
                 delattr(app.state, state_name)
+        clear_polling_response_cache()
+        clear_client_windows_activity_cache()
         await engine.dispose()
 
 
@@ -192,9 +248,15 @@ def tracking_sequence(worktree_root: str) -> str:
 @pytest.mark.asyncio
 async def test_create_window_kills_tmux_window_when_database_commit_fails(db_client, monkeypatch):
     client_id = await get_local_client_id(db_client)
+    app.dependency_overrides[get_tmux_manager] = CommitFailingOnSecondCallTmuxManager
+    CommitFailingOnSecondCallTmuxManager.commit_calls = 0
+    original_commit = AsyncSession.commit
 
     async def fail_commit(self):
-        raise RuntimeError("commit failed")
+        CommitFailingOnSecondCallTmuxManager.commit_calls += 1
+        if CommitFailingOnSecondCallTmuxManager.commit_calls >= 2:
+            raise RuntimeError("commit failed")
+        await original_commit(self)
 
     monkeypatch.setattr(AsyncSession, "commit", fail_commit)
 
@@ -203,9 +265,47 @@ async def test_create_window_kills_tmux_window_when_database_commit_fails(db_cli
             f"/api/clients/{client_id}/windows", json={"cwd": "/tmp", "shell_command": "/bin/bash"}
         )
 
-    assert len(FakeTmuxManager.killed_targets) == 1
-    assert FakeTmuxManager.killed_targets[0].session == "test_pool"
-    assert FakeTmuxManager.killed_targets[0].window_id == "@99"
+    assert len(CommitFailingOnSecondCallTmuxManager.killed_targets) == 1
+    assert CommitFailingOnSecondCallTmuxManager.killed_targets[0].session == "test_pool"
+    assert CommitFailingOnSecondCallTmuxManager.killed_targets[0].window_id == "@99"
+
+
+@pytest.mark.asyncio
+async def test_create_window_commits_client_lookup_before_tmux_create(db_client):
+    client_id = await get_local_client_id(db_client)
+    app.dependency_overrides[get_tmux_manager] = ObservingTmuxManager
+    ObservingTmuxManager.observed_in_transaction = None
+
+    async with db_client.session_factory() as session:
+        windows_router._TEST_OBSERVED_SESSION = session
+        try:
+            response = await db_client.post(
+                f"/api/clients/{client_id}/windows",
+                json={"cwd": "/tmp", "shell_command": "/bin/bash"},
+            )
+        finally:
+            delattr(windows_router, "_TEST_OBSERVED_SESSION")
+
+    assert response.status_code == 200
+    assert ObservingTmuxManager.observed_in_transaction is False
+
+
+@pytest.mark.asyncio
+async def test_create_window_rolls_back_when_tmux_create_is_cancelled(db_client):
+    client_id = await get_local_client_id(db_client)
+    app.dependency_overrides[get_tmux_manager] = CancellingTmuxManager
+
+    with pytest.raises(asyncio.CancelledError):
+        await db_client.post(
+            f"/api/clients/{client_id}/windows",
+            json={"cwd": "/tmp", "shell_command": "/bin/bash"},
+        )
+
+    async with db_client.session_factory() as session:
+        assert session.in_transaction() is False
+        windows = (await session.execute(select(VirtualWindow))).scalars().all()
+
+    assert windows == []
 
 
 @pytest.mark.asyncio
@@ -317,6 +417,27 @@ async def test_create_window_creates_remote_window_when_client_connection_exists
     assert created["cwd"] == "/tmp/ignored"
     assert created["shell_command"] == "/bin/bash"
     assert FakeTmuxManager.killed_targets == []
+
+
+@pytest.mark.asyncio
+async def test_create_window_commits_client_lookup_before_remote_create(db_client):
+    remote_client_id = await create_remote_client_id(db_client)
+    connection = ObservingRemoteConnection()
+    ObservingRemoteConnection.observed_in_transaction = None
+    app.state.client_connections = FakeConnectionRegistry(connection)
+
+    async with db_client.session_factory() as session:
+        windows_router._TEST_OBSERVED_SESSION = session
+        try:
+            response = await db_client.post(
+                f"/api/clients/{remote_client_id}/windows",
+                json={"cwd": "/tmp/remote", "shell_command": "/bin/bash"},
+            )
+        finally:
+            delattr(windows_router, "_TEST_OBSERVED_SESSION")
+
+    assert response.status_code == 200
+    assert ObservingRemoteConnection.observed_in_transaction is False
 
 
 @pytest.mark.asyncio
@@ -1748,7 +1869,158 @@ async def test_windows_activity_returns_git_worktree_activity_without_remote_pro
 
 
 @pytest.mark.asyncio
-async def test_windows_activity_materializes_git_worktree_from_agent_record_marker(db_client):
+async def test_windows_activity_hot_cache_skips_client_and_activity_queries(db_client, monkeypatch):
+    client_id = await get_local_client_id(db_client)
+    async with db_client.session_factory() as session:
+        client = await ensure_local_client(session)
+        await create_window(session, client.id, cwd="/tmp", shell_command="/bin/bash")
+        await session.commit()
+
+    first_response = await db_client.get(f"/api/clients/{client_id}/windows/activity")
+    assert first_response.status_code == 200
+
+    async def fail_require_client(_session, _client_id):
+        raise AssertionError("hot activity cache should avoid client lookup")
+
+    async def fail_load_client_windows_activity(_session, _client_id, *, include_runtime_tags=False):
+        raise AssertionError("hot activity cache should avoid activity query")
+
+    monkeypatch.setattr(folders_router, "_require_client", fail_require_client)
+    monkeypatch.setattr(
+        folders_router,
+        "load_client_windows_activity",
+        fail_load_client_windows_activity,
+    )
+
+    second_response = await db_client.get(f"/api/clients/{client_id}/windows/activity")
+
+    assert second_response.status_code == 200
+    assert second_response.json() == first_response.json()
+
+
+@pytest.mark.asyncio
+async def test_windows_activity_expired_cache_serves_stale_response(db_client, monkeypatch):
+    client_id = await get_local_client_id(db_client)
+    async with db_client.session_factory() as session:
+        client = await ensure_local_client(session)
+        await create_window(session, client.id, cwd="/tmp", shell_command="/bin/bash")
+        await session.commit()
+
+    first_response = await db_client.get(f"/api/clients/{client_id}/windows/activity")
+    assert first_response.status_code == 200
+    refreshes = []
+
+    async def fail_load_client_windows_activity(_session, _client_id, *, include_runtime_tags=False):
+        raise AssertionError("expired activity cache should return stale before refresh")
+
+    monkeypatch.setattr(polling_response_cache, "_CACHE_TTL_SECONDS", -1.0)
+    monkeypatch.setattr(
+        folders_router,
+        "load_client_windows_activity",
+        fail_load_client_windows_activity,
+    )
+    monkeypatch.setattr(folders_router, "_refresh_response_cache", lambda cache_key, refresh: refreshes.append(cache_key))
+
+    second_response = await db_client.get(f"/api/clients/{client_id}/windows/activity")
+
+    assert second_response.status_code == 200
+    assert second_response.json() == first_response.json()
+    assert refreshes
+
+
+@pytest.mark.asyncio
+async def test_get_window_hot_cache_skips_detail_queries(db_client, monkeypatch):
+    client_id = await get_local_client_id(db_client)
+    window_response = await db_client.post(
+        f"/api/clients/{client_id}/windows",
+        json={"cwd": "/tmp", "shell_command": "/bin/bash"},
+    )
+    window_id = window_response.json()["id"]
+
+    first_response = await db_client.get(f"/api/clients/{client_id}/windows/{window_id}")
+    assert first_response.status_code == 200
+
+    async def fail_require_client(_session, _client_id):
+        raise AssertionError("hot window cache should avoid client lookup")
+
+    async def fail_get_window_for_client(_session, _client_id, _window_id):
+        raise AssertionError("hot window cache should avoid window lookup")
+
+    async def fail_get_latest_summary_job(_session, _window_id):
+        raise AssertionError("hot window cache should avoid summary job lookup")
+
+    async def fail_runtime_tags_for_window_out(_session, _window):
+        raise AssertionError("hot window cache should avoid runtime tag lookup")
+
+    async def fail_load_work_status(_session, _client_id, _window_id):
+        raise AssertionError("hot window cache should avoid work status lookup")
+
+    monkeypatch.setattr(windows_router, "_require_client", fail_require_client)
+    monkeypatch.setattr(windows_router, "get_window_for_client", fail_get_window_for_client)
+    monkeypatch.setattr(windows_router, "get_latest_summary_job", fail_get_latest_summary_job)
+    monkeypatch.setattr(windows_router, "runtime_tags_for_window_out", fail_runtime_tags_for_window_out)
+    monkeypatch.setattr(windows_router, "load_work_status", fail_load_work_status)
+
+    second_response = await db_client.get(f"/api/clients/{client_id}/windows/{window_id}")
+
+    assert second_response.status_code == 200
+    assert second_response.json() == first_response.json()
+
+
+@pytest.mark.asyncio
+async def test_get_window_expired_cache_serves_stale_response(db_client, monkeypatch):
+    client_id = await get_local_client_id(db_client)
+    window_response = await db_client.post(
+        f"/api/clients/{client_id}/windows",
+        json={"cwd": "/tmp", "shell_command": "/bin/bash"},
+    )
+    window_id = window_response.json()["id"]
+
+    first_response = await db_client.get(f"/api/clients/{client_id}/windows/{window_id}")
+    assert first_response.status_code == 200
+    refreshes = []
+
+    async def fail_get_window_for_client(_session, _client_id, _window_id):
+        raise AssertionError("expired window cache should return stale before refresh")
+
+    monkeypatch.setattr(polling_response_cache, "_CACHE_TTL_SECONDS", -1.0)
+    monkeypatch.setattr(windows_router, "get_window_for_client", fail_get_window_for_client)
+    monkeypatch.setattr(
+        windows_router,
+        "_refresh_window_response_cache",
+        lambda cache_key, client_id, window_id: refreshes.append(cache_key),
+    )
+
+    second_response = await db_client.get(f"/api/clients/{client_id}/windows/{window_id}")
+
+    assert second_response.status_code == 200
+    assert second_response.json() == first_response.json()
+    assert refreshes
+
+
+@pytest.mark.asyncio
+async def test_create_window_invalidates_activity_hot_cache(db_client):
+    client_id = await get_local_client_id(db_client)
+    cached_empty_activity = await db_client.get(f"/api/clients/{client_id}/windows/activity")
+    assert cached_empty_activity.status_code == 200
+    assert cached_empty_activity.json() == {"windows": []}
+
+    create_response = await db_client.post(
+        f"/api/clients/{client_id}/windows",
+        json={"cwd": "/tmp", "shell_command": "/bin/bash"},
+    )
+    assert create_response.status_code == 200
+
+    activity_response = await db_client.get(f"/api/clients/{client_id}/windows/activity")
+
+    assert activity_response.status_code == 200
+    assert [
+        item["window_id"] for item in activity_response.json()["windows"]
+    ] == [create_response.json()["id"]]
+
+
+@pytest.mark.asyncio
+async def test_windows_activity_does_not_scan_agent_records_for_git_worktree_marker(db_client):
     client_id = await get_local_client_id(db_client)
     async with db_client.session_factory() as session:
         client = await ensure_local_client(session)
@@ -1777,12 +2049,7 @@ async def test_windows_activity_materializes_git_worktree_from_agent_record_mark
     activity_window = next(
         item for item in response.json()["windows"] if item["window_id"] == window_id
     )
-    assert activity_window["git_worktree"] == {
-        "worktree_root": "/repo/.worktrees/feature",
-        "main_repo_root": "/repo",
-        "branch": "agent/feature",
-        "pending_commit": False,
-    }
+    assert activity_window.get("git_worktree") is None
     async with db_client.session_factory() as session:
         binding = await session.scalar(
             select(WindowGitBinding).where(WindowGitBinding.virtual_window_id == UUID(window_id))
@@ -1792,10 +2059,8 @@ async def test_windows_activity_materializes_git_worktree_from_agent_record_mark
                 select(GitWorktreeRun).where(GitWorktreeRun.virtual_window_id == UUID(window_id))
             )
         )
-    assert binding is not None
-    assert binding.discovery_method == "osc"
-    assert len(runs) == 1
-    assert runs[0].worktree_root == "/repo/.worktrees/feature"
+    assert binding is None
+    assert runs == []
 
 
 @pytest.mark.asyncio

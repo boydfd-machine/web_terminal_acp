@@ -19,6 +19,7 @@ from app.repositories.folders import build_topic_tree_context
 
 _ACTIVE_SUMMARY_JOB_STATUSES = (SummaryJobStatus.pending,)
 MAX_SUMMARY_CONTEXT_EVENTS = 50
+MAX_SUMMARY_CONTEXT_COMMANDS = 200
 MAX_SUMMARY_CONTEXT_PAYLOAD_BYTES = 8192
 MAX_SUMMARY_CONTEXT_TOTAL_BYTES = 32768
 MAX_SUMMARY_JOB_ERROR_LENGTH = 2000
@@ -198,31 +199,46 @@ async def collect_window_activity_context(
         await session.scalars(
             select(Event)
             .where(
+                Event.client_id == window.client_id,
                 Event.virtual_window_id == window.id,
                 Event.kind == "terminal_input_command",
             )
-            .order_by(Event.created_at, Event.id)
-        )
-    )
-    commands = [_command_from_event(event, window) for event in command_events]
-    ai_event_rows = list(
-        await session.scalars(
-            select(Event)
-            .options(selectinload(Event.ai_session))
-            .where(
-                Event.virtual_window_id == window.id,
-                Event.source_type.in_(agent_activity_source_types()),
-            )
             .order_by(desc(Event.created_at), desc(Event.id))
-            .limit(MAX_SUMMARY_CONTEXT_EVENTS)
+            .limit(MAX_SUMMARY_CONTEXT_COMMANDS)
         )
     )
+    commands = [_command_from_event(event, window) for event in reversed(command_events)]
+    ai_event_rows = await _recent_ai_events_for_summary(session, window)
     session_messages = [
         session_message
         for event in reversed(ai_event_rows)
         for session_message in _session_messages_from_event(event)
     ]
     return commands, session_messages
+
+
+async def _recent_ai_events_for_summary(
+    session: AsyncSession,
+    window: VirtualWindow,
+) -> list[Event]:
+    rows: list[Event] = []
+    for source_type in agent_activity_source_types():
+        rows.extend(
+            await session.scalars(
+                select(Event)
+                .options(selectinload(Event.ai_session))
+                .where(
+                    Event.client_id == window.client_id,
+                    Event.virtual_window_id == window.id,
+                    Event.source_type == source_type,
+                )
+                .order_by(desc(Event.created_at), desc(Event.id))
+                .limit(MAX_SUMMARY_CONTEXT_EVENTS)
+            )
+        )
+    return sorted(rows, key=lambda event: (event.created_at, event.id), reverse=True)[
+        :MAX_SUMMARY_CONTEXT_EVENTS
+    ]
 
 
 def _command_from_event(event: Event, window: VirtualWindow) -> dict[str, Any]:

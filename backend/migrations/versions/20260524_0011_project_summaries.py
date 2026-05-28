@@ -44,4 +44,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_project_summaries_client_id", table_name="project_summaries")
     op.drop_table("project_summaries")
-    op.execute("DROP TYPE IF EXISTS projectsummarystatus")
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute("DROP TYPE IF EXISTS projectsummarystatus")

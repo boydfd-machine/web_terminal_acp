@@ -23,8 +23,11 @@ logger = logging.getLogger(__name__)
 # still bounding memory for dead or overloaded browsers.
 PUBLISH_OUTPUT_SUBSCRIBER_TIMEOUT_SECONDS = 5.0
 SUBSCRIBER_WRITER_QUEUE_MAX_BYTES = 4 * 1024 * 1024
-SUBSCRIBER_WRITER_QUEUE_MAX_MESSAGES = 1024
-SUBSCRIBER_WRITER_COALESCE_BYTES = 64 * 1024
+SUBSCRIBER_WRITER_QUEUE_MAX_MESSAGES = 8192
+# Browser ACK keeps output bounded, but it must work like a byte window instead
+# of stop-and-wait or bulk output spends most of its time waiting for round trips.
+SUBSCRIBER_WRITER_COALESCE_BYTES = 128 * 1024
+SUBSCRIBER_WRITER_ACK_WINDOW_BYTES = 1024 * 1024
 
 
 class TerminalRuntimeUnavailable(RuntimeError):
@@ -67,6 +70,7 @@ class _TerminalSubscriberWriter:
         max_bytes: int | None = None,
         max_messages: int | None = None,
         coalesce_bytes: int | None = None,
+        ack_window_bytes: int | None = None,
     ) -> None:
         self.client_id = client_id
         self.window_id = window_id
@@ -77,10 +81,14 @@ class _TerminalSubscriberWriter:
         self._max_bytes = max_bytes or SUBSCRIBER_WRITER_QUEUE_MAX_BYTES
         self._max_messages = max_messages or SUBSCRIBER_WRITER_QUEUE_MAX_MESSAGES
         self._coalesce_bytes = coalesce_bytes or SUBSCRIBER_WRITER_COALESCE_BYTES
+        self._ack_window_bytes = ack_window_bytes or SUBSCRIBER_WRITER_ACK_WINDOW_BYTES
         self._queue: deque[_QueuedSubscriberMessage] = deque()
         self._queued_bytes = 0
         self._condition = asyncio.Condition()
         self._closed = False
+        self._ack_enabled = False
+        self._in_flight_bytes = 0
+        self._in_flight_frames: deque[int] = deque()
         self._task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
@@ -98,6 +106,8 @@ class _TerminalSubscriberWriter:
             if self._closed:
                 return
             self._closed = True
+            self._in_flight_bytes = 0
+            self._in_flight_frames.clear()
             self._queue.clear()
             self._queued_bytes = 0
             self._condition.notify_all()
@@ -118,9 +128,16 @@ class _TerminalSubscriberWriter:
                 len(self._queue) >= self._max_messages
                 or self._queued_bytes + size > self._max_bytes
             ):
-                return False
+                if self._ack_enabled and isinstance(payload, bytes):
+                    self._shed_queued_byte_output_locked()
+                if (
+                    len(self._queue) >= self._max_messages
+                    or self._queued_bytes + size > self._max_bytes
+                ):
+                    return False
             if (
-                isinstance(payload, bytes)
+                not self._ack_enabled
+                and isinstance(payload, bytes)
                 and self._queue
                 and isinstance(self._queue[-1].payload, bytes)
                 and self._queue[-1].size + size <= self._coalesce_bytes
@@ -134,14 +151,90 @@ class _TerminalSubscriberWriter:
         self.start()
         return True
 
+    def _shed_queued_byte_output_locked(self) -> int:
+        if not self._queue:
+            return 0
+        kept: deque[_QueuedSubscriberMessage] = deque()
+        dropped_bytes = 0
+        for message in self._queue:
+            if isinstance(message.payload, bytes):
+                dropped_bytes += message.size
+            else:
+                kept.append(message)
+        if dropped_bytes:
+            self._queue = kept
+            self._queued_bytes -= dropped_bytes
+            self._condition.notify_all()
+        return dropped_bytes
+
+    async def output_ack(self, bytes_acked: int | None = None) -> None:
+        async with self._condition:
+            was_ack_enabled = self._ack_enabled
+            self._ack_enabled = True
+            if bytes_acked is None:
+                if was_ack_enabled and self._in_flight_frames:
+                    released_bytes = self._in_flight_frames.popleft()
+                    self._in_flight_bytes = max(0, self._in_flight_bytes - released_bytes)
+                else:
+                    self._in_flight_bytes = 0
+                    self._in_flight_frames.clear()
+            else:
+                released_bytes = max(0, bytes_acked)
+                self._in_flight_bytes = max(0, self._in_flight_bytes - released_bytes)
+                while released_bytes > 0 and self._in_flight_frames:
+                    frame_bytes = self._in_flight_frames[0]
+                    if released_bytes < frame_bytes:
+                        self._in_flight_frames[0] = frame_bytes - released_bytes
+                        break
+                    released_bytes -= frame_bytes
+                    self._in_flight_frames.popleft()
+                if self._in_flight_bytes == 0:
+                    self._in_flight_frames.clear()
+            self._condition.notify_all()
+
+    def _send_window_full_locked(self) -> bool:
+        if not self._ack_enabled or not self._queue:
+            return False
+        if not isinstance(self._queue[0].payload, bytes):
+            return False
+        return self._in_flight_bytes >= self._ack_window_bytes
+
     async def _next_message(self) -> _QueuedSubscriberMessage | None:
         async with self._condition:
-            while not self._queue and not self._closed:
+            while (not self._queue or self._send_window_full_locked()) and not self._closed:
                 await self._condition.wait()
             if not self._queue:
                 return None
             message = self._queue.popleft()
             self._queued_bytes -= message.size
+            if isinstance(message.payload, bytes) and self._ack_enabled:
+                remaining_window = max(1, self._ack_window_bytes - self._in_flight_bytes)
+                frame_budget = min(self._coalesce_bytes, remaining_window)
+            else:
+                frame_budget = self._coalesce_bytes
+            if isinstance(message.payload, bytes) and self._ack_enabled and message.size > frame_budget:
+                payload = message.payload
+                head = payload[:frame_budget]
+                tail = payload[frame_budget:]
+                message = _QueuedSubscriberMessage(payload=head, size=len(head))
+                self._queue.appendleft(_QueuedSubscriberMessage(payload=tail, size=len(tail)))
+                self._queued_bytes += len(tail)
+            elif isinstance(message.payload, bytes):
+                chunks = [message.payload]
+                while (
+                    self._queue
+                    and isinstance(self._queue[0].payload, bytes)
+                    and message.size + self._queue[0].size <= frame_budget
+                ):
+                    next_message = self._queue.popleft()
+                    self._queued_bytes -= next_message.size
+                    chunks.append(next_message.payload)
+                    message.size += next_message.size
+                if len(chunks) > 1:
+                    message.payload = b"".join(chunks)
+            if isinstance(message.payload, bytes) and self._ack_enabled:
+                self._in_flight_bytes += message.size
+                self._in_flight_frames.append(message.size)
             return message
 
     async def _run(self) -> None:
@@ -162,6 +255,8 @@ class _TerminalSubscriberWriter:
         except BaseException as exc:
             async with self._condition:
                 self._closed = True
+                self._in_flight_bytes = 0
+                self._in_flight_frames.clear()
                 self._queue.clear()
                 self._queued_bytes = 0
                 self._condition.notify_all()
@@ -293,6 +388,18 @@ class TerminalBroker:
 
     async def publish_view_output(self, client_id: UUID, view_id: UUID, data: bytes) -> None:
         await self.publish_output(client_id, view_id, data)
+
+    async def acknowledge_output(
+        self,
+        client_id: UUID,
+        window_id: UUID,
+        sender: TerminalSender,
+        bytes_acked: int | None = None,
+    ) -> None:
+        async with self._lock:
+            writer = self._subscribers.get((client_id, window_id), {}).get(sender)
+        if writer is not None:
+            await writer.output_ack(bytes_acked)
 
     async def publish_status(self, client_id: UUID, window_id: UUID, message: str) -> None:
         async with self._lock:

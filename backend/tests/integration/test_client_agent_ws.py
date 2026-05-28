@@ -74,6 +74,50 @@ class FakeTerminalBroker:
         self.cleared_clients.append((client_id, status_message))
 
 
+class CaptureUiEventHub:
+    def __init__(self) -> None:
+        self.invalidations: list[dict[str, object]] = []
+        self.debounced_invalidations: list[dict[str, object]] = []
+
+    async def publish_invalidation(
+        self,
+        resources,
+        *,
+        client_id=None,
+        window_id=None,
+        reason=None,
+    ) -> None:
+        self.invalidations.append(
+            {
+                "resources": list(resources),
+                "client_id": client_id,
+                "window_id": window_id,
+                "reason": reason,
+            }
+        )
+
+    async def publish_debounced_invalidation(
+        self,
+        key,
+        resources,
+        *,
+        client_id=None,
+        window_id=None,
+        reason=None,
+        delay_seconds=1.0,
+    ) -> None:
+        self.debounced_invalidations.append(
+            {
+                "key": key,
+                "resources": list(resources),
+                "client_id": client_id,
+                "window_id": window_id,
+                "reason": reason,
+                "delay_seconds": delay_seconds,
+            }
+        )
+
+
 async def create_remote_window(session_factory: async_sessionmaker, client_id: UUID):
     async with session_factory() as session:
         window = await create_window(session, client_id, cwd="/tmp", shell_command="/bin/bash")
@@ -415,8 +459,14 @@ def test_client_agent_websocket_persists_and_indexes_claude_ai_event(client_agen
 
     monkeypatch.setattr(client_agent_router, "_commit_session", observe_commit)
     es_client = FakeElasticsearch(is_committed=lambda: committed_before_index)
+    ui_event_hub = CaptureUiEventHub()
     monkeypatch.setattr(app.state, "es_client", es_client, raising=False)
     monkeypatch.setattr(app.state, "es_indexes_ready", True, raising=False)
+    monkeypatch.setattr(
+        client_agent_router,
+        "_ui_event_hub",
+        lambda _websocket: ui_event_hub,
+    )
     event_payload = {
         "type": "assistant",
         "message": {"content": "managed hello"},
@@ -479,6 +529,14 @@ def test_client_agent_websocket_persists_and_indexes_claude_ai_event(client_agen
     assert es_client.indexed_documents[0]["document"]["virtual_window_id"] == str(window.id)
     assert es_client.indexed_documents[0]["document"]["provider"] == "claude_code"
     assert es_client.indexed_documents[0]["document"]["session_id"] == "claude-managed-session-1"
+    assert ui_event_hub.invalidations == [
+        {
+            "resources": ["agent_record", "window", "search"],
+            "client_id": client_agent_db.client_id,
+            "window_id": window.id,
+            "reason": "ai_event",
+        }
+    ]
 
 
 def test_client_agent_websocket_persists_codex_ai_event(client_agent_db):
@@ -1090,7 +1148,10 @@ def test_client_agent_bulk_websocket_records_marker_only_terminal_command(client
 def test_client_agent_websocket_records_and_publishes_terminal_output(client_agent_db, monkeypatch):
     window = asyncio.run(create_remote_window(client_agent_db.session_factory, client_agent_db.client_id))
     broker = FakeTerminalBroker()
+    es_client = FakeElasticsearch()
     monkeypatch.setattr(app.state, "terminal_broker", broker, raising=False)
+    monkeypatch.setattr(app.state, "es_client", es_client, raising=False)
+    monkeypatch.setattr(app.state, "es_indexes_ready", True, raising=False)
 
     test_client = TestClient(app)
     try:
@@ -1107,22 +1168,28 @@ def test_client_agent_websocket_records_and_publishes_terminal_output(client_age
             )
             wait_for_condition(
                 lambda: len(broker.published) == 1
-                and asyncio.run(_event_count(client_agent_db.session_factory)) == 1
+                and len(es_client.indexed_documents) == 1
             )
     finally:
         test_client.close()
 
-    async def load_terminal_events():
+    async def load_terminal_state():
         async with client_agent_db.session_factory() as session:
-            return (await session.execute(select(Event))).scalars().all()
+            rows = (await session.execute(select(Event))).scalars().all()
+            db_window = await session.get(VirtualWindow, window.id)
+            return rows, db_window
 
-    rows = asyncio.run(load_terminal_events())
+    rows, db_window = asyncio.run(load_terminal_state())
     assert broker.published == [(client_agent_db.client_id, window.id, b"remote output\n")]
-    assert len(rows) == 1
-    assert rows[0].client_id == client_agent_db.client_id
-    assert rows[0].virtual_window_id == window.id
-    assert rows[0].source_type is EventSourceType.terminal
-    assert rows[0].payload_json == {"text": "remote output\n"}
+    assert rows == []
+    assert db_window is not None
+    assert db_window.terminal_last_output_at is not None
+    assert es_client.indexed_documents[0]["document"] == {
+        "client_id": str(client_agent_db.client_id),
+        "virtual_window_id": str(window.id),
+        "text": "remote output\n",
+        "source_event_ids": [],
+    }
 
 
 def test_client_agent_websocket_publishes_terminal_snapshot_without_recording(client_agent_db, monkeypatch):
@@ -1163,6 +1230,7 @@ def test_client_agent_websocket_records_terminal_output_when_browser_subscriber_
 ):
     window = asyncio.run(create_remote_window(client_agent_db.session_factory, client_agent_db.client_id))
     broker = TerminalBroker()
+    es_client = FakeElasticsearch()
     failures: list[bytes] = []
 
     async def failing_sender(data: bytes) -> None:
@@ -1171,6 +1239,8 @@ def test_client_agent_websocket_records_terminal_output_when_browser_subscriber_
 
     asyncio.run(broker.subscribe(client_agent_db.client_id, window.id, failing_sender))
     monkeypatch.setattr(app.state, "terminal_broker", broker, raising=False)
+    monkeypatch.setattr(app.state, "es_client", es_client, raising=False)
+    monkeypatch.setattr(app.state, "es_indexes_ready", True, raising=False)
 
     test_client = TestClient(app)
     try:
@@ -1186,21 +1256,22 @@ def test_client_agent_websocket_records_terminal_output_when_browser_subscriber_
                 )
             )
             wait_for_condition(lambda: len(failures) == 1)
-            wait_for_condition(lambda: asyncio.run(_event_count(client_agent_db.session_factory)) == 1)
+            wait_for_condition(lambda: len(es_client.indexed_documents) == 1)
     finally:
         test_client.close()
 
-    async def load_terminal_events():
+    async def load_terminal_state():
         async with client_agent_db.session_factory() as session:
-            return (await session.execute(select(Event))).scalars().all()
+            rows = (await session.execute(select(Event))).scalars().all()
+            db_window = await session.get(VirtualWindow, window.id)
+            return rows, db_window
 
-    rows = asyncio.run(load_terminal_events())
+    rows, db_window = asyncio.run(load_terminal_state())
     assert failures == [b"remote output\n"]
-    assert len(rows) == 1
-    assert rows[0].client_id == client_agent_db.client_id
-    assert rows[0].virtual_window_id == window.id
-    assert rows[0].source_type is EventSourceType.terminal
-    assert rows[0].payload_json == {"text": "remote output\n"}
+    assert rows == []
+    assert db_window is not None
+    assert db_window.terminal_last_output_at is not None
+    assert es_client.indexed_documents[0]["document"]["text"] == "remote output\n"
 
 
 def test_client_agent_websocket_rejects_cross_client_terminal_output(client_agent_db, monkeypatch):
@@ -1318,9 +1389,11 @@ def test_client_agent_websocket_rejects_cross_client_ai_event_window(client_agen
     assert asyncio.run(count_events()) == 0
 
 
-def test_client_agent_bulk_websocket_accepts_agent_work_presence(client_agent_db):
+def test_client_agent_bulk_websocket_accepts_agent_work_presence(client_agent_db, monkeypatch):
     window = asyncio.run(create_remote_window(client_agent_db.session_factory, client_agent_db.client_id))
     broker = app.state.terminal_broker
+    ui_event_hub = CaptureUiEventHub()
+    monkeypatch.setattr(app.state, "ui_event_hub", ui_event_hub, raising=False)
     broker.published.clear()
     test_client = TestClient(app)
     try:
@@ -1349,12 +1422,20 @@ def test_client_agent_bulk_websocket_accepts_agent_work_presence(client_agent_db
             )
             wait_for_condition(
                 lambda: broker.published == [(client_agent_db.client_id, window.id, b"still connected\n")]
-                and asyncio.run(_event_count(client_agent_db.session_factory)) == 2
+                and asyncio.run(_event_count(client_agent_db.session_factory)) == 1
             )
     finally:
         test_client.close()
 
-    assert asyncio.run(_event_count(client_agent_db.session_factory)) == 2
+    assert asyncio.run(_event_count(client_agent_db.session_factory)) == 1
+    assert ui_event_hub.invalidations == [
+        {
+            "resources": ["window"],
+            "client_id": client_agent_db.client_id,
+            "window_id": window.id,
+            "reason": "agent_work_presence",
+        }
+    ]
 
 
 def test_client_agent_websocket_publishes_view_terminal_selection(client_agent_db):

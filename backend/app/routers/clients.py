@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import get_session
+from app.db import SessionLocal, get_session
 from app.models import Client, ClientRuntime
 from app.repositories.clients import authenticate_client, get_client, list_clients
 from app.routers.ui_events import ui_event_hub_from_state
@@ -32,6 +33,13 @@ from app.services.client_update import (
     ClientUpdateUnavailable,
     build_client_update_package,
     start_client_update,
+)
+from app.services.polling_response_cache import (
+    begin_response_cache_refresh,
+    cached_or_stale_json_response,
+    finish_response_cache_refresh,
+    response_cache_scope,
+    store_json_response,
 )
 from app.services.runtime.client_connections import ClientConnectionRegistry
 
@@ -91,8 +99,37 @@ def to_client_out(client: Client) -> ClientOut:
 
 
 @router.get("", response_model=list[ClientOut])
-async def read_clients(session: AsyncSession = Depends(get_session)) -> list[ClientOut]:
-    return [to_client_out(client) for client in await list_clients(session)]
+async def read_clients(session: AsyncSession = Depends(get_session)) -> list[ClientOut] | Response:
+    cache_key = ("clients", response_cache_scope(session))
+    cached = cached_or_stale_json_response(cache_key)
+    if cached is not None and not cached.expired:
+        return cached.response
+    if cached is not None:
+        _refresh_clients_cache(cache_key)
+        return cached.response
+    return await _build_clients_response(session)
+
+
+async def _build_clients_response(session: AsyncSession) -> Response:
+    cache_key = ("clients", response_cache_scope(session))
+    clients = [to_client_out(client) for client in await list_clients(session)]
+    return store_json_response(cache_key, clients, resources={"clients"})
+
+
+def _refresh_clients_cache(cache_key: tuple[object, ...]) -> None:
+    if not begin_response_cache_refresh(cache_key):
+        return
+
+    async def refresh_task() -> None:
+        try:
+            async with SessionLocal() as refresh_session:
+                await _build_clients_response(refresh_session)
+        except Exception:
+            logger.exception("clients response cache refresh failed")
+        finally:
+            finish_response_cache_refresh(cache_key)
+
+    asyncio.create_task(refresh_task())
 
 
 @router.post("/bootstrap", response_model=BootstrapClientOut)

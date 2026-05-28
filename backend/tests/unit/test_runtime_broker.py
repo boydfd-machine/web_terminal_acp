@@ -8,6 +8,15 @@ from app.services.runtime.broker import TerminalBroker, terminal_status_message
 from app.services.runtime.types import RuntimeWindow
 
 
+async def _unsubscribe_remaining_output_senders(
+    broker: TerminalBroker,
+    client_id: UUID,
+    window_id: UUID,
+) -> None:
+    for sender in tuple(broker._subscribers.get((client_id, window_id), {})):
+        await broker.unsubscribe(client_id, window_id, sender)
+
+
 class FakeRuntime:
     def __init__(self) -> None:
         self.created: list[tuple[str | None, str | None]] = []
@@ -105,6 +114,7 @@ async def test_publish_output_fans_out_without_holding_subscription_lock() -> No
         await asyncio.sleep(0.01)
 
     assert sorted(received) == [("first", b"chunk"), ("second", b"chunk")]
+    await broker.unsubscribe(client_id, window_id, second_sender)
 
 
 @pytest.mark.asyncio
@@ -139,19 +149,22 @@ async def test_publish_output_returns_after_enqueue_when_browser_sender_is_slow(
         await release_slow_sender.wait()
 
     await broker.subscribe(client_id, window_id, slow_sender)
+    try:
+        started = asyncio.get_event_loop().time()
+        await asyncio.wait_for(
+            broker.publish_output(client_id, window_id, b"first"),
+            timeout=0.05,
+        )
+        elapsed = asyncio.get_event_loop().time() - started
 
-    started = asyncio.get_event_loop().time()
-    await asyncio.wait_for(
-        broker.publish_output(client_id, window_id, b"first"),
-        timeout=0.05,
-    )
-    elapsed = asyncio.get_event_loop().time() - started
+        await asyncio.wait_for(slow_sender_started.wait(), timeout=0.1)
+        release_slow_sender.set()
 
-    await asyncio.wait_for(slow_sender_started.wait(), timeout=0.1)
-    release_slow_sender.set()
-
-    assert sent == [b"first"]
-    assert elapsed < 0.05
+        assert sent == [b"first"]
+        assert elapsed < 0.05
+    finally:
+        release_slow_sender.set()
+        await broker.unsubscribe(client_id, window_id, slow_sender)
 
 
 @pytest.mark.asyncio
@@ -214,6 +227,289 @@ async def test_publish_output_coalesces_small_chunks_without_losing_bytes() -> N
         await asyncio.sleep(0.01)
 
     assert b"".join(received) == b"abcdef"
+    await broker.unsubscribe(client_id, window_id, sender)
+
+
+@pytest.mark.asyncio
+async def test_ack_capable_subscriber_waits_for_output_ack_before_next_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(broker_module, "SUBSCRIBER_WRITER_COALESCE_BYTES", 5)
+    monkeypatch.setattr(broker_module, "SUBSCRIBER_WRITER_ACK_WINDOW_BYTES", 5)
+
+    client_id = uuid4()
+    window_id = uuid4()
+    broker = TerminalBroker()
+    received: list[bytes] = []
+
+    async def sender(data: bytes) -> None:
+        received.append(data)
+
+    await broker.subscribe(client_id, window_id, sender)
+    await broker.acknowledge_output(client_id, window_id, sender)
+
+    await broker.publish_output(client_id, window_id, b"first")
+    await broker.publish_output(client_id, window_id, b"-second")
+
+    deadline = asyncio.get_event_loop().time() + 1
+    while received != [b"first"]:
+        if asyncio.get_event_loop().time() > deadline:
+            raise AssertionError(f"first output was not delivered: {received!r}")
+        await asyncio.sleep(0.01)
+
+    await asyncio.sleep(0.05)
+    assert received == [b"first"]
+
+    await broker.acknowledge_output(client_id, window_id, sender)
+    deadline = asyncio.get_event_loop().time() + 1
+    while received != [b"first", b"-seco"]:
+        if asyncio.get_event_loop().time() > deadline:
+            raise AssertionError(f"second output was not delivered after ack: {received!r}")
+        await asyncio.sleep(0.01)
+
+    await broker.acknowledge_output(client_id, window_id, sender)
+    deadline = asyncio.get_event_loop().time() + 1
+    while received != [b"first", b"-seco", b"nd"]:
+        if asyncio.get_event_loop().time() > deadline:
+            raise AssertionError(f"final output was not delivered after ack: {received!r}")
+        await asyncio.sleep(0.01)
+    await broker.unsubscribe(client_id, window_id, sender)
+
+
+@pytest.mark.asyncio
+async def test_ack_capable_subscriber_keeps_large_default_output_frame() -> None:
+    client_id = uuid4()
+    window_id = uuid4()
+    broker = TerminalBroker()
+    received: list[bytes] = []
+
+    async def sender(data: bytes) -> None:
+        received.append(data)
+
+    payload = b"x" * (96 * 1024)
+    await broker.subscribe(client_id, window_id, sender)
+    await broker.acknowledge_output(client_id, window_id, sender)
+
+    await broker.publish_output(client_id, window_id, payload)
+
+    deadline = asyncio.get_event_loop().time() + 1
+    while received != [payload]:
+        if asyncio.get_event_loop().time() > deadline:
+            raise AssertionError(f"large output was split or not delivered: {[len(chunk) for chunk in received]!r}")
+        await asyncio.sleep(0.01)
+    await broker.unsubscribe(client_id, window_id, sender)
+
+
+@pytest.mark.asyncio
+async def test_ack_capable_subscriber_splits_oversized_output_by_ack_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(broker_module, "SUBSCRIBER_WRITER_COALESCE_BYTES", 4)
+    monkeypatch.setattr(broker_module, "SUBSCRIBER_WRITER_ACK_WINDOW_BYTES", 4)
+
+    client_id = uuid4()
+    window_id = uuid4()
+    broker = TerminalBroker()
+    received: list[bytes] = []
+
+    async def sender(data: bytes) -> None:
+        received.append(data)
+
+    await broker.subscribe(client_id, window_id, sender)
+    await broker.acknowledge_output(client_id, window_id, sender)
+
+    await broker.publish_output(client_id, window_id, b"abcdefghij")
+
+    deadline = asyncio.get_event_loop().time() + 1
+    while received != [b"abcd"]:
+        if asyncio.get_event_loop().time() > deadline:
+            raise AssertionError(f"first output slice was not delivered: {received!r}")
+        await asyncio.sleep(0.01)
+
+    await asyncio.sleep(0.05)
+    assert received == [b"abcd"]
+
+    await broker.acknowledge_output(client_id, window_id, sender)
+    deadline = asyncio.get_event_loop().time() + 1
+    while received != [b"abcd", b"efgh"]:
+        if asyncio.get_event_loop().time() > deadline:
+            raise AssertionError(f"second output slice was not delivered after ack: {received!r}")
+        await asyncio.sleep(0.01)
+
+    await broker.acknowledge_output(client_id, window_id, sender)
+    deadline = asyncio.get_event_loop().time() + 1
+    while received != [b"abcd", b"efgh", b"ij"]:
+        if asyncio.get_event_loop().time() > deadline:
+            raise AssertionError(f"final output slice was not delivered after ack: {received!r}")
+        await asyncio.sleep(0.01)
+    await broker.unsubscribe(client_id, window_id, sender)
+
+
+@pytest.mark.asyncio
+async def test_ack_capable_subscriber_allows_multiple_frames_within_ack_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(broker_module, "SUBSCRIBER_WRITER_COALESCE_BYTES", 4)
+    monkeypatch.setattr(broker_module, "SUBSCRIBER_WRITER_ACK_WINDOW_BYTES", 12)
+
+    client_id = uuid4()
+    window_id = uuid4()
+    broker = TerminalBroker()
+    received: list[bytes] = []
+
+    async def sender(data: bytes) -> None:
+        received.append(data)
+
+    await broker.subscribe(client_id, window_id, sender)
+    await broker.acknowledge_output(client_id, window_id, sender)
+
+    await broker.publish_output(client_id, window_id, b"aaaabbbbccccdddd")
+
+    deadline = asyncio.get_event_loop().time() + 1
+    while received != [b"aaaa", b"bbbb", b"cccc"]:
+        if asyncio.get_event_loop().time() > deadline:
+            raise AssertionError(f"windowed output was not delivered: {received!r}")
+        await asyncio.sleep(0.01)
+
+    await asyncio.sleep(0.05)
+    assert received == [b"aaaa", b"bbbb", b"cccc"]
+
+    await broker.acknowledge_output(client_id, window_id, sender, bytes_acked=4)
+    deadline = asyncio.get_event_loop().time() + 1
+    while received != [b"aaaa", b"bbbb", b"cccc", b"dddd"]:
+        if asyncio.get_event_loop().time() > deadline:
+            raise AssertionError(f"output did not continue after byte ack: {received!r}")
+        await asyncio.sleep(0.01)
+    await broker.unsubscribe(client_id, window_id, sender)
+
+
+@pytest.mark.asyncio
+async def test_ack_capable_subscriber_bare_ack_releases_one_in_flight_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(broker_module, "SUBSCRIBER_WRITER_COALESCE_BYTES", 4)
+    monkeypatch.setattr(broker_module, "SUBSCRIBER_WRITER_ACK_WINDOW_BYTES", 8)
+
+    client_id = uuid4()
+    window_id = uuid4()
+    broker = TerminalBroker()
+    received: list[bytes] = []
+
+    async def sender(data: bytes) -> None:
+        received.append(data)
+
+    await broker.subscribe(client_id, window_id, sender)
+    await broker.acknowledge_output(client_id, window_id, sender)
+
+    await broker.publish_output(client_id, window_id, b"aaaabbbbcccc")
+
+    deadline = asyncio.get_event_loop().time() + 1
+    while received != [b"aaaa", b"bbbb"]:
+        if asyncio.get_event_loop().time() > deadline:
+            raise AssertionError(f"initial window output was not delivered: {received!r}")
+        await asyncio.sleep(0.01)
+
+    await broker.acknowledge_output(client_id, window_id, sender)
+    deadline = asyncio.get_event_loop().time() + 1
+    while received != [b"aaaa", b"bbbb", b"cccc"]:
+        if asyncio.get_event_loop().time() > deadline:
+            raise AssertionError(f"bare ack did not release one frame: {received!r}")
+        await asyncio.sleep(0.01)
+    await broker.unsubscribe(client_id, window_id, sender)
+
+
+@pytest.mark.asyncio
+async def test_ack_capable_subscriber_coalesces_small_output_within_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(broker_module, "SUBSCRIBER_WRITER_COALESCE_BYTES", 12)
+    monkeypatch.setattr(broker_module, "SUBSCRIBER_WRITER_ACK_WINDOW_BYTES", 12)
+
+    client_id = uuid4()
+    window_id = uuid4()
+    received: list[bytes] = []
+    release_sender = asyncio.Event()
+    failures: list[BaseException] = []
+
+    async def sender(data: bytes) -> None:
+        received.append(data)
+        await release_sender.wait()
+
+    async def on_failure(_writer, exc: BaseException) -> None:
+        failures.append(exc)
+
+    writer = broker_module._TerminalSubscriberWriter(
+        client_id=client_id,
+        window_id=window_id,
+        output_sender=sender,
+        status_sender=None,
+        on_failure=on_failure,
+    )
+    async with writer._condition:
+        writer._ack_enabled = True
+        for chunk in (b"aaaa", b"bbbb", b"cccc"):
+            writer._queue.append(broker_module._QueuedSubscriberMessage(payload=chunk, size=len(chunk)))
+            writer._queued_bytes += len(chunk)
+        writer._condition.notify_all()
+
+    writer.start()
+
+    deadline = asyncio.get_event_loop().time() + 1
+    while received != [b"aaaabbbbcccc"]:
+        if asyncio.get_event_loop().time() > deadline:
+            raise AssertionError(f"small output was not coalesced: {received!r}")
+        await asyncio.sleep(0.01)
+
+    release_sender.set()
+    await writer.close()
+    assert failures == []
+
+
+@pytest.mark.asyncio
+async def test_ack_capable_subscriber_sheds_old_output_when_queue_is_full(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(broker_module, "SUBSCRIBER_WRITER_QUEUE_MAX_BYTES", 8)
+    monkeypatch.setattr(broker_module, "SUBSCRIBER_WRITER_QUEUE_MAX_MESSAGES", 2)
+    monkeypatch.setattr(broker_module, "SUBSCRIBER_WRITER_COALESCE_BYTES", 4)
+    monkeypatch.setattr(broker_module, "SUBSCRIBER_WRITER_ACK_WINDOW_BYTES", 4)
+
+    client_id = uuid4()
+    window_id = uuid4()
+    broker = TerminalBroker()
+    received: list[bytes] = []
+    release_sender = asyncio.Event()
+
+    async def sender(data: bytes) -> None:
+        received.append(data)
+        await release_sender.wait()
+
+    await broker.subscribe(client_id, window_id, sender)
+    await broker.acknowledge_output(client_id, window_id, sender)
+
+    await broker.publish_output(client_id, window_id, b"aaaa")
+    deadline = asyncio.get_event_loop().time() + 1
+    while received != [b"aaaa"]:
+        if asyncio.get_event_loop().time() > deadline:
+            raise AssertionError(f"first output was not delivered: {received!r}")
+        await asyncio.sleep(0.01)
+
+    await broker.publish_output(client_id, window_id, b"bbbb")
+    await broker.publish_output(client_id, window_id, b"cccc")
+    await broker.publish_output(client_id, window_id, b"dddd")
+
+    assert sender in broker._subscribers.get((client_id, window_id), {})
+
+    release_sender.set()
+    await broker.acknowledge_output(client_id, window_id, sender)
+    deadline = asyncio.get_event_loop().time() + 1
+    while len(received) < 2:
+        if asyncio.get_event_loop().time() > deadline:
+            raise AssertionError(f"new output was not delivered after shedding: {received!r}")
+        await asyncio.sleep(0.01)
+
+    assert received[-1] == b"dddd"
+    await broker.unsubscribe(client_id, window_id, sender)
 
 
 @pytest.mark.asyncio
@@ -247,32 +543,35 @@ async def test_publish_output_drops_slow_subscriber_and_keeps_healthy_one(
 
     await broker.subscribe(client_id, window_id, slow_sender)
     await broker.subscribe(client_id, window_id, healthy_sender)
+    try:
+        started = asyncio.get_event_loop().time()
+        await asyncio.wait_for(
+            broker.publish_output(client_id, window_id, b"first"),
+            timeout=1.0,
+        )
+        elapsed_first = asyncio.get_event_loop().time() - started
 
-    started = asyncio.get_event_loop().time()
-    await asyncio.wait_for(
-        broker.publish_output(client_id, window_id, b"first"),
-        timeout=1.0,
-    )
-    elapsed_first = asyncio.get_event_loop().time() - started
+        await broker.publish_output(client_id, window_id, b"second")
 
-    await broker.publish_output(client_id, window_id, b"second")
+        await asyncio.wait_for(asyncio.to_thread(lambda: None), timeout=1)
+        deadline = asyncio.get_event_loop().time() + 1
+        while slow_calls == 0 or b"".join(healthy_received) != b"firstsecond":
+            if asyncio.get_event_loop().time() > deadline:
+                raise AssertionError(
+                    f"subscriber output was not delivered: slow={slow_calls}, healthy={healthy_received!r}"
+                )
+            await asyncio.sleep(0.01)
+        release_slow.set()
 
-    await asyncio.wait_for(asyncio.to_thread(lambda: None), timeout=1)
-    deadline = asyncio.get_event_loop().time() + 1
-    while slow_calls == 0 or b"".join(healthy_received) != b"firstsecond":
-        if asyncio.get_event_loop().time() > deadline:
-            raise AssertionError(
-                f"subscriber output was not delivered: slow={slow_calls}, healthy={healthy_received!r}"
-            )
-        await asyncio.sleep(0.01)
-    release_slow.set()
-
-    assert slow_calls == 1
-    assert b"".join(healthy_received) == b"firstsecond"
-    assert elapsed_first < 0.5, (
-        "publish_output must not wait substantially longer than the "
-        "per-subscriber timeout when one subscriber is stuck"
-    )
+        assert slow_calls == 1
+        assert b"".join(healthy_received) == b"firstsecond"
+        assert elapsed_first < 0.5, (
+            "publish_output must not wait substantially longer than the "
+            "per-subscriber timeout when one subscriber is stuck"
+        )
+    finally:
+        release_slow.set()
+        await _unsubscribe_remaining_output_senders(broker, client_id, window_id)
 
 
 @pytest.mark.asyncio
@@ -310,6 +609,7 @@ async def test_publish_output_removes_failing_subscribers_and_continues() -> Non
 
     assert failures == [b"first"]
     assert b"".join(received) == b"firstsecond"
+    await _unsubscribe_remaining_output_senders(broker, client_id, window_id)
 
 
 @pytest.mark.asyncio
@@ -351,6 +651,7 @@ async def test_broker_attach_uses_runtime_and_publishes_initial_output() -> None
 
     assert runtime.attached == [runtime_window]
     assert received == [b"attached"]
+    await broker.unsubscribe(client_id, browser_window_id, sender)
 
 
 @pytest.mark.asyncio
@@ -467,6 +768,7 @@ async def test_broker_publishes_status_to_status_subscribers() -> None:
     assert received_statuses == [
         '{"type":"terminal_status","status":"unavailable","reason":"client_offline"}'
     ]
+    await broker.unsubscribe(client_id, browser_window_id, output_sender, status_sender)
 
 
 @pytest.mark.asyncio
@@ -504,6 +806,7 @@ async def test_broker_clear_client_removes_attachments_and_publishes_status() ->
     assert received_statuses == [
         '{"type":"terminal_status","status":"unavailable","reason":"client_offline"}'
     ]
+    await broker.unsubscribe(client_id, browser_window_id, output_sender, status_sender)
 
 
 @pytest.mark.asyncio
@@ -580,3 +883,4 @@ async def test_reconnect_waits_for_pending_final_detach_before_reattaching() -> 
     assert not attach_completed_while_detaching
     assert runtime.detached == [runtime_window]
     assert runtime.attached == [runtime_window, runtime_window]
+    await broker.unsubscribe(client_id, browser_window_id, reconnect_sender)

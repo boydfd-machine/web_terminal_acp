@@ -33,7 +33,12 @@ class SelectWindowControl:
     window_id: UUID
 
 
-def parse_text_input(text: str) -> bytes | ResizeControl | SelectWindowControl | None:
+@dataclass(frozen=True)
+class OutputAckControl:
+    bytes_acked: int | None = None
+
+
+def parse_text_input(text: str) -> bytes | ResizeControl | SelectWindowControl | OutputAckControl | None:
     try:
         payload = json.loads(text)
     except json.JSONDecodeError:
@@ -41,6 +46,11 @@ def parse_text_input(text: str) -> bytes | ResizeControl | SelectWindowControl |
 
     if not isinstance(payload, dict):
         return text.encode()
+    if payload.get("type") == "output_ack":
+        bytes_acked = payload.get("bytes")
+        if isinstance(bytes_acked, int) and not isinstance(bytes_acked, bool) and bytes_acked > 0:
+            return OutputAckControl(bytes_acked=bytes_acked)
+        return OutputAckControl()
     if payload.get("type") == "select_window":
         window_id = payload.get("window_id")
         if not isinstance(window_id, str):

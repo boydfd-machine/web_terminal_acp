@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import posixpath
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import case, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -16,7 +18,7 @@ from app.agent_tools import get_agent_tool_registry
 from app.agent_tools.common import fallback_projection
 from app.agent_tools.types import AgentChatProjection, AgentEventProjection, AgentToolAdapter
 from app.config import get_settings
-from app.db import get_session
+from app.db import SessionLocal, get_session
 from app.models import AiSession, Client, ClientRuntime, Event, EventSourceType, SummaryJob, VirtualWindow
 from app.repositories.clients import ensure_local_client, get_client
 from app.repositories.summary_jobs import (
@@ -53,6 +55,14 @@ from app.schemas import (
 from app.services.runtime.client_connections import ClientConnectionRegistry
 from app.services.git_worktree_agent_markers import materialize_agent_worktree_markers
 from app.services.git_worktree_coordinator import process_git_worktree_snapshot_refresh
+from app.services.polling_response_cache import (
+    CachedJsonResponse,
+    begin_response_cache_refresh,
+    cached_or_stale_json_response,
+    finish_response_cache_refresh,
+    response_cache_scope,
+    store_json_response,
+)
 from app.services.runtime.remote import RemoteClientUnavailable, RemoteRuntime, RemoteTerminalError
 from app.services.terminal_work_status import (
     TerminalWorkStatus,
@@ -71,6 +81,16 @@ AgentRecordOffset = Annotated[int, Query(ge=0)]
 CommandHistoryLimit = Annotated[int, Query(ge=1, le=200)]
 CommandHistoryOffset = Annotated[int, Query(ge=0)]
 _PROVIDER_ALIASES = {"claude": "claude_code"}
+
+
+@dataclass(frozen=True)
+class _RuntimeClient:
+    id: UUID
+    runtime: ClientRuntime
+
+
+def _runtime_client_from_model(client: Client) -> _RuntimeClient:
+    return _RuntimeClient(id=client.id, runtime=client.runtime)
 
 
 async def _require_client(session: AsyncSession, client_id: UUID) -> Client:
@@ -400,7 +420,7 @@ def _client_connection_registry(request: Request) -> ClientConnectionRegistry:
 
 
 async def _create_remote_virtual_window_for_client(
-    client: Client,
+    client: _RuntimeClient,
     payload: WindowCreateIn,
     session: AsyncSession,
     registry: ClientConnectionRegistry,
@@ -440,6 +460,10 @@ async def _create_remote_virtual_window_for_client(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="remote runtime unavailable",
         ) from exc
+    except asyncio.CancelledError:
+        with contextlib.suppress(Exception):
+            await session.rollback()
+        raise
     except Exception:
         with contextlib.suppress(Exception):
             await session.rollback()
@@ -448,7 +472,7 @@ async def _create_remote_virtual_window_for_client(
 
 
 async def _create_virtual_window_for_client(
-    client: Client,
+    client: _RuntimeClient,
     payload: WindowCreateIn,
     session: AsyncSession,
     tmux_manager: TmuxManager,
@@ -493,6 +517,13 @@ async def _create_virtual_window_for_client(
                 await tmux_manager.kill_window(tmux_target)
             except Exception:
                 pass
+        raise
+    except asyncio.CancelledError:
+        with contextlib.suppress(Exception):
+            await session.rollback()
+        if tmux_target is not None:
+            with contextlib.suppress(Exception):
+                await tmux_manager.kill_window(tmux_target)
         raise
     except Exception as exc:
         with contextlib.suppress(Exception):
@@ -560,7 +591,8 @@ async def create_virtual_window(
     session: AsyncSession = Depends(get_session),
     tmux_manager: TmuxManager = Depends(get_tmux_manager),
 ) -> WindowOut:
-    client = await _require_client(session, client_id)
+    client = _runtime_client_from_model(await _require_client(session, client_id))
+    await session.commit()
     created = await _create_virtual_window_for_client(
         client,
         payload,
@@ -584,7 +616,7 @@ async def create_local_virtual_window(
     session: AsyncSession = Depends(get_session),
     tmux_manager: TmuxManager = Depends(get_tmux_manager),
 ) -> WindowOut:
-    client = await ensure_local_client(session)
+    client = _runtime_client_from_model(await ensure_local_client(session))
     await session.commit()
     created = await _create_virtual_window_for_client(client, payload, session, tmux_manager)
     await ui_event_hub_from_state(request.app.state).publish_invalidation(
@@ -599,7 +631,25 @@ async def create_local_virtual_window(
 @router.get("/clients/{client_id}/windows/{window_id}", response_model=WindowOut)
 async def read_virtual_window(
     client_id: UUID, window_id: UUID, session: AsyncSession = Depends(get_session)
-) -> WindowOut:
+) -> WindowOut | Response:
+    cache_key = ("window", response_cache_scope(session), client_id, window_id)
+    cached = _cached_or_stale_response(cache_key)
+    if cached is not None and not cached.expired:
+        return cached.response
+    if cached is not None:
+        _refresh_window_response_cache(cache_key, client_id, window_id)
+        return cached.response
+
+    return await _build_window_response(session, client_id, window_id, cache_key=cache_key)
+
+
+async def _build_window_response(
+    session: AsyncSession,
+    client_id: UUID,
+    window_id: UUID,
+    *,
+    cache_key: tuple[object, ...] | None = None,
+) -> Response:
     await _require_client(session, client_id)
     window = await get_window_for_client(session, client_id, window_id)
     if window is None:
@@ -607,7 +657,37 @@ async def read_virtual_window(
     summary_job = await get_latest_summary_job(session, window.id)
     runtime_tags = await runtime_tags_for_window_out(session, window)
     work_status = await load_work_status(session, client_id, window.id)
-    return to_window_out(window, summary_job, runtime_tags, work_status)
+    payload = to_window_out(window, summary_job, runtime_tags, work_status)
+    return store_json_response(
+        cache_key or ("window", response_cache_scope(session), client_id, window_id),
+        payload,
+        resources={"window"},
+        client_id=client_id,
+    )
+
+
+def _cached_or_stale_response(cache_key: tuple[object, ...]) -> CachedJsonResponse | None:
+    return cached_or_stale_json_response(cache_key)
+
+
+def _refresh_window_response_cache(
+    cache_key: tuple[object, ...],
+    client_id: UUID,
+    window_id: UUID,
+) -> None:
+    if not begin_response_cache_refresh(cache_key):
+        return
+
+    async def refresh_window() -> None:
+        try:
+            async with SessionLocal() as refresh_session:
+                await _build_window_response(refresh_session, client_id, window_id, cache_key=cache_key)
+        except Exception:
+            logger.exception("window response cache refresh failed", extra={"cache_key": repr(cache_key)})
+        finally:
+            finish_response_cache_refresh(cache_key)
+
+    asyncio.create_task(refresh_window())
 
 
 async def _require_window_for_agent_record(

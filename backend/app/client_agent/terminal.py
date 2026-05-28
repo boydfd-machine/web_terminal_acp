@@ -7,6 +7,7 @@ import logging
 import os
 import pty
 import re
+import select
 import signal
 import struct
 import termios
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 PTY_READ_CHUNK_BYTES = 65536
 PTY_OUTPUT_SEND_CHUNK_BYTES = 4 * 1024
+PTY_FAST_INPUT_MAX_BYTES = 256
 PTY_CONTROL_EXECUTOR_MAX_WORKERS = 8
 SELECTION_POLL_INTERVAL_SECONDS = 0.25
 # Maximum size of the in-memory coalescing buffer that decouples PTY reads from
@@ -75,6 +77,30 @@ async def _run_pty_control(func, /, *args, **kwargs):
         PTY_CONTROL_EXECUTOR,
         partial(func, *args, **kwargs),
     )
+
+
+def _try_write_pty_input_immediately(master_fd: int, data: bytes) -> int:
+    if not data or len(data) > PTY_FAST_INPUT_MAX_BYTES:
+        return 0
+    try:
+        _, writable, _ = select.select([], [master_fd], [], 0)
+    except (OSError, ValueError):
+        return 0
+    if not writable:
+        return 0
+    try:
+        return os.write(master_fd, data)
+    except (BlockingIOError, InterruptedError, OSError):
+        return 0
+
+
+def _write_all_pty_input(master_fd: int, data: bytes) -> None:
+    remaining = memoryview(data)
+    while remaining:
+        written = os.write(master_fd, remaining)
+        if written <= 0:
+            raise BlockingIOError("PTY input write made no progress")
+        remaining = remaining[written:]
 
 
 @dataclass(frozen=True)
@@ -158,7 +184,10 @@ class ClientTerminalMultiplexer:
         # PTY master read and write use independent kernel buffers, so writes here
         # remain responsive even while output drain is back-pressured by the bulk
         # writer queue.
-        await _run_pty_control(os.write, attached.master_fd, data)
+        written = _try_write_pty_input_immediately(attached.master_fd, data)
+        if written >= len(data):
+            return
+        await _run_pty_control(_write_all_pty_input, attached.master_fd, data[written:])
 
     async def resize(
         self,

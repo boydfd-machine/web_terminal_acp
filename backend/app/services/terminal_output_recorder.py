@@ -4,7 +4,8 @@ from datetime import UTC, datetime
 from hashlib import sha256
 import logging
 import re
-from uuid import UUID, uuid4
+from uuid import UUID
+from time import monotonic
 
 from elasticsearch import AsyncElasticsearch
 from sqlalchemy import select
@@ -12,12 +13,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Event, EventSourceType, VirtualWindow
-from app.services.search_index import index_terminal_chunk
+from app.services.search_index import index_terminal_chunk_without_event
 from app.services.summary_scheduler import schedule_summary_after_terminal_input
 from app.services.terminal_command_marker import ParsedCommandMarker, extract_command_markers
 from app.services.window_runtime_tags import agent_from_command
 
 logger = logging.getLogger(__name__)
+TERMINAL_OUTPUT_ACTIVITY_TOUCH_INTERVAL_SECONDS = 1.0
+_terminal_output_activity_touched_at: dict[tuple[UUID, UUID], float] = {}
 
 _SECRET_ASSIGNMENT_PATTERN = re.compile(
     r"\b(password|passwd|token|api[_-]?key|secret|access[_-]?token)=('[^']*'|\"[^\"]*\"|[^\s&]+)",
@@ -281,44 +284,53 @@ async def record_terminal_output_chunk(
     window_id: UUID,
     data: bytes,
     es_client: AsyncElasticsearch | None = None,
-) -> Event | None:
+) -> bool:
     clean_data, commands = extract_command_markers(data)
     await record_terminal_command_markers(session, client_id, window_id, commands)
     text = clean_data.decode("utf-8", errors="replace")
     if text == "":
-        return None
+        return False
 
-    event = Event(
-        client_id=client_id,
-        source_type=EventSourceType.terminal,
-        source_id=str(window_id),
-        kind="terminal_output",
-        virtual_window_id=window_id,
-        payload_json={"text": text},
-        fingerprint=f"terminal_output:{window_id}:{uuid4()}",
-    )
-    session.add(event)
-    await session.flush()
-    await session.commit()
-    await session.refresh(event)
-
-    if es_client is None:
-        return event
+    activity_recorded = await _touch_terminal_output_activity(session, client_id, window_id)
 
     try:
-        await index_terminal_chunk(
+        if es_client is None:
+            return activity_recorded
+        await index_terminal_chunk_without_event(
             es_client,
             client_id,
             window_id,
             text,
-            [str(event.id)],
-            document_id=str(event.id),
         )
     except Exception:
-        logger.exception("failed to index terminal output", extra={"event_id": str(event.id)})
-        return event
+        logger.exception(
+            "failed to index terminal output",
+            extra={"client_id": str(client_id), "window_id": str(window_id)},
+        )
+        return activity_recorded
 
-    event.indexed_at = datetime.now(UTC)
+    return True
+
+
+async def _touch_terminal_output_activity(
+    session: AsyncSession,
+    client_id: UUID,
+    window_id: UUID,
+) -> bool:
+    now = monotonic()
+    key = (client_id, window_id)
+    last_touched_at = _terminal_output_activity_touched_at.get(key)
+    if (
+        last_touched_at is not None
+        and now - last_touched_at < TERMINAL_OUTPUT_ACTIVITY_TOUCH_INTERVAL_SECONDS
+    ):
+        return True
+
+    window = await session.get(VirtualWindow, window_id)
+    if window is None or window.client_id != client_id:
+        return False
+
+    window.terminal_last_output_at = datetime.now(UTC)
     await session.commit()
-    await session.refresh(event)
-    return event
+    _terminal_output_activity_touched_at[key] = now
+    return True

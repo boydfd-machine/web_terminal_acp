@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.config import Settings
@@ -25,6 +25,24 @@ async def db_session():
 
     async with AsyncSession(engine, expire_on_commit=False) as session:
         yield session
+
+    await engine.dispose()
+
+
+@pytest.fixture
+async def counted_db_session():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    statements: list[str] = []
+
+    @event.listens_for(engine.sync_engine, "before_cursor_execute")
+    def record_statement(_connection, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        yield session, statements
 
     await engine.dispose()
 
@@ -274,9 +292,9 @@ async def test_existing_pending_job_updates_run_after_reason_and_generation(db_s
 async def test_first_agent_activity_after_idle_schedules_summary(db_session):
     window = await create_window(db_session)
     agent_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
-    await add_agent_event(db_session, window, agent_at, fingerprint="agent-1")
+    event = await add_agent_event(db_session, window, agent_at, fingerprint="agent-1")
 
-    job = await schedule_summary_after_agent_activity(db_session, window)
+    job = await schedule_summary_after_agent_activity(db_session, window, event=event)
 
     assert job is not None
     assert job.status == SummaryJobStatus.pending
@@ -286,16 +304,79 @@ async def test_first_agent_activity_after_idle_schedules_summary(db_session):
 
 
 @pytest.mark.asyncio
+async def test_first_agent_activity_ignores_current_event_in_prior_idle_check(db_session):
+    window = await create_window(db_session)
+    agent_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+    event = await add_agent_event(db_session, window, agent_at, fingerprint="agent-current")
+
+    job = await schedule_summary_after_agent_activity(db_session, window, event=event)
+
+    assert job is not None
+    assert job.run_after == agent_at + timedelta(seconds=20)
+
+
+@pytest.mark.asyncio
 async def test_agent_activity_without_prior_idle_does_not_schedule(db_session):
     window = await create_window(db_session)
     shell_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
     agent_at = shell_at + timedelta(minutes=2)
     await add_shell_input(db_session, window, shell_at, 1)
-    await add_agent_event(db_session, window, agent_at, fingerprint="agent-1")
+    event = await add_agent_event(db_session, window, agent_at, fingerprint="agent-1")
 
-    job = await schedule_summary_after_agent_activity(db_session, window)
+    job = await schedule_summary_after_agent_activity(db_session, window, event=event)
 
     assert job is None
+
+
+@pytest.mark.asyncio
+async def test_agent_activity_scheduler_avoids_terminal_output_scans(counted_db_session):
+    db_session, statements = counted_db_session
+    window = await create_window(db_session)
+    agent_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+    event = await add_agent_event(db_session, window, agent_at, fingerprint="agent-no-output-scan")
+    statements.clear()
+
+    job = await schedule_summary_after_agent_activity(db_session, window, event=event)
+
+    assert job is not None
+    event_reads = [
+        statement
+        for statement in statements
+        if "FROM events" in statement and "SELECT events" in statement
+    ]
+    assert event_reads
+    assert all(" OR " not in statement.upper() for statement in event_reads)
+    assert all("terminal_output" not in statement for statement in event_reads)
+    assert all("source_type IN" not in statement for statement in event_reads)
+    source_row_reads = [
+        statement
+        for statement in event_reads
+        if "events.source_type = ?" in statement
+    ]
+    assert all("LIMIT" in statement.upper() for statement in source_row_reads)
+    source_time_reads = [
+        statement
+        for statement in statements
+        if "FROM events" in statement
+        and "events.created_at" in statement
+        and "events.source_type = ?" in statement
+    ]
+    assert all("LIMIT" in statement.upper() for statement in source_time_reads)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_agent_activity_does_not_advance_generation(db_session):
+    window = await create_window(db_session)
+    agent_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+    event = await add_agent_event(db_session, window, agent_at, fingerprint="agent-repeat")
+
+    first_job = await schedule_summary_after_agent_activity(db_session, window, event=event)
+    second_job = await schedule_summary_after_agent_activity(db_session, window, event=event)
+
+    assert first_job is not None
+    assert second_job is not None
+    assert window.agent_activity_generation == 1
+    assert second_job.input_generation == 1
 
 
 @pytest.mark.asyncio
@@ -304,9 +385,9 @@ async def test_agent_user_message_after_agent_command_schedules_summary_after_id
     command_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
     user_message_at = command_at + timedelta(seconds=2)
     await add_agent_command_input(db_session, window, command_at, 1)
-    await add_agent_event(db_session, window, user_message_at, fingerprint="agent-user-1", kind="user_message")
+    event = await add_agent_event(db_session, window, user_message_at, fingerprint="agent-user-1", kind="user_message")
 
-    job = await schedule_summary_after_agent_activity(db_session, window)
+    job = await schedule_summary_after_agent_activity(db_session, window, event=event)
 
     assert job is not None
     assert job.status == SummaryJobStatus.pending
@@ -320,9 +401,9 @@ async def test_agent_user_message_after_recent_terminal_activity_schedules_summa
     shell_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
     user_message_at = shell_at + timedelta(minutes=2)
     await add_shell_input(db_session, window, shell_at, 1)
-    await add_agent_event(db_session, window, user_message_at, fingerprint="agent-user-1", kind="user_message")
+    event = await add_agent_event(db_session, window, user_message_at, fingerprint="agent-user-1", kind="user_message")
 
-    job = await schedule_summary_after_agent_activity(db_session, window)
+    job = await schedule_summary_after_agent_activity(db_session, window, event=event)
 
     assert job is not None
     assert job.run_after == user_message_at + timedelta(seconds=20)
@@ -343,9 +424,11 @@ async def test_repeat_agent_events_in_same_burst_do_not_reschedule_after_summary
         )
     )
     await add_agent_event(db_session, window, first_at, fingerprint="agent-1")
-    await add_agent_event(db_session, window, second_at, fingerprint="agent-2")
+    first_event = await add_agent_event(db_session, window, first_at, fingerprint="agent-3")
+    await schedule_summary_after_agent_activity(db_session, window, event=first_event)
+    event = await add_agent_event(db_session, window, second_at, fingerprint="agent-2")
 
-    job = await schedule_summary_after_agent_activity(db_session, window)
+    job = await schedule_summary_after_agent_activity(db_session, window, event=event)
 
     assert job is None
 
@@ -363,10 +446,11 @@ async def test_new_agent_burst_after_idle_schedules_again(db_session):
             created_at=first_burst + timedelta(minutes=3),
         )
     )
-    await add_agent_event(db_session, window, first_burst, fingerprint="agent-1")
-    await add_agent_event(db_session, window, second_burst, fingerprint="agent-2")
+    first_event = await add_agent_event(db_session, window, first_burst, fingerprint="agent-1")
+    await schedule_summary_after_agent_activity(db_session, window, event=first_event)
+    event = await add_agent_event(db_session, window, second_burst, fingerprint="agent-2")
 
-    job = await schedule_summary_after_agent_activity(db_session, window)
+    job = await schedule_summary_after_agent_activity(db_session, window, event=event)
 
     assert job is not None
     assert job.run_after == second_burst + timedelta(seconds=20)

@@ -76,7 +76,7 @@ async def persist_managed_agent_event(
         virtual_window_id=row.virtual_window_id,
     )
     row.ai_session_id = ai_session.id
-    await schedule_summary_after_agent_activity(session, window)
+    await schedule_summary_after_agent_activity(session, window, event=row)
     await session.flush()
 
     return row

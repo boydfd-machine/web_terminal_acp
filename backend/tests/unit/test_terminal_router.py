@@ -101,6 +101,9 @@ class FakeBroker:
     async def publish_view_output(self, client_id, view_id, data: bytes) -> None:
         self.published_output.append((client_id, view_id, data))
 
+    async def acknowledge_output(self, client_id, window_id, sender, bytes_acked=None) -> None:
+        return None
+
     async def select_window(
         self,
         client_id,
@@ -426,6 +429,58 @@ async def test_scoped_terminal_route_does_not_record_multi_chunk_initial_attach_
 
 
 @pytest.mark.asyncio
+async def test_local_terminal_batches_rapid_output_recording_without_delaying_display(monkeypatch) -> None:
+    window_id = uuid4()
+    runtime_window = RuntimeWindow(session_id="web-terminal", window_id="@7")
+    window = VirtualWindow(
+        id=window_id,
+        client_id=LOCAL_CLIENT_ID,
+        title="Terminal",
+        status=WindowStatus.active,
+        tmux_session=runtime_window.session_id,
+        tmux_window_id=runtime_window.window_id,
+    )
+    broker = FakeBroker()
+    recorded_output: list[bytes] = []
+
+    async def fake_get_window_for_client(session, requested_client_id, requested_window_id):
+        return window
+
+    async def fake_record_terminal_command_markers(session, client_id, target_window_id, commands):
+        return []
+
+    async def fake_record_terminal_output_chunk(session, client_id, target_window_id, data, es_client):
+        recorded_output.append(data)
+        return object()
+
+    monkeypatch.setattr(terminal, "SessionLocal", lambda: FakeSession())
+    monkeypatch.setattr(terminal, "get_window_for_client", fake_get_window_for_client)
+    monkeypatch.setattr(terminal, "_terminal_broker", lambda websocket, tmux_manager: broker)
+    monkeypatch.setattr(terminal, "record_terminal_command_markers", fake_record_terminal_command_markers)
+    monkeypatch.setattr(terminal, "record_terminal_output_chunk", fake_record_terminal_output_chunk)
+    monkeypatch.setattr(terminal, "ATTACH_SNAPSHOT_GRACE_SECONDS", -1.0, raising=False)
+    websocket = FakeWebSocket()
+
+    await terminal.terminal_websocket(websocket, LOCAL_CLIENT_ID, window_id, tmux_manager=ExistingTmuxManager())
+    output_callback = broker.attachments[0][3]
+
+    await output_callback(b"one")
+    await output_callback(b"two")
+
+    assert broker.published_output == [
+        (LOCAL_CLIENT_ID, window_id, b"one"),
+        (LOCAL_CLIENT_ID, window_id, b"two"),
+    ]
+
+    for _ in range(20):
+        if recorded_output == [b"onetwo"]:
+            break
+        await asyncio.sleep(0.01)
+
+    assert recorded_output == [b"onetwo"]
+
+
+@pytest.mark.asyncio
 async def test_local_terminal_records_output_before_slow_git_worktree_tracking(monkeypatch) -> None:
     window_id = uuid4()
     runtime_window = RuntimeWindow(session_id="web-terminal", window_id="@7")
@@ -516,10 +571,10 @@ async def test_local_terminal_records_output_before_slow_git_worktree_tracking(m
         assert recorded_output == [b"visible output\n"]
         assert (
             "invalidate",
-            ["agent_record", "command_history", "window", "tree", "search"],
+            ["agent_record", "command_history", "window", "search"],
             "terminal_command",
         ) in ui_calls
-        assert ("debounced", ["window", "tree", "search"], "terminal_output") in ui_calls
+        assert ("debounced", ["window", "search"], "terminal_output") in ui_calls
         assert git_done.is_set() is False
     finally:
         git_continue.set()

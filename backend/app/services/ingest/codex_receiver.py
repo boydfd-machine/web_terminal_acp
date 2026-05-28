@@ -80,7 +80,7 @@ async def receive_codex_trace(
     row.ai_session_id = ai_session.id
     window = await session.get(VirtualWindow, row.virtual_window_id)
     if window is not None:
-        await schedule_summary_after_agent_activity(session, window)
+        await schedule_summary_after_agent_activity(session, window, event=row)
 
     await session.flush()
     return row

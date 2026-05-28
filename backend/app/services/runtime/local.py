@@ -5,6 +5,7 @@ import contextlib
 import logging
 import os
 import pty
+import select
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import partial
@@ -22,6 +23,7 @@ from app.services.tmux_manager import TmuxManager, TmuxTarget, build_attach_comm
 logger = logging.getLogger(__name__)
 
 PTY_READ_CHUNK_BYTES = 65536
+PTY_FAST_INPUT_MAX_BYTES = 256
 PTY_CONTROL_EXECUTOR_MAX_WORKERS = 8
 PTY_DRAIN_BUFFER_MAX_BYTES = 16 * 1024 * 1024
 PTY_CONTROL_EXECUTOR = ThreadPoolExecutor(
@@ -36,6 +38,30 @@ async def _run_pty_control(func, /, *args, **kwargs):
         PTY_CONTROL_EXECUTOR,
         partial(func, *args, **kwargs),
     )
+
+
+def _try_write_pty_input_immediately(master_fd: int, data: bytes) -> int:
+    if not data or len(data) > PTY_FAST_INPUT_MAX_BYTES:
+        return 0
+    try:
+        _, writable, _ = select.select([], [master_fd], [], 0)
+    except (OSError, ValueError):
+        return 0
+    if not writable:
+        return 0
+    try:
+        return os.write(master_fd, data)
+    except (BlockingIOError, InterruptedError, OSError):
+        return 0
+
+
+def _write_all_pty_input(master_fd: int, data: bytes) -> None:
+    remaining = memoryview(data)
+    while remaining:
+        written = os.write(master_fd, remaining)
+        if written <= 0:
+            raise BlockingIOError("PTY input write made no progress")
+        remaining = remaining[written:]
 
 
 @dataclass
@@ -168,7 +194,10 @@ class LocalTerminalRuntime:
         view_id: UUID | str | None = None,
     ) -> None:
         session = self._session_for(window, view_id=view_id)
-        await _run_pty_control(os.write, session.master_fd, data)
+        written = _try_write_pty_input_immediately(session.master_fd, data)
+        if written >= len(data):
+            return
+        await _run_pty_control(_write_all_pty_input, session.master_fd, data[written:])
 
     async def resize(
         self,
@@ -276,6 +305,46 @@ class LocalTerminalRuntime:
         session.output_eof = False
         session.output_event.clear()
         session.output_buffer.clear()
+        loop = asyncio.get_running_loop()
+        reader_installed = False
+
+        def read_ready() -> None:
+            while True:
+                try:
+                    data = os.read(session.master_fd, PTY_READ_CHUNK_BYTES)
+                except BlockingIOError:
+                    return
+                except OSError:
+                    session.output_eof = True
+                    session.output_event.set()
+                    return
+                if not data:
+                    session.output_eof = True
+                    session.output_event.set()
+                    return
+                session.output_buffer.extend(data)
+                if len(session.output_buffer) > PTY_DRAIN_BUFFER_MAX_BYTES:
+                    overflow = len(session.output_buffer) - PTY_DRAIN_BUFFER_MAX_BYTES
+                    del session.output_buffer[:overflow]
+                    logger.warning(
+                        "local terminal PTY output buffer overflowed; dropped oldest bytes",
+                        extra={
+                            "session_id": key[0],
+                            "view_id": key[1],
+                            "dropped_bytes": overflow,
+                            "buffer_bytes": len(session.output_buffer),
+                        },
+                    )
+                session.output_event.set()
+
+        try:
+            os.set_blocking(session.master_fd, False)
+            loop.add_reader(session.master_fd, read_ready)
+            reader_installed = True
+        except (AttributeError, NotImplementedError, OSError):
+            with contextlib.suppress(OSError):
+                os.set_blocking(session.master_fd, True)
+            reader_installed = False
 
         async def reader_loop() -> None:
             try:
@@ -308,7 +377,7 @@ class LocalTerminalRuntime:
                 session.output_eof = True
                 session.output_event.set()
 
-        reader_task = asyncio.create_task(reader_loop())
+        reader_task = None if reader_installed else asyncio.create_task(reader_loop())
         session.reader_task = reader_task
         try:
             while True:
@@ -328,7 +397,9 @@ class LocalTerminalRuntime:
                     continue
                 await session.output_event.wait()
         finally:
-            if not reader_task.done():
+            if reader_installed:
+                loop.remove_reader(session.master_fd)
+            if reader_task is not None and not reader_task.done():
                 reader_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await reader_task

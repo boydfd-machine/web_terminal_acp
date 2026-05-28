@@ -1,7 +1,13 @@
 type TerminalOutputChunk = string | Uint8Array;
+type TerminalOutputWriteCallback = () => void;
+
+type TerminalOutputItem = {
+  chunk: TerminalOutputChunk;
+  onWrite?: TerminalOutputWriteCallback;
+};
 
 type TerminalOutputBufferOptions = {
-  write: (data: TerminalOutputChunk) => void;
+  write: (data: TerminalOutputChunk, onWrite?: TerminalOutputWriteCallback) => void;
   schedule?: (callback: () => void, delayMs?: number) => number;
   cancel?: (handle: number) => void;
   maxFlushCharacters?: number;
@@ -10,6 +16,10 @@ type TerminalOutputBufferOptions = {
   inputYieldDelayMs?: number;
   lowPriorityFlushDelayMs?: number;
   lowPriorityMaxFlushCharacters?: number;
+};
+
+type EnqueueOptions = {
+  onWrite?: TerminalOutputWriteCallback;
 };
 
 const DEFAULT_MAX_FLUSH_CHARACTERS = 4 * 1024;
@@ -30,18 +40,21 @@ function splitChunk(chunk: TerminalOutputChunk, length: number): [TerminalOutput
     return [chunk.slice(0, length), chunk.slice(length)];
   }
 
-  return [chunk.slice(0, length), chunk.slice(length)];
+  return [chunk.subarray(0, length), chunk.subarray(length)];
 }
 
-function joinChunks(chunks: TerminalOutputChunk[]): TerminalOutputChunk[] {
-  const joined: TerminalOutputChunk[] = [];
+function joinItems(items: TerminalOutputItem[]): TerminalOutputItem[] {
+  const joined: TerminalOutputItem[] = [];
   let stringParts: string[] = [];
+  let stringCallbacks: TerminalOutputWriteCallback[] = [];
   let byteParts: Uint8Array[] = [];
+  let byteCallbacks: TerminalOutputWriteCallback[] = [];
 
   const flushStrings = () => {
     if (stringParts.length > 0) {
-      joined.push(stringParts.join(""));
+      joined.push({ chunk: stringParts.join(""), onWrite: joinCallbacks(stringCallbacks) });
       stringParts = [];
+      stringCallbacks = [];
     }
   };
 
@@ -56,22 +69,40 @@ function joinChunks(chunks: TerminalOutputChunk[]): TerminalOutputChunk[] {
       merged.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    joined.push(merged);
+    joined.push({ chunk: merged, onWrite: joinCallbacks(byteCallbacks) });
     byteParts = [];
+    byteCallbacks = [];
   };
 
-  for (const chunk of chunks) {
-    if (typeof chunk === "string") {
+  for (const item of items) {
+    if (typeof item.chunk === "string") {
       flushBytes();
-      stringParts.push(chunk);
+      stringParts.push(item.chunk);
+      if (item.onWrite !== undefined) {
+        stringCallbacks.push(item.onWrite);
+      }
     } else {
       flushStrings();
-      byteParts.push(chunk);
+      byteParts.push(item.chunk);
+      if (item.onWrite !== undefined) {
+        byteCallbacks.push(item.onWrite);
+      }
     }
   }
   flushStrings();
   flushBytes();
   return joined;
+}
+
+function joinCallbacks(callbacks: TerminalOutputWriteCallback[]): TerminalOutputWriteCallback | undefined {
+  if (callbacks.length === 0) {
+    return undefined;
+  }
+  return () => {
+    for (const callback of callbacks) {
+      callback();
+    }
+  };
 }
 
 function defaultShouldYieldToInput(): boolean {
@@ -96,7 +127,7 @@ function defaultCancel(handle: number): void {
 }
 
 export function createTerminalOutputBuffer(options: TerminalOutputBufferOptions) {
-  const queue: TerminalOutputChunk[] = [];
+  const queue: TerminalOutputItem[] = [];
   const schedule = options.schedule ?? defaultSchedule;
   const cancel = options.cancel ?? defaultCancel;
   const maxFlushCharacters = Math.max(1, options.maxFlushCharacters ?? DEFAULT_MAX_FLUSH_CHARACTERS);
@@ -141,18 +172,18 @@ export function createTerminalOutputBuffer(options: TerminalOutputBufferOptions)
     const currentMaxFlushCharacters = isLowPriority()
       ? Math.min(maxFlushCharacters, lowPriorityMaxFlushCharacters)
       : maxFlushCharacters;
-    const pending: TerminalOutputChunk[] = [];
+    const pending: TerminalOutputItem[] = [];
     let pendingLength = 0;
     while (queue.length > 0) {
       const next = queue[0];
-      const nextLength = chunkLength(next);
+      const nextLength = chunkLength(next.chunk);
       if (pending.length === 0 && nextLength > currentMaxFlushCharacters) {
-        const [head, tail] = splitChunk(next, currentMaxFlushCharacters);
+        const [head, tail] = splitChunk(next.chunk, currentMaxFlushCharacters);
         queue.shift();
         if (tail !== null) {
-          queue.unshift(tail);
+          queue.unshift({ chunk: tail, onWrite: next.onWrite });
         }
-        pending.push(head);
+        pending.push({ chunk: head });
         break;
       }
       if (pending.length > 0 && pendingLength + nextLength > currentMaxFlushCharacters) {
@@ -163,8 +194,8 @@ export function createTerminalOutputBuffer(options: TerminalOutputBufferOptions)
       pendingLength += nextLength;
     }
 
-    for (const chunk of joinChunks(pending)) {
-      options.write(chunk);
+    for (const item of joinItems(pending)) {
+      options.write(item.chunk, item.onWrite);
     }
 
     if (queue.length > 0) {
@@ -173,21 +204,39 @@ export function createTerminalOutputBuffer(options: TerminalOutputBufferOptions)
   };
 
   return {
-    enqueue(data: TerminalOutputChunk): void {
+    enqueue(data: TerminalOutputChunk, enqueueOptions?: EnqueueOptions): void {
       if (disposed) {
         return;
       }
-      queue.push(data);
+      queue.push({ chunk: data, onWrite: enqueueOptions?.onWrite });
       scheduleFlush(isLowPriority() ? lowPriorityFlushDelayMs : 0);
+    },
+    enqueueInteractive(data: TerminalOutputChunk, interactiveOptions?: EnqueueOptions): boolean {
+      if (disposed) {
+        return false;
+      }
+      if (
+        queue.length === 0
+        && scheduledHandle === null
+        && !isLowPriority()
+        && deferredUntil <= Date.now()
+        && chunkLength(data) <= maxFlushCharacters
+      ) {
+        options.write(data, interactiveOptions?.onWrite);
+        return true;
+      }
+      queue.push({ chunk: data, onWrite: interactiveOptions?.onWrite });
+      scheduleFlush(isLowPriority() ? lowPriorityFlushDelayMs : 0);
+      return false;
     },
     deferFor(delayMs: number): void {
       if (disposed || delayMs <= 0) {
         return;
       }
-      deferredUntil = Math.max(deferredUntil, Date.now() + delayMs);
       if (queue.length === 0) {
         return;
       }
+      deferredUntil = Math.max(deferredUntil, Date.now() + delayMs);
       if (scheduledHandle !== null) {
         cancel(scheduledHandle);
         scheduledHandle = null;
