@@ -23,7 +23,7 @@ import { MobileShortcutFab } from "./components/MobileShortcutFab";
 import { NotificationBellButton, NotificationCenter } from "./components/NotificationCenter";
 import { TerminalPane, type TerminalPaneHandle } from "./components/TerminalPane";
 import { useAgentRecordData } from "./hooks/useAgentRecordData";
-import { useMobileLayout } from "./hooks/useMobileLayout";
+import { readMobileLayout, useMobileLayout } from "./hooks/useMobileLayout";
 import { readInitialSettings, SettingsModal } from "./components/SettingsModal";
 import { TerminalSwitcher, type TerminalSwitcherMode } from "./components/TerminalSwitcher";
 import { WindowDetail } from "./components/WindowDetail";
@@ -333,7 +333,9 @@ export default function App() {
     () => readInitialSettings().desktopNotificationsEnabled
   );
   const [terminalControlsOpen, setTerminalControlsOpen] = useState(false);
-  const [virtualKeysVisible, setVirtualKeysVisible] = useState(false);
+  const [virtualKeysVisible, setVirtualKeysVisible] = useState(
+    () => readMobileLayout() || terminalViewportMode === "phone"
+  );
   const [terminalQuickInputOpen, setTerminalQuickInputOpen] = useState(false);
   const [terminalImmersive, setTerminalImmersive] = useState(false);
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
@@ -342,6 +344,7 @@ export default function App() {
   const [terminalListLocateSignal, setTerminalListLocateSignal] = useState(0);
   const [terminalNotifications, setTerminalNotifications] = useState<TerminalNotification[]>([]);
   const notificationPreviousRef = useRef<TerminalNotification[]>([]);
+  const virtualKeysPreferenceTouchedRef = useRef(false);
   const terminalControlsRef = useRef<HTMLDivElement | null>(null);
   const terminalPaneRef = useRef<TerminalPaneHandle | null>(null);
   const queryClient = useQueryClient();
@@ -371,6 +374,20 @@ export default function App() {
     focusSelectedTerminal();
   }, [focusSelectedTerminal]);
   const isMobileLayout = useMobileLayout();
+
+  useEffect(() => {
+    if (virtualKeysPreferenceTouchedRef.current) {
+      return;
+    }
+
+    setVirtualKeysVisible(isMobileLayout || terminalViewportMode === "phone");
+  }, [isMobileLayout, terminalViewportMode]);
+
+  const toggleVirtualKeysVisibility = useCallback(() => {
+    virtualKeysPreferenceTouchedRef.current = true;
+    setVirtualKeysVisible((isVisible) => !isVisible);
+  }, []);
+
   const clientsQuery = useQuery({ queryKey: ["clients"], queryFn: fetchClients, refetchInterval: 10000 });
   const treeQuery = useQuery({
     queryKey: ["tree", selectedClientId],
@@ -1300,7 +1317,7 @@ export default function App() {
                   type="button"
                   role="menuitem"
                   className="terminal-controls-row"
-                  onClick={() => setVirtualKeysVisible((isVisible) => !isVisible)}
+                  onClick={toggleVirtualKeysVisibility}
                 >
                   <span>Virtual keys</span>
                   <strong>{virtualKeysVisible ? "On" : "Off"}</strong>
