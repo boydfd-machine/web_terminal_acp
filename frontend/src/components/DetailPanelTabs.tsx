@@ -1,4 +1,6 @@
-export type DetailPanelTab = "overview" | "agent" | "history" | "git";
+import { useI18n } from "../i18n";
+
+export type DetailPanelTab = "overview" | "agent" | "history" | "artifacts" | "git";
 
 type DetailPanelTabsProps = {
   activeTab: DetailPanelTab;
@@ -7,8 +9,10 @@ type DetailPanelTabsProps = {
 };
 
 export function DetailPanelTabs({ activeTab, showGitTab, onTabChange }: DetailPanelTabsProps) {
+  const { t } = useI18n();
+
   return (
-    <div className="detail-panel-tabs" role="tablist" aria-label="Window details">
+    <div className="detail-panel-tabs" role="tablist" aria-label={t("detail.tabs.window")}>
       <button
         type="button"
         role="tab"
@@ -16,7 +20,7 @@ export function DetailPanelTabs({ activeTab, showGitTab, onTabChange }: DetailPa
         className={activeTab === "overview" ? "selected" : undefined}
         onClick={() => onTabChange("overview")}
       >
-        Overview
+        {t("detail.tabs.overview")}
       </button>
       <button
         type="button"
@@ -25,7 +29,7 @@ export function DetailPanelTabs({ activeTab, showGitTab, onTabChange }: DetailPa
         className={activeTab === "agent" ? "selected" : undefined}
         onClick={() => onTabChange("agent")}
       >
-        Agent
+        {t("detail.tabs.agent")}
       </button>
       <button
         type="button"
@@ -34,7 +38,16 @@ export function DetailPanelTabs({ activeTab, showGitTab, onTabChange }: DetailPa
         className={activeTab === "history" ? "selected" : undefined}
         onClick={() => onTabChange("history")}
       >
-        History
+        {t("detail.tabs.history")}
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={activeTab === "artifacts"}
+        className={activeTab === "artifacts" ? "selected" : undefined}
+        onClick={() => onTabChange("artifacts")}
+      >
+        {t("detail.tabs.artifacts")}
       </button>
       {showGitTab && (
         <button

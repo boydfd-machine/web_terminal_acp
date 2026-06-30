@@ -1,0 +1,423 @@
+.project-todo-detail-backdrop {
+  background: rgb(0 0 0 / 62%);
+}
+
+.project-todo-detail-dialog {
+  border-color: var(--skin-panel-soft);
+  background: var(--skin-panel-soft);
+  color: var(--skin-text);
+}
+
+.project-kanban-workspace .project-todos {
+  gap: 14px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.project-todo-board {
+  gap: 12px;
+  background: var(--skin-panel-soft);
+  min-height: 0;
+}
+
+.project-todo-column {
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  border-color: var(--skin-panel-soft);
+  background: var(--skin-panel-soft);
+  overflow: hidden;
+}
+
+.project-todo-column > header {
+  color: var(--skin-text);
+  font-weight: 650;
+}
+
+.project-todo-column-card-count {
+  background: var(--skin-panel-soft);
+  color: var(--skin-muted);
+}
+
+.project-todo-card {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px 8px;
+  border-color: var(--skin-panel-soft);
+  background: var(--skin-panel-soft);
+  color: var(--skin-text);
+  padding: 8px;
+}
+
+.project-todo-card:hover {
+  border-color: var(--skin-muted);
+  background: var(--skin-panel-soft);
+}
+
+.project-todo-card.selected {
+  border-color: var(--skin-panel-soft);
+  background: var(--skin-panel-soft);
+  box-shadow: none;
+}
+
+.project-todo-card.selected:hover {
+  border-color: var(--skin-muted);
+  background: var(--skin-panel-soft);
+}
+
+.project-todo-card.child-filter-parent {
+  border-color: var(--skin-accent);
+  background: var(--skin-panel-soft);
+  box-shadow: 0 0 0 2px rgb(88 166 255 / 26%);
+}
+
+.project-todo-card.child-filter-parent:hover {
+  border-color: var(--skin-link);
+  background: var(--skin-panel-soft);
+}
+
+.project-todo-card-main {
+  gap: 5px;
+  padding-right: 28px;
+}
+
+.project-todo-card-title-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.project-todo-drag-handle {
+  width: 16px;
+  color: var(--skin-muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 14px;
+  line-height: 1.3;
+  cursor: grab;
+}
+
+.project-todo-card-main strong {
+  color: var(--skin-text);
+  font-weight: 650;
+  line-height: 1.35;
+  -webkit-line-clamp: 2;
+}
+
+.project-todo-card-main strong span,
+.project-todo-card-main strong small {
+  min-width: 0;
+}
+
+.project-todo-card-main .project-todo-card-title-stack {
+  display: grid;
+  gap: 2px;
+  -webkit-line-clamp: unset;
+}
+
+.project-todo-card-parent-title,
+.project-todo-card-child-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-todo-card-parent-title {
+  color: var(--skin-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.project-todo-card-meta,
+.project-todo-card-tags,
+.project-todo-card-badges {
+  color: var(--skin-muted);
+}
+
+.project-todo-card-meta {
+  gap: 6px;
+}
+
+.project-todo-card-badges,
+.project-todo-card-tags {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.project-todo-card-badges {
+  flex-wrap: wrap;
+}
+
+.project-todo-card-tags {
+  flex-wrap: nowrap;
+  max-height: 20px;
+  overflow: hidden;
+}
+
+.project-todo-card-tags span {
+  flex: 0 1 auto;
+  border-color: var(--skin-panel-soft);
+  background: var(--skin-panel-soft);
+  color: var(--skin-muted);
+}
+
+.project-todo-attachment-file-input {
+  display: none;
+}
+
+.project-todo-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  border: 1px solid var(--skin-muted);
+  border-radius: 999px;
+  background: rgb(0 150 136 / 12%);
+  color: var(--skin-success-text);
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.project-todo-attachment-chip svg {
+  width: 13px;
+  height: 13px;
+}
+
+.project-todo-artifact-agents {
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.project-todo-artifact-agent-scroll {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  scroll-behavior: smooth;
+}
+
+.project-todo-artifact-agent-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.project-todo-artifact-agent-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 180px;
+  min-height: 22px;
+  border: 1px solid var(--skin-panel-soft);
+  border-radius: 6px;
+  background: var(--skin-panel-soft);
+  color: var(--skin-text);
+  padding: 2px 6px;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.project-todo-artifact-agent-chip.clickable {
+  cursor: pointer;
+}
+
+.project-todo-artifact-agent-chip .project-todo-agent-status-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+}
+
+.project-todo-artifact-agent-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-todo-artifact-agent-chip small {
+  flex: 0 0 auto;
+  color: var(--skin-muted);
+  font-size: 10px;
+}
+
+.project-todo-artifact-agent-arrow {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--skin-panel-soft);
+  border-radius: 6px;
+  background: rgb(37 37 37 / 92%);
+  color: var(--skin-text);
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: opacity 120ms ease;
+}
+
+.project-todo-artifact-agent-arrow.left {
+  left: 0;
+}
+
+.project-todo-artifact-agent-arrow.right {
+  right: 0;
+}
+
+.project-todo-artifact-agent-arrow svg {
+  width: 14px;
+  height: 14px;
+}
+
+.project-todo-artifact-agents:hover .project-todo-artifact-agent-arrow,
+.project-todo-artifact-agents:focus-within .project-todo-artifact-agent-arrow {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.project-todo-card-agent {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 1;
+}
+
+.project-todo-card-artifact-agent {
+  position: absolute;
+  top: 37px;
+  right: 7px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--skin-muted);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.project-todo-card-artifact-agent small {
+  max-width: 54px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-todo-card-artifact-retry {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--skin-panel-soft);
+  border-radius: 5px;
+  background: var(--skin-panel-soft);
+  color: var(--skin-muted);
+  padding: 0;
+}
+
+.project-todo-card-artifact-retry svg {
+  width: 13px;
+  height: 13px;
+}
+
+.project-todo-card-artifact-retry:hover:not(:disabled) {
+  border-color: var(--skin-accent-strong);
+  background: rgb(33 150 243 / 18%);
+  color: var(--skin-text);
+}
+
+.project-todo-card-artifact-retry:disabled {
+  color: var(--skin-muted);
+  cursor: not-allowed;
+}
+
+.project-todo-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  flex: 0 0 auto;
+  margin-left: auto;
+  min-width: 30px;
+}
+
+.project-todo-card-action-button {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  display: inline-grid;
+  place-items: center;
+  justify-content: center;
+  border-color: var(--skin-panel-soft);
+  background: var(--skin-panel-soft);
+  color: var(--skin-muted);
+  padding: 0;
+}
+
+.project-todo-card .project-todo-card-action-button {
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  display: inline-grid;
+  place-items: center;
+  gap: 0;
+  padding: 0;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: 1;
+}
+
+.project-todo-list-action-button {
+  min-height: 30px;
+}
+
+.project-todo-card-action-button:disabled {
+  border-color: var(--skin-panel-soft);
+  background: var(--skin-panel-soft);
+  color: var(--skin-muted);
+  cursor: not-allowed;
+}
+
+.project-todo-card-action-button:hover:not(:disabled) {
+  border-color: var(--skin-accent-strong);
+  background: rgb(33 150 243 / 18%);
+  color: var(--skin-text);
+}
+
+.project-todo-card .project-todo-children-filter-button {
+  border-color: rgb(33 150 243 / 42%);
+  color: var(--skin-accent);
+}
+
+.project-todo-card-action-spinner {
+  width: 14px;
+  height: 14px;
+}
+
+.project-todo-card-dispatch-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  border: 1px solid var(--skin-danger);
+  border-radius: 6px;
+  background: rgb(244 67 54 / 12%);
+  color: var(--skin-danger-text);
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.project-todo-card .project-todo-dispatch-button:hover:not(:disabled) {
+  border-color: var(--skin-success);
+  background: rgb(76 175 80 / 18%);
+}

@@ -20,7 +20,19 @@ type RendererSyncAttempt = {
   renderedHeight: number;
 };
 
+type StableFitSize = {
+  container: HTMLElement;
+  contentWidth: number;
+  contentHeight: number;
+  cellWidth: number;
+  cellHeight: number;
+  scrollBarWidth: number;
+  cols: number;
+  rows: number;
+};
+
 const rendererSyncAttempts = new WeakMap<Terminal, RendererSyncAttempt>();
+const stableFitSizes = new WeakMap<Terminal, StableFitSize>();
 
 function readTerminalCore(terminal: Terminal): TerminalCore {
   return (terminal as unknown as { _core?: TerminalCore })._core ?? {};
@@ -116,16 +128,39 @@ export function proposeTerminalGridSize(
 
   const scrollBarWidth = terminal.options.scrollback === 0 ? 0 : core.viewport?.scrollBarWidth ?? 0;
   const rowRatio = content.height / cell.height;
+  const floorRows = Math.max(1, Math.floor(rowRatio));
 
-  // Use the expected grid height (rows * cellHeight) to decide whether to
-  // prefer ceil or floor.  This avoids depending on the async canvas/DOM
-  // render height which can be stale immediately after terminal.resize().
-  const currentGridHeight = expectedGridHeight(terminal);
-  const preferFill = currentGridHeight > 0 && currentGridHeight < content.height * 0.92;
-  const rows = Math.max(1, preferFill ? Math.ceil(rowRatio) : Math.floor(rowRatio));
+  // Keep the rounded grid size stable while the measured container and cell
+  // dimensions are unchanged. Otherwise a one-time fill resize can be followed
+  // by a floor resize on the next observer tick, which makes the PTY alternate
+  // between two row counts.
+  const previous = stableFitSizes.get(terminal);
+  if (
+    previous?.container === container &&
+    previous.contentWidth === content.width &&
+    previous.contentHeight === content.height &&
+    previous.cellWidth === cell.width &&
+    previous.cellHeight === cell.height &&
+    previous.scrollBarWidth === scrollBarWidth
+  ) {
+    return { cols: previous.cols, rows: previous.rows };
+  }
+
+  const rows = floorRows;
+  const cols = Math.max(2, Math.floor((content.width - scrollBarWidth) / cell.width));
+  stableFitSizes.set(terminal, {
+    container,
+    contentWidth: content.width,
+    contentHeight: content.height,
+    cellWidth: cell.width,
+    cellHeight: cell.height,
+    scrollBarWidth,
+    cols,
+    rows,
+  });
 
   return {
-    cols: Math.max(2, Math.floor((content.width - scrollBarWidth) / cell.width)),
+    cols,
     rows,
   };
 }

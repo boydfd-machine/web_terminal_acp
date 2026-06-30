@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acas.local/artifact-definitions/_shared/review-decision/schemas/decision-trace.schema.json",
+  "title": "ACAS Decision Trace",
+  "type": "object",
+  "$defs": {
+    "decisionTrace": {
+      "type": "object",
+      "required": ["selectedOptionId", "rationale"],
+      "properties": {
+        "selectedOptionId": { "type": "string", "minLength": 1 },
+        "rationale": {},
+        "clarificationAnswers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/clarificationAnswer" }
+        },
+        "branchDecisions": { "type": "array" },
+        "reviewer": { "type": "string" },
+        "reviewedAt": { "type": "string" },
+        "rejectedOptions": { "type": "array" },
+        "userEdits": { "type": "array" },
+        "synthesisNarrative": {},
+        "evidenceRefs": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "clarificationAnswer": {
+      "type": "object",
+      "required": ["questionId", "answer"],
+      "properties": {
+        "questionId": { "type": "string", "minLength": 1 },
+        "answer": {},
+        "selectedOptionId": { "type": "string" },
+        "selectedOptionIds": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "rationale": {},
+        "userComment": {},
+        "resultingChange": {}
+      },
+      "additionalProperties": true
+    }
+  },
+  "allOf": [{ "$ref": "#/$defs/decisionTrace" }]
+}

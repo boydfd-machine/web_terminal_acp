@@ -1,0 +1,7 @@
+interface:
+  display_name: "Web Terminal ACP Ops"
+  short_description: "HTTP ops for Web Terminal windows, cards, artifacts, and previews"
+  default_prompt: "Use $web-terminal-acp-ops to inspect Web Terminal clients/windows, create/edit/dispatch project todo cards on source or target clients, read card artifacts, inspect agent preview input/output, or create/update artifact plugin previews."
+
+policy:
+  allow_implicit_invocation: true

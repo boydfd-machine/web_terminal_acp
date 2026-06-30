@@ -1,0 +1,235 @@
+.project-review-settings {
+  gap: 12px;
+}
+
+.project-review-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.project-review-settings-toggles,
+.project-review-settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-review-settings-actions {
+  justify-content: flex-end;
+}
+
+.project-review-settings-actions .muted,
+.project-review-settings-actions .error {
+  min-width: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.project-agent-preference-settings {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.project-agent-preference-settings h4 {
+  margin: 0;
+  color: var(--skin-text-strong);
+  font-size: 13px;
+}
+
+.project-agent-preference-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.project-agent-preference-grid .settings-field:last-child {
+  grid-column: 1 / -1;
+}
+
+.project-agent-preference-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-agent-preference-actions .muted,
+.project-agent-preference-actions .error {
+  font-size: 12px;
+}
+
+.detail-path-value {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.detail-path-value > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--skin-accent-soft);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-copy-button {
+  min-width: 42px;
+  border-color: var(--skin-border);
+  background: var(--skin-panel-raised);
+  color: var(--skin-text);
+  padding: 3px 6px;
+  font-size: 11px;
+}
+
+.detail-copy-error {
+  grid-column: 1 / -1;
+  color: var(--skin-danger-text);
+  font-size: 11px;
+}
+
+.window-title-header {
+  min-width: 0;
+  margin-bottom: 12px;
+}
+
+.window-title-display {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.window-title-display h2 {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.window-title-edit-button {
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.window-title-form {
+  display: grid;
+  gap: 8px;
+}
+
+.window-title-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.detail-panel-tabs {
+  --scrollbar-size: 8px;
+  --scrollbar-thumb: color-mix(in srgb, var(--skin-border) 58%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--skin-accent) 42%, var(--skin-border));
+  display: flex;
+  gap: 4px;
+  margin: 0 0 12px;
+  border-bottom: 1px solid var(--skin-border-soft);
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.detail-panel-tabs button {
+  position: relative;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--skin-muted);
+  padding: 8px 9px 9px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.detail-panel-tabs button:hover:not(:disabled) {
+  background: rgb(30 41 59 / 62%);
+  color: var(--skin-text-strong);
+}
+
+.detail-panel-tabs button.selected {
+  background: rgb(14 116 144 / 18%);
+  color: var(--skin-text-strong);
+}
+
+.detail-panel-tabs button.selected::after {
+  content: "";
+  position: absolute;
+  right: 8px;
+  bottom: -3px;
+  left: 8px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--skin-accent);
+}
+
+.git-run-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.git-run-card {
+  display: grid;
+  gap: 12px;
+  overflow: hidden;
+  border: 1px solid var(--skin-border);
+  border-radius: 8px;
+  background: var(--skin-panel-raised);
+  padding: 12px;
+}
+
+.git-run-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.git-run-card-header strong {
+  min-width: 0;
+  color: var(--skin-text-strong);
+  font-size: 14px;
+}
+
+.git-run-status {
+  flex: 0 0 auto;
+  border: 1px solid var(--skin-border);
+  border-radius: 999px;
+  color: var(--skin-text);
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.git-run-status.pending {
+  border-color: var(--skin-warning);
+  color: var(--skin-warning-text);
+}
+
+.git-run-meta {
+  grid-template-columns: 112px minmax(0, 1fr);
+}
+
+.git-run-head-range {
+  margin: 0;
+  color: var(--skin-text);
+}

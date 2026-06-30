@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acas.local/artifact-definitions/low-fi-prototype/current.schema.json",
+  "title": "Low-fi Prototype Current",
+  "type": "object",
+  "required": ["kind", "layer", "sourceJourneyRef", "sourceFlowRef", "pageSet", "decisionTrace"],
+  "properties": {
+    "kind": { "const": "LowFiPrototypeCurrent" },
+    "layer": { "const": "Current" },
+    "explorationArtifactRef": { "type": "string" },
+    "sourceJourneyRef": { "type": "string" },
+    "sourceFlowRef": { "type": "string" },
+    "lowFiDesignLanguage": { "type": "object" },
+    "pageSet": {
+      "type": "object",
+      "required": ["pageSetId", "startPageId", "testQuestion", "pages", "routeMap", "smokePath"],
+      "properties": {
+        "pageSetId": { "type": "string" },
+        "startPageId": { "type": "string" },
+        "testQuestion": {},
+        "designStyle": { "type": "object" },
+        "fidelity": { "type": "object" },
+        "pages": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/page" } },
+        "routeMap": { "type": "array", "items": { "$ref": "#/$defs/routeEdge" } },
+        "smokePath": { "type": "array", "minItems": 1 },
+        "contentData": { "$ref": "#/$defs/contentData" },
+        "tokenBudget": { "type": "object" },
+        "runtimeNotes": { "type": "array" },
+        "openQuestions": { "type": "array" },
+        "downstreamHandoff": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "decisionTrace": {
+      "$ref": "https://acas.local/artifact-definitions/_shared/review-decision/schemas/decision-trace.schema.json#/$defs/decisionTrace"
+    },
+    "openRisks": { "type": "array" },
+    "assumptions": { "type": "array" },
+    "evidenceRefs": { "type": "array" }
+  },
+  "$defs": {
+    "page": {
+      "type": "object",
+      "required": ["pageId", "title", "route", "htmlFile", "purpose", "sourceFlowNodes", "requiredElements"],
+      "properties": {
+        "pageId": { "type": "string" },
+        "title": {},
+        "route": { "type": "string" },
+        "htmlFile": { "type": "string" },
+        "purpose": {},
+        "sourceFlowNodes": { "type": "array", "minItems": 1 },
+        "requiredElements": { "type": "array" },
+        "contentSlots": { "type": "array" },
+        "defaultParams": { "type": "object" },
+        "interactionNotes": { "type": "array" },
+        "accessibilityNotes": { "type": "array" },
+        "evidenceRefs": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "routeEdge": {
+      "type": "object",
+      "required": ["fromPageId", "toPageId", "trigger"],
+      "properties": {
+        "fromPageId": { "type": "string" },
+        "toPageId": { "type": "string" },
+        "trigger": {},
+        "guard": {},
+        "sourceFlowEdgeRef": { "type": "string" },
+        "queryParams": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "contentData": {
+      "type": "object",
+      "properties": {
+        "defaultDatasetId": { "type": "string" },
+        "dataFiles": { "type": "array", "items": { "$ref": "#/$defs/dataFile" } },
+        "routeParamSchema": { "type": "object" },
+        "bindingRules": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "dataFile": {
+      "type": "object",
+      "required": ["datasetId", "format", "file"],
+      "properties": {
+        "datasetId": { "type": "string" },
+        "format": { "enum": ["yaml", "json"] },
+        "file": { "type": "string" },
+        "purpose": {}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

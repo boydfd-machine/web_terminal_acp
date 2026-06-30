@@ -71,6 +71,19 @@ def test_agent_command_with_permission_flag_preserves_cursor_agent_arguments() -
     assert agent_command_with_permission_flag("cursor --reuse-window") == "cursor --reuse-window"
 
 
+def test_agent_command_with_permission_flag_detects_proxychains_cursor_wrapper() -> None:
+    assert agent_command_with_permission_flag("proxychains4 -q agent") == "proxychains4 -q agent"
+    assert (
+        agent_command_with_permission_flag("proxychains4 -q agent --resume cursor-session")
+        == "proxychains4 -q agent --resume cursor-session"
+    )
+    assert (
+        agent_command_with_permission_flag("proxychains4 -q cursor --reuse-window")
+        == "proxychains4 -q cursor --reuse-window"
+    )
+    assert agent_command_with_permission_flag("proxychains4 -q echo agent") is None
+
+
 def test_antigravity_agent_command_uses_permission_flag() -> None:
     assert (
         format_agent_command("agy-p", "--version")
@@ -92,6 +105,7 @@ def test_agent_command_for_interactive_shell_detects_direct_agent_commands() -> 
         == "claude --dangerously-skip-permissions --resume claude-session"
     )
     assert agent_command_for_interactive_shell("agent") == "agent"
+    assert agent_command_for_interactive_shell("proxychains4 -q agent") == "proxychains4 -q agent"
     assert (
         agent_command_for_interactive_shell("agy-p --version")
         == "agy-p --dangerously-skip-permissions --version"

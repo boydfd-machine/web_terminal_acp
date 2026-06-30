@@ -1,0 +1,7 @@
+interface:
+  display_name: "Agent Trace Graph"
+  short_description: "Render an agent run as an interactive intent-tree HTML trace"
+  default_prompt: "Use $agent-trace-graph to turn the current task's decisions, failed branches, backtracks, and successful path into an interactive HTML trace graph."
+
+policy:
+  allow_implicit_invocation: true

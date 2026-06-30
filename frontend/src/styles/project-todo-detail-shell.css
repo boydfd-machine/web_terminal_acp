@@ -1,0 +1,403 @@
+.project-todo-detail-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 72;
+  display: grid;
+  align-items: start;
+  justify-items: center;
+  background: rgb(2 6 23 / 68%);
+  padding: 7vh 16px 16px;
+}
+
+.project-todo-detail-dialog {
+  width: min(720px, 100%);
+  max-height: min(84dvh, 820px);
+  display: grid;
+  gap: 12px;
+  overflow-y: auto;
+  border: 1px solid var(--skin-border);
+  border-radius: 8px;
+  background: var(--skin-panel-raised);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 45%);
+  padding: 16px;
+}
+
+.project-todo-creation-pending-backdrop {
+  align-items: center;
+  padding-top: 16px;
+}
+
+.project-todo-creation-pending-dialog {
+  width: min(520px, calc(100vw - 32px));
+  min-height: 260px;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 16px;
+  border: 1px solid var(--skin-border);
+  border-radius: 8px;
+  background: var(--skin-panel-raised);
+  color: var(--skin-text);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 45%);
+  padding: 24px;
+}
+
+.project-todo-creation-pending-spinner {
+  width: 28px;
+  height: 28px;
+  border-width: 3px;
+}
+
+.project-todo-creation-pending-dialog strong {
+  font-size: 16px;
+  line-height: 1.3;
+}
+
+.project-todo-detail-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.project-todo-detail-header h2 {
+  min-width: 0;
+  margin: 8px 0 0;
+  color: var(--skin-text-strong);
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+
+.project-todo-title-button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  background-color: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  overflow-wrap: anywhere;
+}
+
+.project-todo-title-button:hover:not(:disabled),
+.project-todo-title-button:focus-visible:not(:disabled) {
+  background: transparent;
+  background-color: transparent;
+  color: var(--skin-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+  box-shadow: none;
+}
+
+.project-todo-title-button:disabled {
+  cursor: default;
+}
+
+.project-todo-detail-description-panel,
+.project-todo-description-edit-form {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--skin-control-hover);
+  border-radius: 8px;
+  background: rgb(2 6 23 / 36%);
+}
+
+.project-todo-detail-description,
+.project-todo-description-edit-form textarea {
+  min-width: 0;
+  height: 100%;
+  color: var(--skin-accent-soft);
+  padding: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.project-todo-description-edit-form {
+  display: block;
+  padding: 0;
+}
+
+.project-todo-description-edit-form textarea {
+  width: 100%;
+  min-height: 0;
+  border-color: transparent;
+  background: transparent;
+  resize: none;
+  box-shadow: none;
+}
+
+.project-todo-description-edit-form textarea:focus {
+  border-color: transparent;
+  background: transparent;
+  outline: none;
+  box-shadow: none;
+}
+
+.project-todo-description-edit-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.project-todo-detail-description-panel:hover .project-todo-description-edit-button,
+.project-todo-detail-description-panel:focus-within .project-todo-description-edit-button {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.project-todo-description-cancel-edit-button {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 2;
+  opacity: 0.92;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 26%);
+}
+
+.project-todo-description-cancel-edit-button:hover:not(:disabled),
+.project-todo-description-cancel-edit-button:focus-visible:not(:disabled) {
+  border-color: var(--skin-muted);
+  background: var(--skin-panel-soft);
+  color: var(--skin-text);
+  opacity: 1;
+}
+
+.project-todo-detail-heading .project-todo-title-edit-form {
+  position: relative;
+  display: block;
+  min-width: 0;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.project-todo-detail-heading .project-todo-title-edit-form input {
+  width: 100%;
+  min-height: 0;
+  border-color: transparent;
+  background: transparent;
+  background-color: transparent;
+  color: inherit;
+  padding: 0;
+  font: inherit;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.18;
+  box-shadow: none;
+  overflow-wrap: anywhere;
+}
+
+.project-todo-detail-heading .project-todo-title-edit-form input:focus {
+  border-color: transparent;
+  background: transparent;
+  background-color: transparent;
+  outline: none;
+  box-shadow: none;
+}
+
+.project-todo-title-cancel-edit-button {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  z-index: 2;
+  transform: translateY(-50%);
+  opacity: 0.92;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 26%);
+}
+
+.project-todo-title-cancel-edit-button:hover:not(:disabled),
+.project-todo-title-cancel-edit-button:focus-visible:not(:disabled) {
+  border-color: var(--skin-muted);
+  background: var(--skin-panel-soft);
+  color: var(--skin-text);
+  opacity: 1;
+}
+
+.project-todo-detail-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.project-todo-review-panel,
+.project-todo-review-record,
+.project-todo-detail-artifact-agents-panel,
+.project-todo-requested-artifacts-panel,
+.project-todo-execution-terminals,
+.project-todo-execution-terminal-detail,
+.project-todo-execution-agent-preview,
+.project-todo-worktree,
+.project-todo-artifacts {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-todo-review-panel {
+  border: 1px solid var(--skin-control-hover);
+  border-radius: 8px;
+  background: rgb(2 6 23 / 28%);
+  padding: 10px;
+}
+
+.project-todo-review-panel > header,
+.project-todo-review-record > header,
+.project-todo-execution-terminals > header,
+.project-todo-execution-agent-preview > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-todo-review-panel > header strong,
+.project-todo-review-record > header strong,
+.project-todo-execution-terminals > header strong,
+.project-todo-execution-agent-preview > header strong {
+  color: var(--skin-text-strong);
+  font-size: 13px;
+}
+
+.project-todo-review-panel > header span {
+  min-height: 22px;
+  border: 1px solid var(--skin-border);
+  border-radius: 999px;
+  color: var(--skin-text);
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.project-todo-worktree dl {
+  display: grid;
+  grid-template-columns: minmax(76px, 0.25fr) minmax(0, 1fr);
+  gap: 5px 8px;
+  margin: 0;
+}
+
+.project-todo-worktree dt {
+  color: var(--skin-muted);
+  font-size: 11px;
+}
+
+.project-todo-worktree dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--skin-accent-soft);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.project-todo-worktree-diff-button {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  border-color: var(--skin-border);
+  background: var(--skin-panel-raised);
+  color: var(--skin-accent-soft);
+  font-size: 12px;
+}
+
+.project-todo-worktree-diff-button:hover {
+  border-color: var(--skin-accent);
+  color: var(--skin-accent-text);
+}
+
+.project-todo-worktree ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-todo-worktree li {
+  display: grid;
+  grid-template-columns: minmax(64px, auto) minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  color: var(--skin-text);
+  font-size: 12px;
+}
+
+.project-todo-worktree li strong {
+  color: var(--skin-success-text);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+.project-todo-worktree li span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.project-todo-artifact-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.project-todo-review-notes {
+  margin: 0;
+  color: var(--skin-warning-text);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.project-todo-artifacts button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  text-align: left;
+}
+
+.project-todo-artifacts button:disabled {
+  cursor: default;
+}
+
+.project-todo-artifact-agent-detail {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.project-todo-artifacts strong,
+.project-todo-artifacts span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-todo-artifacts span,
+.project-todo-artifacts small {
+  color: var(--skin-muted);
+  font-size: 11px;
+}
+
+.project-todo-actions button:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.project-todo-button-spinner {
+  width: 12px;
+  height: 12px;
+}

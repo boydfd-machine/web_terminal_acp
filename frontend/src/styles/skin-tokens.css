@@ -1,0 +1,379 @@
+* {
+  box-sizing: border-box;
+}
+
+/*
+ * Design tokens
+ * --------------
+ * Every theme defines the same set of CSS custom properties on its
+ * `.theme-skin-*` rule. Component CSS must consume these tokens and must
+ * never hardcode hex colors, so each theme stays cohesive.
+ *
+ * Token groups:
+ *   - color-scheme / canvas / workspace / panel / control surfaces
+ *   - borders (default + soft) and text (default / strong / muted)
+ *   - accent / danger / success / warning (base + strong + soft + text)
+ *   - overlay / shadow / focus ring
+ *   - radii: --skin-radius-sm  (chips, tags, small controls)
+ *            --skin-radius     (controls, cards) - canonical
+ *            --skin-radius-lg  (modals, panels, big surfaces)
+ *            --skin-radius-pill (toggle, pills)
+ *   - shadows: --skin-shadow-sm/md/lg (elevation scale)
+ *   - spacing: --skin-space-1..7 (compact rhythm)
+ *   - typography: --skin-font-xs/sm/md/lg, --skin-leading-tight/normal
+ *                 --skin-weight-medium/semibold
+ */
+
+.theme-skin-default {
+  --skin-color-scheme: dark;
+  --skin-canvas: #0b0f17;
+  --skin-workspace: #0b0f17;
+  --skin-panel: #11161f;
+  --skin-panel-raised: #161c27;
+  --skin-panel-soft: #1c2330;
+  --skin-control: #1a2230;
+  --skin-control-hover: #243042;
+  --skin-selected: #0c2a3f;
+  --skin-selected-hover: #103754;
+  --skin-code-bg: #020617;
+  --skin-code-text: #d7e6f7;
+  --skin-border: #232c3b;
+  --skin-border-soft: #1a2230;
+  --skin-text: #c8d2e0;
+  --skin-text-strong: #f1f5f9;
+  --skin-muted: #8893a6;
+  --skin-accent: #3fb6f8;
+  --skin-accent-strong: #0e7bb5;
+  --skin-accent-soft: #0c2a3f;
+  --skin-accent-text: #e6f6ff;
+  --skin-focus-ring: rgb(63 182 248 / 32%);
+  --skin-link: #8dd3ff;
+  --skin-danger: #f06262;
+  --skin-danger-soft: #3b1416;
+  --skin-danger-text: #ffd1d1;
+  --skin-success: #34c77b;
+  --skin-success-soft: rgb(20 83 45 / 38%);
+  --skin-success-text: #b8f0cf;
+  --skin-warning: #f5a13a;
+  --skin-warning-soft: rgb(120 53 15 / 26%);
+  --skin-warning-text: #ffe2ac;
+  --skin-overlay: rgb(4 8 16 / 70%);
+  --skin-shadow: rgb(0 0 0 / 52%);
+  --skin-radius-sm: 6px;
+  --skin-radius: 10px;
+  --skin-radius-lg: 14px;
+  --skin-radius-pill: 999px;
+  --skin-shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
+  --skin-shadow-md: 0 8px 24px rgb(0 0 0 / 38%);
+  --skin-shadow-lg: 0 24px 60px rgb(0 0 0 / 52%);
+  --skin-space-1: 4px;
+  --skin-space-2: 8px;
+  --skin-space-3: 12px;
+  --skin-space-4: 16px;
+  --skin-space-5: 20px;
+  --skin-space-6: 24px;
+  --skin-space-7: 32px;
+  --skin-font-xs: 11px;
+  --skin-font-sm: 12px;
+  --skin-font-md: 13px;
+  --skin-font-lg: 15px;
+  --skin-leading-tight: 1.2;
+  --skin-leading-normal: 1.5;
+  --skin-weight-medium: 500;
+  --skin-weight-semibold: 600;
+}
+
+.theme-skin-linear {
+  --skin-color-scheme: dark;
+  --skin-canvas: #010102;
+  --skin-workspace: #010102;
+  --skin-panel: #0f1011;
+  --skin-panel-raised: #161719;
+  --skin-panel-soft: #1c1d20;
+  --skin-control: #18191a;
+  --skin-control-hover: #24262b;
+  --skin-selected: #1b1d31;
+  --skin-selected-hover: #262a48;
+  --skin-code-bg: #010102;
+  --skin-code-text: #f7f8f8;
+  --skin-border: #2a2c33;
+  --skin-border-soft: #1f2126;
+  --skin-text: #f3f4f6;
+  --skin-text-strong: #ffffff;
+  --skin-muted: #8a8f98;
+  --skin-accent: #828fff;
+  --skin-accent-strong: #5e6ad2;
+  --skin-accent-soft: #1b1d31;
+  --skin-accent-text: #eef0ff;
+  --skin-focus-ring: rgb(130 143 255 / 34%);
+  --skin-link: #a7b0ff;
+  --skin-danger: #ff6b6b;
+  --skin-danger-soft: rgb(255 107 107 / 14%);
+  --skin-danger-text: #ffc9c9;
+  --skin-success: #4ade80;
+  --skin-success-soft: rgb(74 222 128 / 14%);
+  --skin-success-text: #bbf7d0;
+  --skin-warning: #fbbf24;
+  --skin-warning-soft: rgb(251 191 36 / 14%);
+  --skin-warning-text: #fde68a;
+  --skin-overlay: rgb(0 0 0 / 72%);
+  --skin-shadow: rgb(0 0 0 / 58%);
+  --skin-radius-sm: 6px;
+  --skin-radius: 9px;
+  --skin-radius-lg: 14px;
+  --skin-radius-pill: 999px;
+  --skin-shadow-sm: 0 1px 2px rgb(0 0 0 / 36%);
+  --skin-shadow-md: 0 10px 28px rgb(0 0 0 / 46%);
+  --skin-shadow-lg: 0 28px 64px rgb(0 0 0 / 60%);
+  --skin-space-1: 4px;
+  --skin-space-2: 8px;
+  --skin-space-3: 12px;
+  --skin-space-4: 16px;
+  --skin-space-5: 20px;
+  --skin-space-6: 24px;
+  --skin-space-7: 32px;
+  --skin-font-xs: 11px;
+  --skin-font-sm: 12px;
+  --skin-font-md: 13px;
+  --skin-font-lg: 15px;
+  --skin-leading-tight: 1.2;
+  --skin-leading-normal: 1.5;
+  --skin-weight-medium: 500;
+  --skin-weight-semibold: 600;
+}
+
+.theme-skin-notion {
+  --skin-color-scheme: light;
+  --skin-canvas: #f6f5f3;
+  --skin-workspace: #fbfaf8;
+  --skin-panel: #ffffff;
+  --skin-panel-raised: #fbfaf8;
+  --skin-panel-soft: #f1efea;
+  --skin-control: #f1efea;
+  --skin-control-hover: #e9e6df;
+  --skin-selected: #ece8ff;
+  --skin-selected-hover: #e0dbff;
+  --skin-code-bg: #fbfaf8;
+  --skin-code-text: #37352f;
+  --skin-border: #d8d4cc;
+  --skin-border-soft: #e7e3dc;
+  --skin-text: #37352f;
+  --skin-text-strong: #15130f;
+  --skin-muted: #787671;
+  --skin-accent: #5645d4;
+  --skin-accent-strong: #4534b3;
+  --skin-accent-soft: #ece8ff;
+  --skin-accent-text: #ffffff;
+  --skin-focus-ring: rgb(86 69 212 / 24%);
+  --skin-link: #4534b3;
+  --skin-danger: #d6453d;
+  --skin-danger-soft: #fbe6e6;
+  --skin-danger-text: #9b2c2c;
+  --skin-success: #1f9b3a;
+  --skin-success-soft: #e6f6ea;
+  --skin-success-text: #15602a;
+  --skin-warning: #c2620d;
+  --skin-warning-soft: #fbeed8;
+  --skin-warning-text: #8a4210;
+  --skin-overlay: rgb(55 53 47 / 38%);
+  --skin-shadow: rgb(55 53 47 / 16%);
+  --skin-radius-sm: 4px;
+  --skin-radius: 6px;
+  --skin-radius-lg: 10px;
+  --skin-radius-pill: 999px;
+  --skin-shadow-sm: 0 1px 2px rgb(15 23 42 / 6%);
+  --skin-shadow-md: 0 6px 22px rgb(15 23 42 / 10%);
+  --skin-shadow-lg: 0 24px 56px rgb(15 23 42 / 16%);
+  --skin-space-1: 4px;
+  --skin-space-2: 8px;
+  --skin-space-3: 12px;
+  --skin-space-4: 16px;
+  --skin-space-5: 20px;
+  --skin-space-6: 24px;
+  --skin-space-7: 32px;
+  --skin-font-xs: 11px;
+  --skin-font-sm: 12px;
+  --skin-font-md: 13px;
+  --skin-font-lg: 15px;
+  --skin-leading-tight: 1.2;
+  --skin-leading-normal: 1.5;
+  --skin-weight-medium: 500;
+  --skin-weight-semibold: 600;
+}
+
+.theme-skin-vercel {
+  --skin-color-scheme: dark;
+  --skin-canvas: #000000;
+  --skin-workspace: #000000;
+  --skin-panel: #0a0a0a;
+  --skin-panel-raised: #111111;
+  --skin-panel-soft: #171717;
+  --skin-control: #161616;
+  --skin-control-hover: #232323;
+  --skin-selected: #1f1f1f;
+  --skin-selected-hover: #2a2a2a;
+  --skin-code-bg: #000000;
+  --skin-code-text: #ededed;
+  --skin-border: #2a2a2a;
+  --skin-border-soft: #1c1c1c;
+  --skin-text: #ededed;
+  --skin-text-strong: #ffffff;
+  --skin-muted: #9a9a9a;
+  --skin-accent: #ffffff;
+  --skin-accent-strong: #ffffff;
+  --skin-accent-soft: #1f1f1f;
+  --skin-accent-text: #000000;
+  --skin-focus-ring: rgb(255 255 255 / 26%);
+  --skin-link: #ffffff;
+  --skin-danger: #ff5a5f;
+  --skin-danger-soft: rgb(255 90 95 / 14%);
+  --skin-danger-text: #ffd0d2;
+  --skin-success: #3dd68c;
+  --skin-success-soft: rgb(61 214 140 / 12%);
+  --skin-success-text: #b6f4d2;
+  --skin-warning: #f5a623;
+  --skin-warning-soft: rgb(245 166 35 / 14%);
+  --skin-warning-text: #ffe2a3;
+  --skin-overlay: rgb(0 0 0 / 76%);
+  --skin-shadow: rgb(0 0 0 / 70%);
+  --skin-radius-sm: 5px;
+  --skin-radius: 8px;
+  --skin-radius-lg: 12px;
+  --skin-radius-pill: 999px;
+  --skin-shadow-sm: 0 1px 2px rgb(0 0 0 / 50%);
+  --skin-shadow-md: 0 10px 28px rgb(0 0 0 / 56%);
+  --skin-shadow-lg: 0 28px 64px rgb(0 0 0 / 72%);
+  --skin-space-1: 4px;
+  --skin-space-2: 8px;
+  --skin-space-3: 12px;
+  --skin-space-4: 16px;
+  --skin-space-5: 20px;
+  --skin-space-6: 24px;
+  --skin-space-7: 32px;
+  --skin-font-xs: 11px;
+  --skin-font-sm: 12px;
+  --skin-font-md: 13px;
+  --skin-font-lg: 15px;
+  --skin-leading-tight: 1.2;
+  --skin-leading-normal: 1.5;
+  --skin-weight-medium: 500;
+  --skin-weight-semibold: 600;
+}
+
+.theme-skin-stripe {
+  --skin-color-scheme: light;
+  --skin-canvas: #f5f8fc;
+  --skin-workspace: #ffffff;
+  --skin-panel: #ffffff;
+  --skin-panel-raised: #f6f9fc;
+  --skin-panel-soft: #eef4fb;
+  --skin-control: #eef4fb;
+  --skin-control-hover: #e1ebf6;
+  --skin-selected: #e7e5ff;
+  --skin-selected-hover: #ddd9ff;
+  --skin-code-bg: #f6f9fc;
+  --skin-code-text: #273951;
+  --skin-border: #c6d4e4;
+  --skin-border-soft: #e1e8f0;
+  --skin-text: #273951;
+  --skin-text-strong: #0a1f33;
+  --skin-muted: #5e718c;
+  --skin-accent: #533afd;
+  --skin-accent-strong: #4434d4;
+  --skin-accent-soft: #e7e5ff;
+  --skin-accent-text: #ffffff;
+  --skin-focus-ring: rgb(83 58 253 / 22%);
+  --skin-link: #4434d4;
+  --skin-danger: #df1a5b;
+  --skin-danger-soft: #ffe1ec;
+  --skin-danger-text: #a10c44;
+  --skin-success: #009966;
+  --skin-success-soft: #e0f6ee;
+  --skin-success-text: #006e4a;
+  --skin-warning: #955a1f;
+  --skin-warning-soft: #fcefd6;
+  --skin-warning-text: #6f3f12;
+  --skin-overlay: rgb(13 37 61 / 38%);
+  --skin-shadow: rgb(0 55 112 / 16%);
+  --skin-radius-sm: 5px;
+  --skin-radius: 8px;
+  --skin-radius-lg: 12px;
+  --skin-radius-pill: 999px;
+  --skin-shadow-sm: 0 1px 2px rgb(15 23 42 / 6%);
+  --skin-shadow-md: 0 6px 22px rgb(0 55 112 / 12%);
+  --skin-shadow-lg: 0 24px 56px rgb(0 55 112 / 20%);
+  --skin-space-1: 4px;
+  --skin-space-2: 8px;
+  --skin-space-3: 12px;
+  --skin-space-4: 16px;
+  --skin-space-5: 20px;
+  --skin-space-6: 24px;
+  --skin-space-7: 32px;
+  --skin-font-xs: 11px;
+  --skin-font-sm: 12px;
+  --skin-font-md: 13px;
+  --skin-font-lg: 15px;
+  --skin-leading-tight: 1.2;
+  --skin-leading-normal: 1.5;
+  --skin-weight-medium: 500;
+  --skin-weight-semibold: 600;
+}
+
+.theme-skin-raycast {
+  --skin-color-scheme: dark;
+  --skin-canvas: #06070a;
+  --skin-workspace: #06070a;
+  --skin-panel: #0c0d10;
+  --skin-panel-raised: #101216;
+  --skin-panel-soft: #15171c;
+  --skin-control: #181a1f;
+  --skin-control-hover: #232630;
+  --skin-selected: rgb(255 97 97 / 16%);
+  --skin-selected-hover: rgb(255 97 97 / 24%);
+  --skin-code-bg: #07080a;
+  --skin-code-text: #f4f4f6;
+  --skin-border: #202328;
+  --skin-border-soft: rgb(255 255 255 / 7%);
+  --skin-text: #f4f4f6;
+  --skin-text-strong: #ffffff;
+  --skin-muted: #9a9a9d;
+  --skin-accent: #ff6161;
+  --skin-accent-strong: #ff8585;
+  --skin-accent-soft: rgb(255 97 97 / 14%);
+  --skin-accent-text: #0a0a0a;
+  --skin-focus-ring: rgb(255 97 97 / 32%);
+  --skin-link: #ff8585;
+  --skin-danger: #ff6161;
+  --skin-danger-soft: rgb(255 97 97 / 16%);
+  --skin-danger-text: #ffd0d0;
+  --skin-success: #59d499;
+  --skin-success-soft: rgb(89 212 153 / 12%);
+  --skin-success-text: #b8f4d4;
+  --skin-warning: #ffc533;
+  --skin-warning-soft: rgb(255 197 51 / 12%);
+  --skin-warning-text: #ffe8a3;
+  --skin-overlay: rgb(0 0 0 / 76%);
+  --skin-shadow: rgb(0 0 0 / 64%);
+  --skin-radius-sm: 6px;
+  --skin-radius: 10px;
+  --skin-radius-lg: 16px;
+  --skin-radius-pill: 999px;
+  --skin-shadow-sm: 0 1px 2px rgb(0 0 0 / 50%);
+  --skin-shadow-md: 0 12px 32px rgb(0 0 0 / 56%);
+  --skin-shadow-lg: 0 32px 72px rgb(0 0 0 / 70%);
+  --skin-space-1: 4px;
+  --skin-space-2: 8px;
+  --skin-space-3: 12px;
+  --skin-space-4: 16px;
+  --skin-space-5: 20px;
+  --skin-space-6: 24px;
+  --skin-space-7: 32px;
+  --skin-font-xs: 11px;
+  --skin-font-sm: 12px;
+  --skin-font-md: 13px;
+  --skin-font-lg: 15px;
+  --skin-leading-tight: 1.2;
+  --skin-leading-normal: 1.5;
+  --skin-weight-medium: 500;
+  --skin-weight-semibold: 600;
+}

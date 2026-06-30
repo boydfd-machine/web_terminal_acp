@@ -1,0 +1,416 @@
+.agent-event header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agent-event header span {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.agent-event-title {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-event-title code {
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--skin-border);
+  border-radius: 999px;
+  background: var(--skin-code-bg);
+  color: var(--skin-muted);
+  padding: 2px 7px;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-event time {
+  color: var(--skin-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.agent-event pre {
+  max-height: 240px;
+  overflow: auto;
+  margin: 0;
+  border-radius: 6px;
+  background: var(--skin-code-bg);
+  color: var(--skin-text);
+  padding: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.agent-event-markdown {
+  --agent-event-markdown-h1-font-size: 16px;
+  --agent-event-markdown-h2-font-size: 15px;
+  --agent-event-markdown-h3-font-size: 14px;
+  --agent-event-markdown-h4-font-size: 13px;
+  --agent-event-markdown-h5-font-size: 13px;
+  --agent-event-markdown-h6-font-size: 13px;
+
+  width: 100%;
+  min-width: 0;
+  max-height: 240px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--skin-code-bg);
+  color: var(--skin-text);
+  padding: 8px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.agent-event-markdown > :first-child {
+  margin-top: 0;
+}
+
+.agent-event-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.agent-event-markdown h1,
+.agent-event-markdown h2,
+.agent-event-markdown h3,
+.agent-event-markdown h4,
+.agent-event-markdown h5,
+.agent-event-markdown h6 {
+  margin: 12px 0 6px;
+  color: var(--skin-text-strong);
+  line-height: 1.35;
+  text-transform: none;
+}
+
+.agent-event-markdown h1 {
+  font-size: var(--agent-event-markdown-h1-font-size);
+}
+
+.agent-event-markdown h2 {
+  font-size: var(--agent-event-markdown-h2-font-size);
+}
+
+.agent-event-markdown h3 {
+  font-size: var(--agent-event-markdown-h3-font-size);
+}
+
+.agent-event-markdown h4 {
+  font-size: var(--agent-event-markdown-h4-font-size);
+}
+
+.agent-event-markdown h5 {
+  font-size: var(--agent-event-markdown-h5-font-size);
+}
+
+.agent-event-markdown h6 {
+  font-size: var(--agent-event-markdown-h6-font-size);
+}
+
+.agent-event-markdown p,
+.agent-event-markdown ul,
+.agent-event-markdown ol,
+.agent-event-markdown blockquote,
+.agent-event-markdown pre,
+.agent-event-markdown .agent-event-markdown-mermaid,
+.agent-event-markdown .agent-event-markdown-mermaid-error,
+.agent-event-markdown .agent-event-markdown-table-wrap {
+  margin: 0 0 8px;
+}
+
+.agent-event-markdown ul,
+.agent-event-markdown ol {
+  padding-left: 22px;
+}
+
+.agent-event-markdown li {
+  margin: 3px 0;
+  padding-left: 2px;
+}
+
+.agent-event-markdown li > p {
+  margin: 0 0 4px;
+}
+
+.agent-event-markdown li > :last-child {
+  margin-bottom: 0;
+}
+
+.agent-event-markdown input[type="checkbox"] {
+  width: 13px;
+  height: 13px;
+  margin: 0 6px 0 -2px;
+  accent-color: var(--skin-accent);
+  transform: translateY(2px);
+}
+
+.agent-event-markdown blockquote {
+  border-left: 3px solid var(--skin-border);
+  color: var(--skin-muted);
+  padding-left: 10px;
+}
+
+.agent-event-markdown code {
+  border-radius: 4px;
+  background: var(--skin-panel-raised);
+  color: var(--skin-text-strong);
+  padding: 1px 4px;
+}
+
+.agent-event-markdown pre {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--skin-control-hover);
+  background: var(--skin-code-bg);
+  white-space: pre;
+  word-break: normal;
+}
+
+.agent-event-markdown pre code {
+  background: transparent;
+  padding: 0;
+  white-space: inherit;
+}
+
+.agent-event-markdown-mermaid {
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid var(--skin-control-hover);
+  border-radius: 6px;
+  background: var(--skin-text-strong);
+  color: var(--skin-panel-raised);
+  padding: 10px;
+}
+
+.agent-event-markdown-mermaid svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.agent-event-markdown-mermaid-loading,
+.agent-event-markdown-mermaid-error {
+  border: 1px solid var(--skin-border);
+  border-radius: 6px;
+  background: var(--skin-panel-raised);
+  color: var(--skin-muted);
+  padding: 10px;
+  font-size: 12px;
+}
+
+.agent-event-markdown-mermaid-error {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-event-markdown-mermaid-error pre {
+  margin: 0;
+}
+
+.agent-event-markdown a {
+  color: var(--skin-accent);
+  text-decoration-color: rgb(125 211 252 / 50%);
+  text-underline-offset: 2px;
+}
+
+.agent-event-markdown a:hover {
+  color: var(--skin-accent);
+}
+
+.agent-event-markdown-link-text {
+  color: var(--skin-muted);
+}
+
+.agent-event-markdown-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--skin-control-hover);
+  border-radius: 6px;
+}
+
+.agent-event-markdown table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: collapse;
+}
+
+.agent-event-markdown th,
+.agent-event-markdown td {
+  border-bottom: 1px solid var(--skin-control-hover);
+  border-left: 1px solid var(--skin-control-hover);
+  padding: 5px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.agent-event-markdown th:first-child,
+.agent-event-markdown td:first-child {
+  border-left: 0;
+}
+
+.agent-event-markdown tr:last-child td {
+  border-bottom: 0;
+}
+
+.agent-event-markdown th {
+  background: var(--skin-panel-raised);
+  color: var(--skin-text-strong);
+  font-weight: 700;
+}
+
+.agent-event-markdown img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+.agent-event-markdown hr {
+  border: 0;
+  border-top: 1px solid var(--skin-border);
+  margin: 10px 0;
+}
+
+.agent-event-raw {
+  display: grid;
+  gap: 6px;
+}
+
+.agent-event-raw summary {
+  width: fit-content;
+  cursor: pointer;
+  border: 1px solid var(--skin-border);
+  border-radius: 6px;
+  background: var(--skin-control);
+  color: var(--skin-text);
+  padding: 4px 8px;
+  font-size: 12px;
+  list-style: none;
+}
+
+.agent-event-raw summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-event-base-instructions {
+  border-left-color: var(--skin-warning);
+}
+
+.agent-event-base-instructions header span {
+  color: var(--skin-warning);
+}
+
+.agent-event-system {
+  border-left-color: var(--skin-warning);
+}
+
+.agent-event-system header span {
+  color: var(--skin-warning-text);
+}
+
+.agent-event-developer {
+  border-left-color: var(--skin-warning);
+}
+
+.agent-event-developer header span {
+  color: var(--skin-warning-text);
+}
+
+.agent-event-context {
+  border-left-color: var(--skin-success);
+}
+
+.agent-event-context header span {
+  color: var(--skin-success-text);
+}
+
+.agent-event-user,
+.agent-event-user-input {
+  border-left-color: var(--skin-success);
+}
+
+.agent-event-user header span,
+.agent-event-user-input header span {
+  color: var(--skin-success-text);
+}
+
+.agent-event-agent {
+  border-left-color: var(--skin-accent);
+}
+
+.agent-event-agent header span {
+  color: var(--skin-accent);
+}
+
+.agent-event-reasoning {
+  border-left-color: var(--skin-accent);
+}
+
+.agent-event-reasoning header span {
+  color: var(--skin-accent);
+}
+
+.agent-event-tool-call {
+  border-left-color: var(--skin-accent);
+}
+
+.agent-event-tool-call header span {
+  color: var(--skin-accent);
+}
+
+.agent-event-tool-result {
+  border-left-color: var(--skin-accent);
+}
+
+.agent-event-tool-result header span {
+  color: var(--skin-accent);
+}
+
+.agent-event-subagent-call {
+  border-left-color: var(--skin-danger);
+}
+
+.agent-event-subagent-call header span {
+  color: var(--skin-danger-text);
+}
+
+.agent-event-subagent-result {
+  border-left-color: var(--skin-accent);
+}
+
+.agent-event-subagent-result header span {
+  color: var(--skin-accent);
+}
+
+.agent-event-subagent-context {
+  border-left-color: var(--skin-accent-strong);
+}
+
+.agent-event-subagent-context header span {
+  color: var(--skin-accent);
+}
+
+.agent-event-lifecycle {
+  border-left-color: var(--skin-muted);
+}
+
+.agent-event-lifecycle header span {
+  color: var(--skin-text);
+}
+
+.agent-event-event {
+  border-left-color: var(--skin-muted);
+}
+
+.agent-event-event header span {
+  color: var(--skin-muted);
+}

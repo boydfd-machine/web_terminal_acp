@@ -1,0 +1,272 @@
+.system-config-sidebar {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+  overflow: hidden;
+  border-right: 1px solid var(--skin-border-soft);
+  background: var(--skin-panel-soft);
+  padding: 12px;
+}
+
+.system-config-main {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+.system-config-sidebar-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.system-config-sidebar-heading strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--skin-text-strong);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-config-sidebar-heading span {
+  flex: 0 0 auto;
+  border: 1px solid var(--skin-border);
+  border-radius: 999px;
+  background: var(--skin-control);
+  color: var(--skin-muted);
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.system-config-editor {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.6fr) minmax(260px, 1.4fr) auto;
+  align-items: end;
+  gap: 12px;
+  border: 1px solid var(--skin-border);
+  border-radius: 8px;
+  background: linear-gradient(180deg, var(--skin-control) 0%, var(--skin-panel-raised) 100%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 4%);
+  padding: 14px;
+}
+
+.system-config-sidebar-form {
+  grid-template-columns: 1fr;
+  align-items: stretch;
+  gap: 10px;
+  border-color: var(--skin-border-soft);
+  background: var(--skin-panel-raised);
+  box-shadow: none;
+  padding: 12px;
+}
+
+.system-config-editor-header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--skin-border-soft);
+  padding-bottom: 10px;
+}
+
+.system-config-editor-header span {
+  color: var(--skin-text-strong);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.system-config-editor-header small {
+  min-width: 0;
+  color: var(--skin-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: right;
+}
+
+.system-config-upload {
+  position: relative;
+  min-width: 0;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  overflow: hidden;
+  border: 1px dashed var(--skin-muted);
+  border-radius: 8px;
+  background: var(--skin-panel-soft);
+  color: var(--skin-text-strong);
+  padding: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.system-config-upload:hover,
+.system-config-upload:focus-within {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent-soft);
+  color: var(--skin-text-strong);
+}
+
+.system-config-upload input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.system-config-upload-icon,
+.system-config-button-icon,
+.system-config-row-action-icon,
+.system-config-item-icon svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.system-config-upload-icon {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  stroke-width: 1.8;
+  color: var(--skin-accent);
+}
+
+.system-config-upload-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.system-config-upload-copy strong,
+.system-config-upload-copy small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-config-upload-copy strong {
+  color: var(--skin-text-strong);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.system-config-upload-copy small {
+  color: var(--skin-muted);
+  font-size: 12px;
+}
+
+.system-config-primary-button {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-color: var(--skin-accent-strong);
+  background: var(--skin-accent-strong);
+  color: var(--skin-accent-text);
+  font-weight: 800;
+}
+
+.system-config-primary-button:hover:not(:disabled) {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent-strong);
+}
+
+.system-config-primary-button .system-config-upload-icon,
+.system-config-button-icon {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2;
+  color: currentColor;
+}
+
+.system-config-json {
+  grid-column: span 2;
+}
+
+.system-config-sidebar-form .system-config-json {
+  grid-column: auto;
+}
+
+.system-config-json textarea {
+  min-height: 132px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.system-config-list {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  overflow: auto;
+}
+
+.system-config-search {
+  display: grid;
+  gap: 6px;
+}
+
+.system-config-search > span {
+  color: var(--skin-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.system-config-search-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.system-config-search-row input {
+  min-width: 0;
+}
+
+.system-config-search-row .ui-icon-button {
+  width: 34px;
+  height: 34px;
+}
+
+.system-config-list ul {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.system-config-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  overflow: hidden;
+  border: 1px solid var(--skin-border);
+  border-radius: 8px;
+  background: var(--skin-panel-soft);
+  padding: 12px;
+}
+
+.system-config-sidebar .system-config-item {
+  grid-template-columns: 1fr;
+  align-items: stretch;
+  gap: 10px;
+  padding: 10px;
+}
+
+.system-config-item.selected {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent-soft);
+}

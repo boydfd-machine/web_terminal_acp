@@ -90,8 +90,15 @@ docker compose up -d --wait elasticsearch
 
 | 变量 | 用途 | 默认 |
 | --- | --- | --- |
+| `CORS_ALLOW_ORIGINS` | 允许浏览器调用 backend API 的前端 origin，多个用逗号分隔；局域网 Vite 联调可加 `http://127.0.0.1:5173` | localhost Vite origin |
 | `WEB_TERMINAL_AUTH_SECRET` | 非空时启用 UI/API 内置登录 | 空 |
 | `WEB_TERMINAL_AUTH_SESSION_TTL_SECONDS` | 登录态有效期 | `604800` |
+| `KEYCLOAK_BASE_URL` | Keycloak 服务地址；与 realm、client id 同时设置后启用 Keycloak 登录 | 空 |
+| `KEYCLOAK_REALM` | Keycloak realm | 空 |
+| `KEYCLOAK_CLIENT_ID` | Keycloak OIDC client id | 空 |
+| `KEYCLOAK_CLIENT_SECRET` | 可选 confidential client secret，只在后端换 token 时使用 | 空 |
+| `KEYCLOAK_PUBLIC_KEY_PEM` | 可选 Keycloak 静态验签公钥；留空则使用 JWKS | 空 |
+| `KEYCLOAK_JWKS_CACHE_TTL_SECONDS` | Keycloak JWKS 缓存时间 | `300` |
 | `BACKEND_PUBLISHED_PORT` | backend 宿主机端口 | `8001` |
 | `WORKSPACE_DIR` | 挂载到 backend `/workspace` 的宿主机路径 | `~/workspace` |
 | `CLAUDE_PROJECTS_DIR` | Claude Code JSONL 采集目录 | `~/.claude/projects` |
@@ -100,8 +107,23 @@ docker compose up -d --wait elasticsearch
 | `OPENAI_COMPAT_API_KEY` | 摘要生成 API key | `dev-local-key` |
 | `OPENAI_COMPAT_MODEL` | 摘要模型 | `local-summarizer` |
 | `VITE_API_BASE` | 前端构建时备用 API origin；Docker nginx 代理模式保持为空 | 空 |
+| `VITE_CLIENT_AGENT_SERVER_URL` | 写入 SSH/direct remote client 配置的 server URL 覆盖项 | 空 |
+| `VITE_ENABLE_ONBOARDING` | 新用户引导的前端构建开关；设为 `true` 启用 | 空 |
+| `VITE_ENABLE_PAGE_ANNOTATION` | 本地 Docker 构建中的 debug 页面标注模式开关 | `true` |
 
-不要提交 `.env`。对 localhost 之外开放之前，请设置 `WEB_TERMINAL_AUTH_SECRET`、使用强数据库密码，并在 UI/backend 前放 TLS 反向代理。
+不要提交 `.env`。对 localhost 之外开放之前，请启用 Keycloak 或设置 `WEB_TERMINAL_AUTH_SECRET`、使用强数据库密码，并在 UI/backend 前放 TLS 反向代理。
+
+从 `http://127.0.0.1:5173` 做本地 Keycloak 联调时，backend 推荐配置：
+
+```bash
+KEYCLOAK_BASE_URL=https://auth.example.com
+KEYCLOAK_REALM=home
+KEYCLOAK_CLIENT_ID=web_terminal_mcp_local
+KEYCLOAK_CLIENT_SECRET=<client secret>
+CORS_ALLOW_ORIGINS=http://127.0.0.1:5173
+```
+
+前端使用 Authorization Code + PKCE，但授权码换 token 和 token 验签都在后端完成，不会把 client secret 暴露给浏览器。Keycloak 控制台中，`Root URL`、`Home URL`、`Web origins` 用 `http://127.0.0.1:5173`，`Valid redirect URIs` 用 `http://127.0.0.1:5173/*` 是合理的。当前退出登录流程不需要 `Valid post logout redirect URIs`；如果 Keycloak 要求填写，可以用 `http://127.0.0.1:5173/*`。
 
 ## 桌面应用构建
 
@@ -279,6 +301,14 @@ client 协议和 UI 版本源保持同步：
 - `PATCH`：兼容修复和纯文档发布更新。
 - `MINOR`：兼容功能或行为新增。
 - `MAJOR`：不兼容协议、API、存储或部署变更。
+
+多 agent 协作开发时，每个 clone 执行一次仓库本地版本合并驱动安装：
+
+```bash
+scripts/install-version-merge-driver.sh
+```
+
+`.gitattributes` 会把上面的版本文件交给这个 driver 处理。它只自动处理版本号冲突：相同版本保持不变，高低版本取最高 SemVer；非版本内容冲突仍按普通 Git 冲突交给人工处理。
 
 ## 许可证
 

@@ -1,4 +1,9 @@
-import { readAgentCommandSettings, type AgentCommandSettings } from "./userPreferences";
+import {
+  readAgentCommandSettings,
+  readAgentModelSelectionSettings,
+  type AgentCommandSettings,
+  type AgentModelSelectionSettings
+} from "./userPreferences";
 import type {
   AgentClient,
   AgentConfig,
@@ -143,21 +148,29 @@ export function readDefaultAgentCommands(): AgentCommandSettings {
   return readAgentCommandSettings();
 }
 
+export function readDefaultAgentModelSelections(): AgentModelSelectionSettings {
+  return readAgentModelSelectionSettings();
+}
+
 export function agentLaunchForKind(agent: AgentLaunchKind): AgentLaunchConfig {
   const command = readDefaultAgentCommands()[agent] ?? agent;
+  const modelSelection = readDefaultAgentModelSelections()[agent] ?? null;
   return {
     agent,
     command: command.trim() || agent,
-    config: null
+    config: null,
+    ...(modelSelection !== null ? { model_selection: modelSelection } : {})
   };
 }
 
 export function agentLaunchForClient(agent: AgentLaunchKind, agentClients: AgentClient[]): AgentLaunchConfig {
   const command = readDefaultAgentCommands()[agent] ?? agentDefaultCommand(agent, agentClients);
+  const modelSelection = readDefaultAgentModelSelections()[agent] ?? null;
   return {
     agent,
     command: command.trim() || agentDefaultCommand(agent, agentClients),
-    config: null
+    config: null,
+    ...(modelSelection !== null ? { model_selection: modelSelection } : {})
   };
 }
 
@@ -170,6 +183,49 @@ export function configToSelection(config: AgentConfig): AgentConfigSelection {
         id: item.id,
         enabled: item.enabled
       }))
+    }))
+  };
+}
+
+function selectionEnabledByKey(selection: AgentConfigSelection): Map<string, boolean> {
+  const enabledByKey = new Map<string, boolean>();
+  for (const section of selection.sections) {
+    for (const item of section.items) {
+      enabledByKey.set(`${section.id}:${item.id}`, item.enabled);
+    }
+  }
+  return enabledByKey;
+}
+
+export function mergeSelectionWithConfigDefaults(
+  current: AgentConfigSelection | null,
+  nextDefaults: AgentConfigSelection,
+  previousDefaults: AgentConfigSelection | null
+): AgentConfigSelection {
+  if (current === null || current.agent !== nextDefaults.agent) {
+    return nextDefaults;
+  }
+  if (previousDefaults === null || previousDefaults.agent !== nextDefaults.agent) {
+    return nextDefaults;
+  }
+
+  const currentEnabled = selectionEnabledByKey(current);
+  const previousEnabled = selectionEnabledByKey(previousDefaults);
+  return {
+    agent: nextDefaults.agent,
+    sections: nextDefaults.sections.map((section) => ({
+      id: section.id,
+      items: section.items.map((item) => {
+        const key = `${section.id}:${item.id}`;
+        const currentValue = currentEnabled.get(key);
+        const previousValue = previousEnabled.get(key);
+        return {
+          id: item.id,
+          enabled: currentValue !== undefined && previousValue !== undefined && currentValue !== previousValue
+            ? currentValue
+            : item.enabled
+        };
+      })
     }))
   };
 }

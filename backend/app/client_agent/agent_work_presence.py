@@ -93,12 +93,22 @@ async def detect_agent_processes(
     if tmux_target is None:
         return {}
 
+    return await detect_agent_processes_for_tmux_target(tmux_target, runtime=runtime)
+
+
+async def detect_agent_processes_for_tmux_target(
+    tmux_target: str,
+    *,
+    runtime: ClientTmuxRuntime | None,
+) -> dict[str, tuple[AgentProcess, ...]]:
+    if runtime is None:
+        return {}
     try:
         output = await runtime._run(["tmux", "list-panes", "-t", tmux_target, "-F", "#{pane_pid}"])
     except Exception:
         logger.debug(
             "failed to list tmux pane pids for agent work presence",
-            extra={"window_id": str(window_id), "tmux_target": tmux_target},
+            extra={"tmux_target": tmux_target},
             exc_info=True,
         )
         return {}

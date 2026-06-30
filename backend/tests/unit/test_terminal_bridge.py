@@ -34,6 +34,18 @@ def test_parse_text_input_returns_select_window_control_for_select_json():
     assert action == SelectWindowControl(window_id=UUID("87654321-4321-8765-4321-876543218765"))
 
 
+def test_parse_text_input_preserves_select_window_recreate_permission():
+    action = parse_text_input(
+        '{"type":"select_window","window_id":"87654321-4321-8765-4321-876543218765",'
+        '"allow_missing_window_recreate":true}'
+    )
+
+    assert action == SelectWindowControl(
+        window_id=UUID("87654321-4321-8765-4321-876543218765"),
+        allow_missing_window_recreate=True,
+    )
+
+
 def test_parse_text_input_returns_output_ack_control_for_ack_json():
     assert parse_text_input('{"type":"output_ack"}') == OutputAckControl()
 
@@ -90,10 +102,11 @@ class FakeTmuxManager:
         self.resizes: list[tuple[RuntimeWindow, int, int]] = []
         self.killed_shadow_sessions: list[tuple[RuntimeWindow, str | None]] = []
 
-    async def create_window(self, cwd, shell_command, *, window_id=None):
+    async def create_window(self, cwd, shell_command, *, window_id=None, agent_ops_token=None):
         assert cwd == "/workspace"
         assert shell_command == "bash"
         assert window_id is None
+        assert agent_ops_token is None
         return RuntimeWindow(session_id="web-terminal", window_id="@8")
 
     async def resize_shadow_window(self, window: RuntimeWindow, *, cols: int, rows: int, view_id=None) -> None:

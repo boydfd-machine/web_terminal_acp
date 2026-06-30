@@ -20,6 +20,7 @@ const windowDetail: VirtualWindow = {
   status: "ACTIVE",
   tmux_session: "test",
   tmux_window_id: "@1",
+  tmux_window_index: "4",
   remote_session_id: null,
   remote_window_id: null,
   cwd: "/workspace/project",
@@ -97,9 +98,75 @@ afterEach(() => {
   queryClient?.clear();
   queryClient = null;
   vi.restoreAllMocks();
+  window.localStorage.clear();
 });
 
 describe("Agent config viewer", () => {
+  it("shows the tmux window index in the overview tab", async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/clients/client-1/windows/window-1")) {
+        return new Response(JSON.stringify(windowDetail), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    }) as never;
+
+    renderWindowDetail();
+    await flushPromises();
+
+    await waitFor(() => {
+      expect(container?.textContent).toContain("tmux window index");
+      expect(container?.textContent).toContain("4");
+    });
+  });
+
+  it("updates manual work status from the overview tab", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/clients/client-1/windows/window-1/work-status")) {
+        expect(init?.method).toBe("PATCH");
+        expect(init?.body).toBe(JSON.stringify({ state: "WORKING" }));
+        return new Response(JSON.stringify({
+          state: "WORKING",
+          label: "Agent 工作中",
+          color: "orange",
+          source: "manual",
+          manual_updated_at: "2026-06-05T00:00:00Z",
+          last_activity_at: windowDetail.work_status.last_activity_at,
+          last_working_activity_at: windowDetail.work_status.last_working_activity_at
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith("/api/clients/client-1/windows/window-1")) {
+        return new Response(JSON.stringify(windowDetail), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    globalThis.fetch = fetchMock as never;
+
+    renderWindowDetail();
+    await flushPromises();
+
+    let statusSelect: HTMLSelectElement | null = null;
+    await waitFor(() => {
+      statusSelect = container!.querySelector('select[aria-label="Manual work status"]');
+      expect(statusSelect).toBeInstanceOf(HTMLSelectElement);
+    });
+
+    await act(async () => {
+      statusSelect!.value = "WORKING";
+      statusSelect!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    await waitFor(() => {
+      expect(container?.textContent).toContain("Agent working");
+      expect(container?.textContent).toContain("Manual");
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/work-status"),
+      expect.objectContaining({ method: "PATCH" })
+    );
+  });
+
   it("renders config sections under the Agent tab and toggles enablement", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -111,7 +178,8 @@ describe("Agent config viewer", () => {
           sections: [
             { id: "skills", name: "Skills", items: [{ id: "docker", name: "docker", enabled: false }] },
             { id: "plugins", name: "Plugins", items: [] },
-            { id: "hooks", name: "Hooks", items: [] }
+            { id: "hooks", name: "Hooks", items: [] },
+            { id: "mcp", name: "MCP Servers", items: [{ id: "filesystem", name: "filesystem", enabled: true }] }
           ]
         }), { status: 200, headers: { "Content-Type": "application/json" } });
       }
@@ -121,7 +189,8 @@ describe("Agent config viewer", () => {
           sections: [
             { id: "skills", name: "Skills", items: [{ id: "docker", name: "docker", enabled: true }] },
             { id: "plugins", name: "Plugins", items: [{ id: "superpowers@openai-curated", name: "Superpowers", enabled: false }] },
-            { id: "hooks", name: "Hooks", items: [] }
+            { id: "hooks", name: "Hooks", items: [] },
+            { id: "mcp", name: "MCP Servers", items: [{ id: "filesystem", name: "filesystem", enabled: true }] }
           ]
         }), { status: 200, headers: { "Content-Type": "application/json" } });
       }
@@ -160,6 +229,8 @@ describe("Agent config viewer", () => {
     expect(container?.textContent).toContain("Plugins");
     expect(container?.textContent).toContain("Superpowers");
     expect(container?.textContent).toContain("Hooks");
+    expect(container?.textContent).toContain("MCP Servers");
+    expect(container?.textContent).toContain("filesystem");
 
     const dockerToggle = container!.querySelector('input[aria-label="Disable docker"]');
     expect(dockerToggle).toBeInstanceOf(HTMLInputElement);
@@ -235,5 +306,78 @@ describe("Agent config viewer", () => {
     expect(container?.textContent).toContain("The terminal moved from setup into build triage.");
     expect(container?.textContent).toContain("Codex terminal");
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/title-history?"))).toBe(true);
+  });
+
+  it("renders terminal artifact HTML through iframe srcdoc fetched with bearer auth", async () => {
+    window.localStorage.setItem("web-terminal-acp:auth-token", "token-1");
+    const artifactList = {
+      window_id: "window-1",
+      artifacts: [
+        {
+          id: "artifact-1",
+          client_id: "client-1",
+          virtual_window_id: "window-1",
+          source_window_id: "window-1",
+          ephemeral_window_id: null,
+          artifact_kind: "agent_trace_graph",
+          title: "Trace graph",
+          status: "SUCCEEDED",
+          content_json: null,
+          display_html: null,
+          metadata_json: null,
+          last_error: null,
+          started_at: null,
+          completed_at: "2026-05-29T00:10:00Z",
+          created_at: "2026-05-29T00:00:00Z",
+          updated_at: "2026-05-29T00:10:00Z"
+        }
+      ],
+      total: 1,
+      limit: 50,
+      offset: 0,
+      has_more: false
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/artifacts/artifact-1/html")) {
+        expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer token-1");
+        expect(new URL(url).searchParams.has("auth_token")).toBe(false);
+        return new Response("<html><head></head><body>trace</body></html>", {
+          status: 200,
+          headers: { "Content-Type": "text/html" }
+        });
+      }
+      if (url.includes("/artifacts?")) {
+        return new Response(JSON.stringify(artifactList), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+      if (url.endsWith("/api/clients/client-1/windows/window-1")) {
+        return new Response(JSON.stringify(windowDetail), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    globalThis.fetch = fetchMock as never;
+
+    renderWindowDetail();
+    await flushPromises();
+
+    let artifactsTab: HTMLButtonElement | undefined;
+    await waitFor(() => {
+      artifactsTab = [...container!.querySelectorAll("button")].find((button) => button.textContent === "Artifacts");
+      expect(artifactsTab).toBeTruthy();
+    });
+    act(() => {
+      artifactsTab?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    await waitFor(() => {
+      const iframe = container!.querySelector("iframe");
+      expect(iframe).toBeInstanceOf(HTMLIFrameElement);
+      expect(iframe?.getAttribute("src")).toBeNull();
+      expect(iframe?.getAttribute("srcdoc")).toContain("Content-Security-Policy");
+      expect(iframe?.getAttribute("srcdoc")).toContain("<body>trace</body>");
+    });
   });
 });

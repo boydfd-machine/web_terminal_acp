@@ -1,5 +1,5 @@
 type TerminalOutputChunk = string | Uint8Array;
-type TerminalOutputWriteCallback = () => void;
+type TerminalOutputWriteCallback = (writtenChunk: TerminalOutputChunk) => void;
 
 type TerminalOutputItem = {
   chunk: TerminalOutputChunk;
@@ -46,9 +46,9 @@ function splitChunk(chunk: TerminalOutputChunk, length: number): [TerminalOutput
 function joinItems(items: TerminalOutputItem[]): TerminalOutputItem[] {
   const joined: TerminalOutputItem[] = [];
   let stringParts: string[] = [];
-  let stringCallbacks: TerminalOutputWriteCallback[] = [];
+  let stringCallbacks: TerminalOutputItem[] = [];
   let byteParts: Uint8Array[] = [];
-  let byteCallbacks: TerminalOutputWriteCallback[] = [];
+  let byteCallbacks: TerminalOutputItem[] = [];
 
   const flushStrings = () => {
     if (stringParts.length > 0) {
@@ -79,13 +79,13 @@ function joinItems(items: TerminalOutputItem[]): TerminalOutputItem[] {
       flushBytes();
       stringParts.push(item.chunk);
       if (item.onWrite !== undefined) {
-        stringCallbacks.push(item.onWrite);
+        stringCallbacks.push(item);
       }
     } else {
       flushStrings();
       byteParts.push(item.chunk);
       if (item.onWrite !== undefined) {
-        byteCallbacks.push(item.onWrite);
+        byteCallbacks.push(item);
       }
     }
   }
@@ -94,13 +94,13 @@ function joinItems(items: TerminalOutputItem[]): TerminalOutputItem[] {
   return joined;
 }
 
-function joinCallbacks(callbacks: TerminalOutputWriteCallback[]): TerminalOutputWriteCallback | undefined {
-  if (callbacks.length === 0) {
+function joinCallbacks(items: TerminalOutputItem[]): TerminalOutputWriteCallback | undefined {
+  if (items.length === 0) {
     return undefined;
   }
   return () => {
-    for (const callback of callbacks) {
-      callback();
+    for (const item of items) {
+      item.onWrite?.(item.chunk);
     }
   };
 }
@@ -183,7 +183,7 @@ export function createTerminalOutputBuffer(options: TerminalOutputBufferOptions)
         if (tail !== null) {
           queue.unshift({ chunk: tail, onWrite: next.onWrite });
         }
-        pending.push({ chunk: head });
+        pending.push({ chunk: head, onWrite: next.onWrite });
         break;
       }
       if (pending.length > 0 && pendingLength + nextLength > currentMaxFlushCharacters) {

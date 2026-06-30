@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { readClientAgentServerUrl } from "../apiBase";
+import { useI18n } from "../i18n";
 import type { BootstrapClientInput } from "../types";
 
 type BootstrapClientFormProps = {
@@ -13,6 +14,7 @@ function defaultServerUrl(): string {
 }
 
 export function BootstrapClientForm({ isSubmitting, onSubmit }: BootstrapClientFormProps) {
+  const { t } = useI18n();
   const [name, setName] = useState("");
   const [host, setHost] = useState("");
   const [port, setPort] = useState("22");
@@ -38,11 +40,11 @@ export function BootstrapClientForm({ isSubmitting, onSubmit }: BootstrapClientF
         });
       }}
     >
-      <h3>SSH bootstrap</h3>
+      <h3>{t("bootstrap.title")}</h3>
       <p className="muted">
-        SSH bootstrap connects to the target host once, uploads the remote client, and registers it automatically.
+        {t("bootstrap.description")}
       </p>
-      <label htmlFor="bootstrap-client-name">Name</label>
+      <label htmlFor="bootstrap-client-name">{t("bootstrap.name")}</label>
       <input
         id="bootstrap-client-name"
         required
@@ -51,7 +53,7 @@ export function BootstrapClientForm({ isSubmitting, onSubmit }: BootstrapClientF
         placeholder="Production host"
       />
 
-      <label htmlFor="bootstrap-client-host">Host</label>
+      <label htmlFor="bootstrap-client-host">{t("bootstrap.host")}</label>
       <input
         id="bootstrap-client-host"
         required
@@ -60,7 +62,7 @@ export function BootstrapClientForm({ isSubmitting, onSubmit }: BootstrapClientF
         placeholder="example.com"
       />
 
-      <label htmlFor="bootstrap-client-port">Port</label>
+      <label htmlFor="bootstrap-client-port">{t("bootstrap.port")}</label>
       <input
         id="bootstrap-client-port"
         required
@@ -71,7 +73,7 @@ export function BootstrapClientForm({ isSubmitting, onSubmit }: BootstrapClientF
         onChange={(event) => setPort(event.target.value)}
       />
 
-      <label htmlFor="bootstrap-client-username">Username</label>
+      <label htmlFor="bootstrap-client-username">{t("bootstrap.username")}</label>
       <input
         id="bootstrap-client-username"
         required
@@ -80,7 +82,7 @@ export function BootstrapClientForm({ isSubmitting, onSubmit }: BootstrapClientF
         placeholder="deploy"
       />
 
-      <label htmlFor="bootstrap-client-private-key">Private key</label>
+      <label htmlFor="bootstrap-client-private-key">{t("bootstrap.privateKey")}</label>
       <textarea
         id="bootstrap-client-private-key"
         required
@@ -90,16 +92,16 @@ export function BootstrapClientForm({ isSubmitting, onSubmit }: BootstrapClientF
         placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
       />
 
-      <label htmlFor="bootstrap-client-passphrase">Passphrase</label>
+      <label htmlFor="bootstrap-client-passphrase">{t("bootstrap.passphrase")}</label>
       <input
         id="bootstrap-client-passphrase"
         type="password"
         value={passphrase}
         onChange={(event) => setPassphrase(event.target.value)}
-        placeholder="Optional"
+        placeholder={t("bootstrap.optional")}
       />
 
-      <label htmlFor="bootstrap-client-server-url">Server URL</label>
+      <label htmlFor="bootstrap-client-server-url">{t("bootstrap.serverUrl")}</label>
       <input
         id="bootstrap-client-server-url"
         required
@@ -109,7 +111,7 @@ export function BootstrapClientForm({ isSubmitting, onSubmit }: BootstrapClientF
 
       <div className="bootstrap-form-actions">
         <button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? "Bootstrapping..." : "Bootstrap client"}
+          {isSubmitting ? t("bootstrap.submitting") : t("bootstrap.submit")}
         </button>
       </div>
     </form>

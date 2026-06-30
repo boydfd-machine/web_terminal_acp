@@ -1,8 +1,13 @@
 import { useEffect, useState } from "react";
 
+import { useI18n } from "../i18n";
+
 type LoginGateProps = {
-  onSubmit: (secret: string) => Promise<void>;
+  onSubmit: (secret: string, captchaAnswer?: string) => Promise<void>;
+  onKeycloakLogin?: () => void;
+  mode?: "password" | "keycloak";
   error: string | null;
+  captchaImageBase64: string | null;
   isSubmitting: boolean;
   backendAddress: string;
   backendAddressError: string | null;
@@ -31,6 +36,7 @@ function BackendAddressFields({
   saveLabel: string;
   onSaveBackendAddress: (value: string) => void;
 }) {
+  const { t } = useI18n();
   const [draft, setDraft] = useState(backendAddress);
 
   useEffect(() => {
@@ -40,7 +46,7 @@ function BackendAddressFields({
   return (
     <>
       <label className="settings-field">
-        <span>后端地址</span>
+        <span>{t("auth.backend.address")}</span>
         <input
           autoCapitalize="none"
           autoCorrect="off"
@@ -61,7 +67,7 @@ function BackendAddressFields({
           {saveLabel}
         </button>
         <button type="button" disabled={isCheckingBackend} onClick={() => onSaveBackendAddress("")}>
-          恢复默认
+          {t("auth.backend.restoreDefault")}
         </button>
       </div>
       {backendAddressError && (
@@ -78,18 +84,22 @@ export function BackendConnectionGate({
   isCheckingBackend,
   onSaveBackendAddress
 }: BackendAddressGateProps) {
+  const { t } = useI18n();
+
   return (
     <main className="login-shell">
-      <section className="login-panel" aria-label="Backend connection">
+      <section className="login-panel" aria-label={t("auth.backend.connection")}>
         <h1>Web Terminal ACP</h1>
         <p className="error" role="alert">
-          {connectionError ? `无法连接后端：${connectionError}` : "无法连接后端。"}
+          {connectionError
+            ? t("auth.backend.connectionFailedWithReason", { reason: connectionError })
+            : t("auth.backend.connectionFailed")}
         </p>
         <BackendAddressFields
           backendAddress={backendAddress}
           backendAddressError={backendAddressError}
           isCheckingBackend={isCheckingBackend}
-          saveLabel="保存并重试"
+          saveLabel={t("auth.backend.saveAndRetry")}
           onSaveBackendAddress={onSaveBackendAddress}
         />
       </section>
@@ -99,14 +109,25 @@ export function BackendConnectionGate({
 
 export function LoginGate({
   onSubmit,
+  onKeycloakLogin,
+  mode = "password",
   error,
+  captchaImageBase64,
   isSubmitting,
   backendAddress,
   backendAddressError,
   isCheckingBackend,
   onSaveBackendAddress
 }: LoginGateProps) {
+  const { t } = useI18n();
   const [secret, setSecret] = useState("");
+  const isKeycloak = mode === "keycloak";
+  const [captchaAnswer, setCaptchaAnswer] = useState("");
+  const requiresCaptcha = captchaImageBase64 !== null;
+
+  useEffect(() => {
+    setCaptchaAnswer("");
+  }, [captchaImageBase64]);
 
   return (
     <main className="login-shell">
@@ -114,7 +135,9 @@ export function LoginGate({
         className="login-panel"
         onSubmit={(event) => {
           event.preventDefault();
-          void onSubmit(secret);
+          if (!isKeycloak) {
+            void onSubmit(secret, captchaAnswer);
+          }
         }}
       >
         <h1>Web Terminal ACP</h1>
@@ -122,21 +145,50 @@ export function LoginGate({
           backendAddress={backendAddress}
           backendAddressError={backendAddressError}
           isCheckingBackend={isCheckingBackend}
-          saveLabel="保存后端地址"
+          saveLabel={t("auth.backend.saveAddress")}
           onSaveBackendAddress={onSaveBackendAddress}
         />
-        <label className="settings-field">
-          <span>登录密钥</span>
-          <input
-            autoFocus
-            type="password"
-            value={secret}
-            onChange={(event) => setSecret(event.target.value)}
-          />
-        </label>
-        <button type="submit" disabled={isSubmitting || secret.length === 0}>
-          登录
-        </button>
+        {isKeycloak ? (
+          <button type="button" disabled={isSubmitting || !onKeycloakLogin} onClick={onKeycloakLogin}>
+            {t("auth.login.keycloak")}
+          </button>
+        ) : (
+          <>
+            <label className="settings-field">
+              <span>{t("auth.login.secret")}</span>
+              <input
+                autoFocus
+                type="password"
+                value={secret}
+                onChange={(event) => setSecret(event.target.value)}
+              />
+            </label>
+            {requiresCaptcha && (
+              <div className="login-captcha">
+                <img
+                  alt={t("auth.login.captchaImage")}
+                  src={`data:image/png;base64,${captchaImageBase64}`}
+                />
+                <label className="settings-field">
+                  <span>{t("auth.login.captcha")}</span>
+                  <input
+                    autoCapitalize="characters"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    value={captchaAnswer}
+                    onChange={(event) => setCaptchaAnswer(event.target.value)}
+                  />
+                </label>
+              </div>
+            )}
+            <button
+              type="submit"
+              disabled={isSubmitting || secret.length === 0 || (requiresCaptcha && captchaAnswer.length === 0)}
+            >
+              {t("auth.login.submit")}
+            </button>
+          </>
+        )}
         {error && <p className="error" role="alert">{error}</p>}
       </form>
     </main>

@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AddClientModal } from "../src/components/AddClientModal";
+import { writeClipboardText } from "../src/terminalClipboard";
 import type { BootstrapClientInput } from "../src/types";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -10,30 +11,46 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 
-function renderAddClientModal(options: {
+vi.mock("../src/terminalClipboard", () => ({
+  writeClipboardText: vi.fn(() => Promise.resolve())
+}));
+
+type RenderAddClientModalOptions = {
   initialMode?: "bootstrap" | "registration";
   registrationKey?: string | null;
   onBootstrapSubmit?: (payload: BootstrapClientInput) => void;
   onGenerateRegistrationKey?: (label?: string | null) => void;
-} = {}) {
+};
+
+function addClientModalElement(options: RenderAddClientModalOptions) {
+  return (
+    <AddClientModal
+      isOpen
+      initialMode={options.initialMode}
+      bootstrapFailed={false}
+      bootstrapPending={false}
+      registrationKey={options.registrationKey ?? null}
+      registrationKeyPending={false}
+      registrationKeyError={null}
+      onClose={() => {}}
+      onBootstrapSubmit={options.onBootstrapSubmit ?? (() => {})}
+      onGenerateRegistrationKey={options.onGenerateRegistrationKey ?? (() => {})}
+    />
+  );
+}
+
+function renderAddClientModal(options: RenderAddClientModalOptions = {}) {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
   act(() => {
-    root?.render(
-      <AddClientModal
-        isOpen
-        initialMode={options.initialMode}
-        bootstrapFailed={false}
-        bootstrapPending={false}
-        registrationKey={options.registrationKey ?? null}
-        registrationKeyPending={false}
-        registrationKeyError={null}
-        onClose={() => {}}
-        onBootstrapSubmit={options.onBootstrapSubmit ?? (() => {})}
-        onGenerateRegistrationKey={options.onGenerateRegistrationKey ?? (() => {})}
-      />
-    );
+    root?.render(addClientModalElement(options));
+  });
+}
+
+async function rerenderAddClientModal(options: RenderAddClientModalOptions = {}) {
+  await act(async () => {
+    root?.render(addClientModalElement(options));
   });
 }
 
@@ -54,6 +71,7 @@ afterEach(() => {
   delete (window as Window & { __WEB_TERMINAL_API_BASE?: string }).__WEB_TERMINAL_API_BASE;
   root = null;
   container = null;
+  vi.clearAllMocks();
   vi.restoreAllMocks();
 });
 
@@ -103,10 +121,10 @@ describe("AddClientModal", () => {
     });
 
     expect(container?.querySelector("[data-onboarding-id='remote-registration-panel']")).not.toBeNull();
-    expect(container?.textContent).toContain("一次性注册 Key");
+    expect(container?.textContent).toContain("One-time registration key");
     expect(container?.textContent).toContain("wtr_test_key");
     const clientNameInput = Array.from(container?.querySelectorAll("input") ?? [])
-      .find((input) => input.placeholder === "例如：office-mac-mini");
+      .find((input) => input.placeholder === "Example: office-mac-mini");
     expect(clientNameInput).toBeInstanceOf(HTMLInputElement);
     setInputValue(clientNameInput as HTMLInputElement, "office-mac-mini");
     const scriptTextarea = Array.from(container?.querySelectorAll("textarea") ?? [])
@@ -117,7 +135,7 @@ describe("AddClientModal", () => {
     expect(scriptTextarea?.value).toContain("WEB_TERMINAL_CLIENT_NAME='office-mac-mini'");
     expect(scriptTextarea?.value).not.toContain("raw.githubusercontent.com");
     const generateButton = Array.from(container?.querySelectorAll("button") ?? [])
-      .find((button) => button.textContent?.includes("生成一次性注册 Key"));
+      .find((button) => button.textContent?.includes("Generate one-time registration key"));
     act(() => {
       generateButton?.click();
     });
@@ -130,5 +148,57 @@ describe("AddClientModal", () => {
     expect(container?.textContent).toContain("Registration key");
     expect(container?.textContent).toContain("wtr_direct_key");
     expect(container?.querySelector("[data-onboarding-id='remote-registration-panel']")).not.toBeNull();
+  });
+
+  it("copies the registration script from the script header and after key generation", async () => {
+    const onGenerateRegistrationKey = vi.fn();
+    const writeClipboardTextMock = vi.mocked(writeClipboardText);
+    (window as Window & { __WEB_TERMINAL_API_BASE?: string }).__WEB_TERMINAL_API_BASE = "http://control.example.com:5173";
+    renderAddClientModal({
+      initialMode: "registration",
+      registrationKey: "wtr_existing_key",
+      onGenerateRegistrationKey
+    });
+
+    const clientNameInput = Array.from(container?.querySelectorAll("input") ?? [])
+      .find((input) => input.placeholder === "Example: office-mac-mini");
+    setInputValue(clientNameInput as HTMLInputElement, "office-mac-mini");
+
+    const copyScriptButton = container?.querySelector('button[aria-label="Copy registration script"]');
+    expect(copyScriptButton).toBeInstanceOf(HTMLButtonElement);
+    expect(copyScriptButton?.querySelector("svg")).not.toBeNull();
+    expect(copyScriptButton?.textContent?.trim()).toBe("");
+
+    await act(async () => {
+      (copyScriptButton as HTMLButtonElement).click();
+    });
+
+    expect(writeClipboardTextMock).toHaveBeenCalledTimes(1);
+    expect(writeClipboardTextMock.mock.calls[0]?.[0]).toContain("WEB_TERMINAL_REGISTRATION_KEY='wtr_existing_key'");
+    expect(writeClipboardTextMock.mock.calls[0]?.[0]).toContain("WEB_TERMINAL_CLIENT_NAME='office-mac-mini'");
+    expect(writeClipboardTextMock.mock.calls[0]?.[1]).toBe(true);
+
+    writeClipboardTextMock.mockClear();
+    const generateAndCopyButton = Array.from(container?.querySelectorAll("button") ?? [])
+      .find((button) => button.textContent?.includes("Generate and copy registration script"));
+    expect(generateAndCopyButton).toBeInstanceOf(HTMLButtonElement);
+
+    await act(async () => {
+      (generateAndCopyButton as HTMLButtonElement).click();
+    });
+
+    expect(onGenerateRegistrationKey).toHaveBeenCalledWith("office-mac-mini");
+    expect(writeClipboardTextMock).not.toHaveBeenCalled();
+
+    await rerenderAddClientModal({
+      initialMode: "registration",
+      registrationKey: "wtr_new_key",
+      onGenerateRegistrationKey
+    });
+
+    expect(writeClipboardTextMock).toHaveBeenCalledTimes(1);
+    expect(writeClipboardTextMock.mock.calls[0]?.[0]).toContain("WEB_TERMINAL_REGISTRATION_KEY='wtr_new_key'");
+    expect(writeClipboardTextMock.mock.calls[0]?.[0]).toContain("WEB_TERMINAL_CLIENT_NAME='office-mac-mini'");
+    expect(writeClipboardTextMock.mock.calls[0]?.[1]).toBe(true);
   });
 });

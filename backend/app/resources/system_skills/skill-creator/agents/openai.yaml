@@ -1,0 +1,7 @@
+interface:
+  display_name: "Skill Creator"
+  short_description: "Create or update concise, discoverable Codex skills"
+  default_prompt: "Use $skill-creator to design or update a skill's SKILL.md, metadata, resources, and validation plan."
+
+policy:
+  allow_implicit_invocation: true

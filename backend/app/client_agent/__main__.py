@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterator
 
 from app.client_agent.config import ClientAgentConfig
+from app.client_agent.logging_setup import configure_client_logging
 from app.client_agent.runner import run_client_agent
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ def client_agent_lock(config: ClientAgentConfig) -> Iterator[None]:
         yield
         return
 
-    lock_path = config.install_path.expanduser() / "client-agent.lock"
+    lock_path = config.install_path.expanduser() / config.lock_filename
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_file = lock_path.open("a+", encoding="utf-8")
     try:
@@ -49,6 +50,7 @@ def main() -> None:
     args = parser.parse_args()
 
     config = ClientAgentConfig.load(args.config)
+    configure_client_logging(config.install_path)
     with client_agent_lock(config):
         asyncio.run(run_client_agent(config))
 

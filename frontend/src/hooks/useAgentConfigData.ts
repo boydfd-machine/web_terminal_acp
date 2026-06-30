@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { fetchAgentConfig, updateAgentConfigItem } from "../api";
-import type { AgentConfig } from "../types";
+import { fetchAgentConfig, updateAgentConfigItem, updateAgentConfigModel } from "../api";
+import type { AgentConfig, AgentConfigModelUpdate } from "../types";
 
 type UseAgentConfigDataOptions = {
   clientId: string | null;
@@ -41,6 +41,18 @@ export function useAgentConfigData({ clientId, windowId, enabled }: UseAgentConf
     }
   });
 
+  const modelMutation = useMutation({
+    mutationFn: (input: AgentConfigModelUpdate) => updateAgentConfigModel(
+      clientId as string,
+      windowId as string,
+      input
+    ),
+    onSuccess: (updated) => {
+      queryClient.setQueryData<AgentConfig>(queryKey, updated);
+      queryClient.invalidateQueries({ queryKey });
+    }
+  });
+
   return {
     config: query.data ?? null,
     isLoading: query.isLoading,
@@ -51,6 +63,11 @@ export function useAgentConfigData({ clientId, windowId, enabled }: UseAgentConf
     },
     pendingItemId: toggleMutation.variables?.itemId ?? null,
     isToggling: toggleMutation.isPending,
-    toggleError: toggleMutation.isError
+    toggleError: toggleMutation.isError,
+    updateModel: (input: AgentConfigModelUpdate) => {
+      modelMutation.mutate(input);
+    },
+    isUpdatingModel: modelMutation.isPending,
+    modelUpdateError: modelMutation.isError
   };
 }

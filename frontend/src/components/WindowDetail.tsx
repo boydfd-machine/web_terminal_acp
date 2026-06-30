@@ -1,22 +1,51 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
-import { fetchCommandHistory, fetchWindow, fetchWindowTitleHistory, retrySummary, updateWindowTitle } from "../api";
+import {
+  createProjectTodoFromPageReviewCard,
+  createTerminalArtifact,
+  fetchCommandHistory,
+  fetchWindow,
+  fetchWindowTitleHistory,
+  retrySummary,
+  updateManualWorkStatus,
+  updateWindowTitle
+} from "../api";
+import { artifactModelAgentFromWindow, artifactModelDefaultSelection } from "../artifactModelSelection";
 import { useAgentConfigData } from "../hooks/useAgentConfigData";
 import { useAgentRecordData } from "../hooks/useAgentRecordData";
-import type { GitWorktreeActivity, SummaryJob, TreeFolderCore, VirtualWindow } from "../types";
-import { AgentConfigViewer } from "./AgentConfigViewer";
-import { AgentRecordModal, AgentRecordViewer } from "./AgentRecordViewer";
-import { CommandHistoryViewer } from "./CommandHistoryViewer";
+import type { ProjectFileLinkContext } from "../projectFileLinks";
+import { projectPathForWindow } from "../terminalTree";
+import type {
+  ArtifactScope,
+  GitWorktreeActivity,
+  TerminalArtifact,
+  TreeFolderCore,
+  VirtualWindow,
+  WorkStatusState
+} from "../types";
+import type { AgentModelSelection } from "../types";
 import { DetailPanelTabs, type DetailPanelTab } from "./DetailPanelTabs";
 import { GitRunViewer } from "./GitRunViewer";
-import { TitleHistoryViewer } from "./TitleHistoryViewer";
-import { WorkStatusBadge } from "./WorkStatusBadge";
+import { WindowArtifactsPanel } from "./WindowArtifactsPanel";
+import { WindowAgentSection, WindowHistorySection } from "./WindowDetailSections";
+import { WindowOverviewPanel } from "./WindowOverviewPanel";
+import { WindowTitleHeader } from "./WindowTitleHeader";
+import { terminalArtifactItemId, useWindowArtifactItems } from "./useWindowArtifactItems";
+import { useArtifactProjectTodoCreator } from "./useArtifactProjectTodoCreator";
+import {
+  COMMAND_HISTORY_PAGE_SIZE, MAX_TITLE_LENGTH, TITLE_HISTORY_PAGE_SIZE,
+  displayTags, formatDateTime, renameTreeWindow, summaryStatus,
+  type AgentDetailTab,
+  type HistoryDetailTab
+} from "./windowDetailData";
+import { useI18n } from "../i18n";
 
 type WindowDetailProps = {
   clientId: string | null;
   windowId: string | null;
   gitWorktree?: GitWorktreeActivity | null;
+  projectFileContext?: ProjectFileLinkContext | null;
   terminalStatusLabel?: string;
   terminalStatusTone?: "connected" | "connecting" | "reconnecting" | "unavailable" | "error";
   quickInputDraft?: string;
@@ -24,124 +53,40 @@ type WindowDetailProps = {
   agentRecordShortcutLabel?: string;
   onQuickInputDraftChange?: (draft: string) => void;
   onQuickInputSubmit?: (draft: string) => boolean;
+  onOpenArtifactTerminal?: (artifact: TerminalArtifact) => void;
+  onFocusProjectTodo?: (projectPath: string, todoId: string) => void;
 };
-
-type SummaryStatus = {
-  label: string;
-  tone?: "muted" | "error";
-};
-type AgentDetailTab = "record" | "config";
-type HistoryDetailTab = "commands" | "title";
-
-const COMMAND_HISTORY_PAGE_SIZE = 100;
-const TITLE_HISTORY_PAGE_SIZE = 100;
-const MAX_TITLE_LENGTH = 255;
-
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
-}
-
-function summaryStatus(summaryJob: SummaryJob | null, commandCaptureSupported: boolean): SummaryStatus {
-  if (!commandCaptureSupported) {
-    return { label: "unsupported shell", tone: "muted" };
-  }
-
-  if (summaryJob === null) {
-    return { label: "No summary job yet.", tone: "muted" };
-  }
-
-  switch (summaryJob.status.toUpperCase()) {
-    case "PENDING":
-      return summaryJob.run_after
-        ? { label: `waiting until ${formatDateTime(summaryJob.run_after)}` }
-        : { label: "waiting" };
-    case "RUNNING":
-      return { label: "running" };
-    case "SUCCEEDED":
-      return { label: "succeeded" };
-    case "FAILED":
-      return { label: "failed", tone: "error" };
-    default:
-      return { label: summaryJob.status.toLowerCase() };
-  }
-}
-
-function displayTags(item: VirtualWindow): string[] {
-  const seen = new Set<string>();
-  const tags: string[] = [];
-  for (const tag of item.title_tags ?? []) {
-    const normalized = tag.trim();
-    const key = normalized.toLocaleLowerCase();
-    if (!normalized || seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    tags.push(normalized);
-  }
-  return tags;
-}
-
-function renameTreeWindow(
-  folders: TreeFolderCore[] | undefined,
-  windowId: string,
-  title: string
-): TreeFolderCore[] | undefined {
-  if (folders === undefined) {
-    return undefined;
-  }
-
-  let changed = false;
-  const nextFolders = folders.map((folder) => {
-    let folderChanged = false;
-    const windows = folder.windows.map((window) => {
-      if (window.id !== windowId) {
-        return window;
-      }
-
-      folderChanged = true;
-      return { ...window, title };
-    });
-    const childFolders = renameTreeWindow(folder.folders, windowId, title);
-    if (childFolders !== folder.folders) {
-      folderChanged = true;
-    }
-    if (!folderChanged) {
-      return folder;
-    }
-
-    changed = true;
-    return { ...folder, folders: childFolders ?? folder.folders, windows };
-  });
-
-  return changed ? nextFolders : folders;
-}
 
 export function WindowDetail({
   clientId,
   windowId,
   gitWorktree = null,
+  projectFileContext = null,
   terminalStatusLabel,
   terminalStatusTone,
   quickInputDraft,
   canSendQuickInput,
   agentRecordShortcutLabel = "Expand",
   onQuickInputDraftChange,
-  onQuickInputSubmit
+  onQuickInputSubmit,
+  onOpenArtifactTerminal,
+  onFocusProjectTodo
 }: WindowDetailProps) {
+  const { t } = useI18n();
   const [allowTitleFolderOverride, setAllowTitleFolderOverride] = useState(false);
   const [detailTab, setDetailTab] = useState<DetailPanelTab>("overview");
   const [agentDetailTab, setAgentDetailTab] = useState<AgentDetailTab>("record");
   const [historyDetailTab, setHistoryDetailTab] = useState<HistoryDetailTab>("commands");
   const [commandHistoryPage, setCommandHistoryPage] = useState(0);
   const [titleHistoryPage, setTitleHistoryPage] = useState(0);
+  const [artifactPage, setArtifactPage] = useState(0);
+  const [artifactScope, setArtifactScope] = useState<ArtifactScope>("terminal");
+  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
+  const [artifactModelSelection, setArtifactModelSelection] = useState<AgentModelSelection | null>(null);
+  const [artifactFullscreen, setArtifactFullscreen] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const queryClient = useQueryClient();
-  const showGitTab = gitWorktree !== null;
   const agentRecord = useAgentRecordData({
     clientId,
     windowId,
@@ -159,15 +104,14 @@ export function WindowDetail({
     setHistoryDetailTab("commands");
     setCommandHistoryPage(0);
     setTitleHistoryPage(0);
+    setArtifactPage(0);
+    setArtifactScope("terminal");
+    setSelectedArtifactId(null);
+    setArtifactModelSelection(null);
+    setArtifactFullscreen(false);
     setIsEditingTitle(false);
     setTitleDraft("");
   }, [clientId, windowId]);
-
-  useEffect(() => {
-    if (!showGitTab && detailTab === "git") {
-      setDetailTab("overview");
-    }
-  }, [showGitTab, detailTab]);
 
   const windowQuery = useQuery({
     queryKey: ["window", clientId, windowId],
@@ -175,6 +119,15 @@ export function WindowDetail({
     enabled: clientId !== null && windowId !== null,
     refetchInterval: 10000
   });
+  const queryGitWorktree = windowQuery.data?.git_worktree ?? null;
+  const showGitTab = queryGitWorktree !== null || gitWorktree !== null;
+  const itemProjectPath = windowQuery.data ? projectPathForWindow(windowQuery.data) : null;
+
+  useEffect(() => {
+    if (!showGitTab && detailTab === "git") {
+      setDetailTab("overview");
+    }
+  }, [showGitTab, detailTab]);
   const commandHistoryQuery = useQuery({
     queryKey: ["command-history", clientId, windowId, commandHistoryPage, COMMAND_HISTORY_PAGE_SIZE],
     queryFn: () => fetchCommandHistory(
@@ -199,6 +152,95 @@ export function WindowDetail({
     placeholderData: keepPreviousData,
     refetchInterval: 10000
   });
+  const {
+    artifactItems,
+    artifactsData,
+    artifactsQuery,
+    previewQuery,
+    selectedItem,
+    selectedItemCanDisplay,
+    selectedItemHtmlQuery,
+    selectedItemReady,
+    selectedItemSrcDoc
+  } = useWindowArtifactItems({
+    artifactPage,
+    artifactScope,
+    clientId,
+    enabled: detailTab === "artifacts",
+    projectPath: itemProjectPath,
+    selectedItemId: selectedArtifactId,
+    setSelectedItemId: setSelectedArtifactId,
+    windowId
+  });
+  const createArtifactMutation = useMutation({
+    mutationFn: ({
+      artifactKind,
+      artifactScope,
+      artifactModelSelection,
+      clientId,
+      projectPath,
+      windowId
+    }: {
+      artifactKind: string;
+      artifactScope: ArtifactScope;
+      artifactModelSelection: AgentModelSelection | null;
+      clientId: string;
+      projectPath: string | null;
+      windowId: string;
+    }) => (
+      createTerminalArtifact(clientId, windowId, {
+        artifact_kind: artifactKind,
+        artifact_scope: artifactScope,
+        project_path: projectPath,
+        artifact_model_selection: artifactModelSelection
+      })
+    ),
+    onSuccess: (artifact, variables) => {
+      setSelectedArtifactId(terminalArtifactItemId(artifact.id));
+      queryClient.invalidateQueries({ queryKey: ["terminal-artifacts", variables.clientId, variables.windowId] });
+    }
+  });
+  const createPageReviewTodoMutation = useMutation({
+    mutationFn: ({
+      artifact,
+      cardId,
+      clientId,
+      projectPath
+    }: {
+      artifact: TerminalArtifact;
+      cardId: string;
+      clientId: string;
+      projectPath: string;
+    }) => createProjectTodoFromPageReviewCard(clientId, projectPath, {
+      artifact_id: artifact.id,
+      card_id: cardId
+    }),
+    onSuccess: (todo, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["project-todos", variables.clientId, variables.projectPath] });
+      queryClient.invalidateQueries({ queryKey: ["terminal-artifacts", variables.clientId, variables.artifact.virtual_window_id], exact: false });
+      setSelectedArtifactId(terminalArtifactItemId(variables.artifact.id));
+      if (onFocusProjectTodo) {
+        onFocusProjectTodo(todo.project_path, todo.id);
+      }
+    }
+  });
+  const createProjectTodoFromArtifactMutation = useArtifactProjectTodoCreator({
+    onCreated: onFocusProjectTodo,
+    onInvalidateArtifactSource: (nextClientId) => {
+      queryClient.invalidateQueries({ queryKey: ["terminal-artifacts", nextClientId], exact: false });
+    }
+  });
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape" && artifactFullscreen) {
+        event.preventDefault();
+        setArtifactFullscreen(false);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [artifactFullscreen]);
   const retryMutation = useMutation({
     mutationFn: ({
       clientId,
@@ -213,6 +255,7 @@ export function WindowDetail({
       queryClient.invalidateQueries({ queryKey: ["window", variables.clientId, variables.windowId] });
       queryClient.invalidateQueries({ queryKey: ["tree", variables.clientId], exact: false });
       queryClient.invalidateQueries({ queryKey: ["terminal-projects", variables.clientId], exact: false });
+      queryClient.invalidateQueries({ queryKey: ["projects", variables.clientId], exact: false });
       queryClient.invalidateQueries({ queryKey: ["window-activity", variables.clientId], exact: false });
     }
   });
@@ -235,6 +278,7 @@ export function WindowDetail({
       queryClient.invalidateQueries({ queryKey: ["window", variables.clientId, variables.windowId] });
       queryClient.invalidateQueries({ queryKey: ["tree", variables.clientId], exact: false });
       queryClient.invalidateQueries({ queryKey: ["terminal-projects", variables.clientId], exact: false });
+      queryClient.invalidateQueries({ queryKey: ["projects", variables.clientId], exact: false });
       queryClient.invalidateQueries({ queryKey: ["window-activity", variables.clientId], exact: false });
       queryClient.invalidateQueries({ queryKey: ["title-history", variables.clientId, variables.windowId] });
       queryClient.invalidateQueries({ queryKey: ["terminal-recents", variables.clientId] });
@@ -242,19 +286,42 @@ export function WindowDetail({
       setIsEditingTitle(false);
     }
   });
+  const manualWorkStatusMutation = useMutation({
+    mutationFn: ({
+      clientId,
+      windowId,
+      state
+    }: {
+      clientId: string;
+      windowId: string;
+      state: WorkStatusState | null;
+    }) => updateManualWorkStatus(clientId, windowId, state),
+    onSuccess: (workStatus, variables) => {
+      queryClient.setQueryData<VirtualWindow>(
+        ["window", variables.clientId, variables.windowId],
+        (current) => current ? { ...current, work_status: workStatus } : current
+      );
+      queryClient.invalidateQueries({ queryKey: ["window", variables.clientId, variables.windowId] });
+      queryClient.invalidateQueries({ queryKey: ["window-activity", variables.clientId], exact: false });
+      queryClient.invalidateQueries({ queryKey: ["terminal-notifications", variables.clientId], exact: false });
+      queryClient.invalidateQueries({ queryKey: ["tree", variables.clientId], exact: false });
+    }
+  });
 
   if (clientId === null || windowId === null) {
-    return <p className="muted">Select a terminal artifact.</p>;
+    return <p className="muted">{t("window.detail.selectArtifact")}</p>;
   }
   if (windowQuery.isLoading) {
-    return <p className="muted">Loading details...</p>;
+    return <p className="muted">{t("window.detail.loading")}</p>;
   }
   if (windowQuery.isError || !windowQuery.data) {
-    return <p className="error" role="alert">Failed to load details.</p>;
+    return <p className="error" role="alert">{t("window.detail.loadFailed")}</p>;
   }
 
   const item = windowQuery.data;
-  const status = summaryStatus(item.summary_job, item.command_capture_supported !== false);
+  const artifactModelAgent = artifactModelAgentFromWindow(item);
+  const effectiveGitWorktree = queryGitWorktree ?? gitWorktree;
+  const status = summaryStatus(item.summary_job, item.command_capture_supported !== false, t);
   const tags = displayTags(item);
   const trimmedTitleDraft = titleDraft.trim();
   const titleSaveDisabled =
@@ -263,312 +330,169 @@ export function WindowDetail({
     || trimmedTitleDraft.length > MAX_TITLE_LENGTH
     || trimmedTitleDraft === item.title;
   const manualLocks = [
-    item.title_manually_overridden ? "title locked" : null,
-    item.folder_manually_overridden ? "folder locked" : null
+    item.title_manually_overridden ? t("window.detail.titleLocked") : null,
+    item.folder_manually_overridden ? t("window.detail.folderLocked") : null
   ].filter((lock): lock is string => lock !== null);
+  const creatingPageReviewTodo = createPageReviewTodoMutation.isPending && createPageReviewTodoMutation.variables
+    ? {
+        artifactId: createPageReviewTodoMutation.variables.artifact.id,
+        cardId: createPageReviewTodoMutation.variables.cardId
+      }
+    : null;
   return (
     <div>
-      <div className="window-title-header">
-        {isEditingTitle ? (
-          <form
-            className="window-title-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (titleSaveDisabled) {
-                return;
-              }
-              renameMutation.mutate({ clientId, windowId: item.id, title: trimmedTitleDraft });
-            }}
-          >
-            <input
-              aria-label="Terminal title"
-              maxLength={MAX_TITLE_LENGTH}
-              value={titleDraft}
-              autoFocus
-              disabled={renameMutation.isPending}
-              onChange={(event) => setTitleDraft(event.target.value)}
-            />
-            <div className="window-title-actions">
-              <button type="submit" disabled={titleSaveDisabled}>
-                Save
-              </button>
-              <button
-                type="button"
-                disabled={renameMutation.isPending}
-                onClick={() => {
-                  setTitleDraft(item.title);
-                  setIsEditingTitle(false);
-                  renameMutation.reset();
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        ) : (
-          <div className="window-title-display">
-            <h2 title={item.title}>{item.title}</h2>
-            <button
-              type="button"
-              className="window-title-edit-button"
-              onClick={() => {
-                setTitleDraft(item.title);
-                setIsEditingTitle(true);
-                renameMutation.reset();
-              }}
-            >
-              Rename
-            </button>
-          </div>
-        )}
-      </div>
-      {renameMutation.isError && (
-        <p className="error" role="alert">
-          {renameMutation.error instanceof Error ? renameMutation.error.message : "Failed to rename terminal."}
-        </p>
-      )}
+      <WindowTitleHeader
+        isEditingTitle={isEditingTitle}
+        renameError={renameMutation.isError ? renameMutation.error : null}
+        renamePending={renameMutation.isPending}
+        title={item.title}
+        titleDraft={titleDraft}
+        titleSaveDisabled={titleSaveDisabled}
+        onBeginEdit={() => {
+          setTitleDraft(item.title);
+          setIsEditingTitle(true);
+          renameMutation.reset();
+        }}
+        onCancelEdit={() => {
+          setTitleDraft(item.title);
+          setIsEditingTitle(false);
+          renameMutation.reset();
+        }}
+        onSubmit={() => renameMutation.mutate({ clientId, windowId: item.id, title: trimmedTitleDraft })}
+        onTitleDraftChange={setTitleDraft}
+      />
       <DetailPanelTabs activeTab={detailTab} showGitTab={showGitTab} onTabChange={setDetailTab} />
 
       {detailTab === "overview" && (
-        <>
-          <dl className="detail-list">
-            <dt>Status</dt>
-            <dd>{item.status}</dd>
-            <dt>Created</dt>
-            <dd>{formatDateTime(item.created_at)}</dd>
-            <dt>Last shell command</dt>
-            <dd>{item.last_terminal_command_at ? formatDateTime(item.last_terminal_command_at) : "-"}</dd>
-            <dt>Last agent event</dt>
-            <dd>{item.last_agent_event_at ? formatDateTime(item.last_agent_event_at) : "-"}</dd>
-            <dt>Last active</dt>
-            <dd>{formatDateTime(item.last_active_at)}</dd>
-            <dt>Work status</dt>
-            <dd>
-              <span className="detail-work-status">
-                <WorkStatusBadge status={item.work_status} />
-                <span className="muted">
-                  {item.work_status.last_activity_at
-                    ? `Last activity ${formatDateTime(item.work_status.last_activity_at)}`
-                    : "No activity yet"}
-                </span>
-              </span>
-            </dd>
-            <dt>CWD</dt>
-            <dd>{item.cwd ?? "-"}</dd>
-            {gitWorktree && (
-              <>
-                <dt>Git worktree</dt>
-                <dd>{gitWorktree.worktree_root}</dd>
-                <dt>Branch</dt>
-                <dd>{gitWorktree.branch ?? "-"}</dd>
-              </>
-            )}
-            <dt>tmux</dt>
-            <dd>{item.tmux_session ?? "-"}:{item.tmux_window_id ?? "-"}</dd>
-            <dt>Summary</dt>
-            <dd>{item.summary ?? "No summary yet."}</dd>
-            <dt>Tags</dt>
-            <dd>
-              {tags.length > 0 ? (
-                <span className="detail-tags">
-                  {tags.map((tag) => (
-                    <span key={tag} title={tag}>{tag}</span>
-                  ))}
-                </span>
-              ) : (
-                "-"
-              )}
-            </dd>
-            <dt>Summary job</dt>
-            <dd className={status.tone}>{status.label}</dd>
-            {item.summary_job?.last_error && (
-              <>
-                <dt>Last error</dt>
-                <dd className="error">{item.summary_job.last_error}</dd>
-              </>
-            )}
-            {item.summary_job && (
-              <>
-                <dt>Attempts</dt>
-                <dd>{item.summary_job.attempts}</dd>
-              </>
-            )}
-            {item.summary_job?.trigger_reason && (
-              <>
-                <dt>Trigger</dt>
-                <dd>{item.summary_job.trigger_reason}</dd>
-              </>
-            )}
-            {item.summary_job?.run_after && (
-              <>
-                <dt>Run after</dt>
-                <dd>{formatDateTime(item.summary_job.run_after)}</dd>
-              </>
-            )}
-            <dt>Manual locks</dt>
-            <dd>{manualLocks.length > 0 ? manualLocks.join(", ") : "-"}</dd>
-          </dl>
-          <div className="retry-summary">
-            <label>
-              <input
-                type="checkbox"
-                checked={allowTitleFolderOverride}
-                disabled={retryMutation.isPending}
-                onChange={(event) => setAllowTitleFolderOverride(event.target.checked)}
-              />
-              Allow title/folder override
-            </label>
-            <button
-              disabled={retryMutation.isPending}
-              onClick={() => retryMutation.mutate({ clientId, windowId: item.id, allowTitleFolderOverride })}
-            >
-              Retry summary
-            </button>
-          </div>
-          {retryMutation.isError && <p className="error" role="alert">Failed to retry summary.</p>}
-          {!showGitTab && (
-            <p className="muted detail-git-hint">
-              Git tracking appears after an agent registers a linked worktree (skill{" "}
-              <code>web-terminal-git-worktree</code>).
-            </p>
+        <WindowOverviewPanel
+          allowTitleFolderOverride={allowTitleFolderOverride}
+          clientId={clientId}
+          gitWorktree={effectiveGitWorktree}
+          item={item}
+          manualLocks={manualLocks}
+          manualWorkStatusError={manualWorkStatusMutation.isError}
+          manualWorkStatusPending={manualWorkStatusMutation.isPending}
+          retryError={retryMutation.isError}
+          retryPending={retryMutation.isPending}
+          showGitTab={effectiveGitWorktree !== null}
+          status={status}
+          tags={tags}
+          windowId={windowId}
+          onAllowTitleFolderOverrideChange={setAllowTitleFolderOverride}
+          onFocusProjectTodo={onFocusProjectTodo}
+          onManualWorkStatusChange={(state) => (
+            manualWorkStatusMutation.mutate({ clientId, windowId: item.id, state })
           )}
-        </>
+          onRetrySummary={() => retryMutation.mutate({ clientId, windowId: item.id, allowTitleFolderOverride })}
+        />
       )}
 
       {detailTab === "agent" && (
-        <>
-          <div className="agent-detail-tabs" role="tablist" aria-label="Agent detail">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={agentDetailTab === "record"}
-              className={agentDetailTab === "record" ? "selected" : undefined}
-              onClick={() => setAgentDetailTab("record")}
-            >
-              Record
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={agentDetailTab === "config"}
-              className={agentDetailTab === "config" ? "selected" : undefined}
-              onClick={() => setAgentDetailTab("config")}
-            >
-              Config
-            </button>
-          </div>
-          {agentDetailTab === "record" ? (
-            <>
-              <AgentRecordViewer
-                mode={agentRecord.mode}
-                chatRoleFilter={agentRecord.chatRoleFilter}
-                chatRecord={agentRecord.chatRecord}
-                detailRecord={agentRecord.detailRecord}
-                sessions={agentRecord.sessions}
-                isLoading={agentRecord.isLoading}
-                isError={agentRecord.isError}
-                isFetching={agentRecord.isFetching}
-                onModeChange={agentRecord.setMode}
-                onChatRoleFilterChange={agentRecord.setChatRoleFilter}
-                onOpenSubagent={(sessionId, originMessageId) => {
-                  agentRecord.setJumpRequest({ sessionId, originMessageId });
-                  agentRecord.setExpanded(true);
-                }}
-                onExpand={() => agentRecord.setExpanded(true)}
-                expandShortcutLabel={agentRecordShortcutLabel}
-                onSessionChange={agentRecord.setSelectedSessionId}
-                onPreviousPage={agentRecord.previousPage}
-                onNextPage={agentRecord.nextPage}
-              />
-              <AgentRecordModal
-                open={agentRecord.expanded}
-                mode={agentRecord.mode}
-                chatRoleFilter={agentRecord.chatRoleFilter}
-                chatRecord={agentRecord.chatRecord}
-                detailRecord={agentRecord.detailRecord}
-                sessions={agentRecord.sessions}
-                isLoading={agentRecord.isLoading}
-                isError={agentRecord.isError}
-                isFetching={agentRecord.isFetching}
-                terminalStatusLabel={terminalStatusLabel}
-                terminalStatusTone={terminalStatusTone}
-                quickInputDraft={quickInputDraft}
-                canSendQuickInput={canSendQuickInput}
-                onQuickInputDraftChange={onQuickInputDraftChange}
-                onQuickInputSubmit={onQuickInputSubmit}
-                onModeChange={agentRecord.setMode}
-                onChatRoleFilterChange={agentRecord.setChatRoleFilter}
-                jumpRequest={agentRecord.jumpRequest}
-                onClose={() => {
-                  agentRecord.setExpanded(false);
-                  agentRecord.setJumpRequest(null);
-                  agentRecord.setSelectedSessionId(null);
-                }}
-                onSessionChange={agentRecord.setSelectedSessionId}
-                onPreviousPage={agentRecord.previousPage}
-                onNextPage={agentRecord.nextPage}
-              />
-            </>
-          ) : (
-            <AgentConfigViewer
-              config={agentConfig.config}
-              isLoading={agentConfig.isLoading}
-              isError={agentConfig.isError}
-              isFetching={agentConfig.isFetching}
-              pendingItemId={agentConfig.pendingItemId}
-              isToggling={agentConfig.isToggling}
-              toggleError={agentConfig.toggleError}
-              onToggleItem={agentConfig.toggleItem}
-            />
-          )}
-        </>
+        <WindowAgentSection
+          agentConfig={agentConfig}
+          agentDetailTab={agentDetailTab}
+          agentRecord={agentRecord}
+          agentRecordShortcutLabel={agentRecordShortcutLabel}
+          canSendQuickInput={canSendQuickInput}
+          onQuickInputDraftChange={onQuickInputDraftChange}
+          onQuickInputSubmit={onQuickInputSubmit}
+          projectFileContext={projectFileContext}
+          quickInputDraft={quickInputDraft}
+          setAgentDetailTab={setAgentDetailTab}
+          terminalStatusLabel={terminalStatusLabel}
+          terminalStatusTone={terminalStatusTone}
+        />
       )}
 
       {detailTab === "history" && (
-        <>
-          <div className="history-detail-tabs" role="tablist" aria-label="History detail">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={historyDetailTab === "commands"}
-              className={historyDetailTab === "commands" ? "selected" : undefined}
-              onClick={() => setHistoryDetailTab("commands")}
-            >
-              Commands
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={historyDetailTab === "title"}
-              className={historyDetailTab === "title" ? "selected" : undefined}
-              onClick={() => setHistoryDetailTab("title")}
-            >
-              Title
-            </button>
-          </div>
-          {historyDetailTab === "commands" ? (
-            <CommandHistoryViewer
-              history={commandHistoryQuery.data ?? null}
-              isLoading={commandHistoryQuery.isLoading}
-              isError={commandHistoryQuery.isError}
-              isFetching={commandHistoryQuery.isFetching}
-              onPreviousPage={() => setCommandHistoryPage((page) => Math.max(0, page - 1))}
-              onNextPage={() => setCommandHistoryPage((page) => page + 1)}
-            />
-          ) : (
-            <TitleHistoryViewer
-              history={titleHistoryQuery.data ?? null}
-              isLoading={titleHistoryQuery.isLoading}
-              isError={titleHistoryQuery.isError}
-              isFetching={titleHistoryQuery.isFetching}
-              onPreviousPage={() => setTitleHistoryPage((page) => Math.max(0, page - 1))}
-              onNextPage={() => setTitleHistoryPage((page) => page + 1)}
-            />
-          )}
-        </>
+        <WindowHistorySection
+          commandHistoryQuery={commandHistoryQuery}
+          historyDetailTab={historyDetailTab}
+          setCommandHistoryPage={setCommandHistoryPage}
+          setHistoryDetailTab={setHistoryDetailTab}
+          setTitleHistoryPage={setTitleHistoryPage}
+          titleHistoryQuery={titleHistoryQuery}
+        />
       )}
 
-      {detailTab === "git" && showGitTab && <GitRunViewer clientId={clientId} windowId={windowId} />}
+      {detailTab === "artifacts" && (
+        <WindowArtifactsPanel
+          artifactFullscreen={artifactFullscreen}
+          artifactPage={artifactPage}
+          artifactScope={artifactScope}
+          artifactItems={artifactItems}
+          artifactsData={artifactsData}
+          artifactsError={artifactsQuery.isError || previewQuery.isError}
+          artifactsFetching={artifactsQuery.isFetching || previewQuery.isFetching}
+          artifactsLoading={artifactsQuery.isLoading || previewQuery.isLoading}
+          clientId={clientId}
+          createArtifactError={createArtifactMutation.isError ? createArtifactMutation.error : null}
+          createArtifactPending={createArtifactMutation.isPending}
+          createPageReviewTodoError={
+            createPageReviewTodoMutation.isError
+              ? createPageReviewTodoMutation.error
+              : createProjectTodoFromArtifactMutation.isError
+                ? createProjectTodoFromArtifactMutation.error
+                : null
+          }
+          creatingPageReviewTodo={creatingPageReviewTodo}
+          itemWindowId={item.id}
+          artifactModelAgent={artifactModelAgent}
+          artifactModelSelection={artifactModelSelection}
+          projectPath={itemProjectPath}
+          selectedItem={selectedItem}
+          selectedItemCanDisplay={selectedItemCanDisplay}
+          selectedItemId={selectedArtifactId}
+          selectedItemReady={selectedItemReady}
+          selectedItemSrcDoc={selectedItemSrcDoc}
+          selectedItemHtmlError={selectedItemHtmlQuery.isError}
+          windowId={windowId}
+          onCreateArtifact={(nextClientId, nextWindowId, artifactKind, nextArtifactScope, nextArtifactModelSelection) => (
+            createArtifactMutation.mutate({
+              artifactKind,
+              artifactScope: nextArtifactScope,
+              artifactModelSelection: nextArtifactModelSelection ?? artifactModelDefaultSelection(artifactModelAgent),
+              clientId: nextClientId,
+              projectPath: nextArtifactScope === "project" ? itemProjectPath : null,
+              windowId: nextWindowId
+            })
+          )}
+          onCreateProjectTodoFromArtifact={(card, artifactId) => {
+            if (itemProjectPath === null) {
+              return Promise.reject(new Error("project path is required"));
+            }
+            return createProjectTodoFromArtifactMutation.mutateAsync({
+              artifactId,
+              card,
+              clientId,
+              projectPath: itemProjectPath
+            });
+          }}
+          onArtifactModelSelectionChange={setArtifactModelSelection}
+          onArtifactScopeChange={(nextScope) => {
+            setArtifactScope(nextScope);
+            setArtifactPage(0);
+            setSelectedArtifactId(null);
+          }}
+          onCreatePageReviewTodo={(artifact, cardId) => {
+            if (itemProjectPath === null) {
+              return;
+            }
+            createPageReviewTodoMutation.mutate({
+              artifact,
+              cardId,
+              clientId,
+              projectPath: itemProjectPath
+            });
+          }}
+          onOpenArtifactTerminal={onOpenArtifactTerminal}
+          setArtifactFullscreen={setArtifactFullscreen}
+          setArtifactPage={setArtifactPage}
+          setSelectedItemId={setSelectedArtifactId}
+        />
+      )}
+
+      {detailTab === "git" && effectiveGitWorktree !== null && <GitRunViewer clientId={clientId} windowId={windowId} />}
     </div>
   );
 }

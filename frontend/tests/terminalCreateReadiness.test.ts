@@ -12,6 +12,7 @@ function virtualWindow(overrides: Partial<VirtualWindow> = {}): VirtualWindow {
     status: "ACTIVE",
     tmux_session: null,
     tmux_window_id: null,
+    tmux_window_index: null,
     remote_session_id: null,
     remote_window_id: null,
     cwd: null,

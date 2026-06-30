@@ -17,6 +17,8 @@ export type TerminalSpecialKey = {
 
 export const TERMINAL_ENTER_INPUT = "\r";
 export const CODEX_COMPOSER_SUBMIT_INPUT = "\x1b[13u";
+export const CODEX_COMPOSER_FOLLOWUP_SUBMIT_INTERVAL_MS = 500;
+export const CODEX_COMPOSER_FOLLOWUP_SUBMIT_DURATION_MS = 3_000;
 
 export const TERMINAL_SPECIAL_KEYS: TerminalSpecialKey[] = [
   { token: "Enter", label: "Enter", value: TERMINAL_ENTER_INPUT, aliases: ["Return"] },
@@ -237,6 +239,17 @@ export function agentDirectSubmitInput(runtimeTags: string[] | null | undefined)
   }
 
   return TERMINAL_ENTER_INPUT;
+}
+
+export function agentDirectSubmitFollowupInputs(runtimeTags: string[] | null | undefined): string[] {
+  if (!runtimeTags?.includes("codex")) {
+    return [];
+  }
+
+  const count = Math.max(1, Math.floor(
+    CODEX_COMPOSER_FOLLOWUP_SUBMIT_DURATION_MS / CODEX_COMPOSER_FOLLOWUP_SUBMIT_INTERVAL_MS
+  ));
+  return Array.from({ length: count }, () => CODEX_COMPOSER_SUBMIT_INPUT);
 }
 
 export function customQuickKeySearchText(quickKey: CustomQuickKey): string {

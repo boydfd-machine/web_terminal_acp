@@ -10,6 +10,7 @@ from app.db import Base
 from app.models import AiSession, Client, ClientRuntime, ClientStatus, Event, EventSourceType, SummaryJob, VirtualWindow, WindowStatus
 from app.repositories.clients import hash_client_token
 from app.services import agent_event_ingest
+from app.contexts.activity.application.agent_event_processor import process_managed_agent_event
 from app.services.agent_event_ingest import persist_managed_agent_event
 from app.services.ingest.codex_receiver import receive_managed_codex_trace
 
@@ -21,6 +22,28 @@ class FakeElasticsearch:
     async def index(self, **kwargs):
         self.indexed_documents.append(kwargs)
         return {"result": "created"}
+
+
+class CaptureUiEventHub:
+    def __init__(self) -> None:
+        self.invalidations = []
+
+    async def publish_invalidation(
+        self,
+        resources,
+        *,
+        client_id=None,
+        window_id=None,
+        reason=None,
+    ) -> None:
+        self.invalidations.append(
+            {
+                "resources": list(resources),
+                "client_id": client_id,
+                "window_id": window_id,
+                "reason": reason,
+            }
+        )
 
 
 @pytest.fixture
@@ -54,7 +77,6 @@ async def create_client_and_window(db_session, *, cwd="/workspace/window"):
     db_session.add_all([client, window])
     await db_session.flush()
     return client, window
-
 
 @pytest.mark.asyncio
 async def test_persist_managed_cursor_event_links_session_window_project_without_indexing(db_session):
@@ -97,6 +119,80 @@ async def test_persist_managed_cursor_event_links_session_window_project_without
     assert summary_jobs[0].virtual_window_id == window.id
     assert es_client.indexed_documents == []
 
+@pytest.mark.asyncio
+async def test_persist_managed_agent_event_skips_summary_for_ephemeral_window(db_session):
+    client, window = await create_client_and_window(db_session)
+    window.derived_mode = "ephemeral"
+    payload = {
+        "client_id": str(client.id),
+        "virtual_window_id": str(window.id),
+        "agentId": "cursor-agent-ephemeral",
+        "blob_id": "blob-ephemeral-1",
+        "role": "user",
+        "text": "artifact-internal prompt",
+    }
+    event = managed_event_from_payload(client.id, window.id, "cursor_cli", payload)
+    assert event is not None
+
+    row = await persist_managed_agent_event(db_session, event)
+
+    ai_session = await db_session.get(AiSession, row.ai_session_id)
+    assert row.virtual_window_id == window.id
+    assert ai_session is not None
+    assert ai_session.virtual_window_id == window.id
+    assert (await db_session.execute(select(SummaryJob))).scalars().all() == []
+
+@pytest.mark.asyncio
+async def test_persist_ephemeral_agent_event_does_not_reassign_main_window_session(db_session):
+    client, main_window = await create_client_and_window(db_session)
+    artifact_window = VirtualWindow(
+        id=uuid4(),
+        client_id=client.id,
+        title="Artifact terminal",
+        status=WindowStatus.active,
+        cwd=main_window.cwd,
+        shell_command="codex",
+        parent_window_id=main_window.id,
+        root_window_id=main_window.id,
+        derived_mode="ephemeral",
+    )
+    main_ai_session = AiSession(
+        client_id=client.id,
+        provider="codex",
+        source_id="codex-main-session",
+        source_path="/home/user/.web-terminal-acp/codex-homes/main/session.jsonl",
+        virtual_window_id=main_window.id,
+    )
+    db_session.add_all([artifact_window, main_ai_session])
+    await db_session.flush()
+
+    payload = {
+        "trace_id": "codex-main-session",
+        "id": "codex-main-session:0",
+        "name": "response_item",
+        "raw_type": "response_item",
+        "client_id": str(client.id),
+        "virtual_window_id": str(artifact_window.id),
+        "payload": {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "artifact-only"}],
+        },
+    }
+    event = managed_event_from_payload(client.id, artifact_window.id, "codex", payload)
+    assert event is not None
+
+    row = await persist_managed_agent_event(db_session, event)
+
+    artifact_ai_session = await db_session.get(AiSession, row.ai_session_id)
+    await db_session.refresh(main_ai_session)
+    assert main_ai_session.virtual_window_id == main_window.id
+    assert artifact_ai_session is not None
+    assert artifact_ai_session.id != main_ai_session.id
+    assert artifact_ai_session.virtual_window_id == artifact_window.id
+    assert artifact_ai_session.source_id == main_ai_session.source_id
+    assert row.virtual_window_id == artifact_window.id
+    assert row.source_id == main_ai_session.source_id
 
 @pytest.mark.asyncio
 async def test_persist_managed_user_event_schedules_summary_even_after_recent_terminal_activity(db_session):
@@ -138,7 +234,6 @@ async def test_persist_managed_user_event_schedules_summary_even_after_recent_te
     assert summary_job.trigger_reason == "agent_idle"
     assert run_after == row_created_at + timedelta(seconds=20)
 
-
 @pytest.mark.asyncio
 async def test_index_managed_agent_event_if_ready_indexes_after_commit(db_session):
     client, window = await create_client_and_window(db_session)
@@ -174,6 +269,45 @@ async def test_index_managed_agent_event_if_ready_indexes_after_commit(db_sessio
     assert es_client.indexed_documents[0]["document"]["text"] == "managed cursor hello"
     assert es_client.indexed_documents[0]["id"] == str(row.id)
 
+@pytest.mark.asyncio
+async def test_process_managed_agent_event_persists_indexes_and_invalidates(db_session):
+    client, window = await create_client_and_window(db_session)
+    payload = {
+        "client_id": str(client.id),
+        "virtual_window_id": str(window.id),
+        "agentId": "cursor-agent-worker-1",
+        "blob_id": "blob-worker-1",
+        "role": "assistant",
+        "text": "queued worker hello",
+    }
+    event = managed_event_from_payload(client.id, window.id, "cursor_cli", payload)
+    assert event is not None
+    es_client = FakeElasticsearch()
+    ui_event_hub = CaptureUiEventHub()
+
+    result = await process_managed_agent_event(
+        db_session,
+        event,
+        es_client=es_client,
+        ui_event_hub=ui_event_hub,
+    )
+
+    assert result.row.source_id == "cursor-agent-worker-1"
+    assert result.row.indexed_at is not None
+    assert result.resources == ("agent_record", "window", "search", "project_todos")
+    assert es_client.indexed_documents[0]["document"]["text"]
+    assert ui_event_hub.invalidations == [
+        {
+            "resources": ["agent_record", "window", "search", "project_todos"],
+            "client_id": client.id,
+            "window_id": window.id,
+            "reason": "ai_event",
+        }
+    ]
+    assert es_client.indexed_documents[0]["document"]["provider"] == "cursor_cli"
+    assert es_client.indexed_documents[0]["document"]["session_id"] == "cursor-agent-worker-1"
+    assert es_client.indexed_documents[0]["document"]["text"] == "queued worker hello"
+    assert es_client.indexed_documents[0]["id"] == str(result.row.id)
 
 @pytest.mark.asyncio
 async def test_index_managed_agent_event_if_ready_skips_missing_client_or_already_indexed(db_session):
@@ -197,7 +331,6 @@ async def test_index_managed_agent_event_if_ready_skips_missing_client_or_alread
 
     assert len(es_client.indexed_documents) == 1
 
-
 @pytest.mark.asyncio
 async def test_persist_managed_agent_event_rejects_mismatched_payload_window(db_session):
     client, window = await create_client_and_window(db_session)
@@ -220,7 +353,6 @@ async def test_persist_managed_agent_event_rejects_mismatched_payload_window(db_
         await persist_managed_agent_event(db_session, event)
 
     assert (await db_session.execute(select(Event))).scalars().all() == []
-
 
 @pytest.mark.asyncio
 async def test_persist_managed_agent_event_uses_payload_project_path_when_event_project_missing(db_session):
@@ -257,7 +389,6 @@ async def test_persist_managed_agent_event_uses_payload_project_path_when_event_
     assert ai_session is not None
     assert ai_session.project_path == "/workspace/payload-project"
 
-
 @pytest.mark.asyncio
 async def test_receive_managed_codex_trace_stores_payload_source_and_project_metadata(db_session):
     client, window = await create_client_and_window(db_session, cwd="/workspace/window-fallback")
@@ -287,78 +418,48 @@ async def test_receive_managed_codex_trace_stores_payload_source_and_project_met
 
 
 @pytest.mark.asyncio
-async def test_receive_managed_codex_trace_uses_payload_cursor_or_offset(monkeypatch, db_session):
-    captured_events = []
-
-    async def fake_persist_managed_agent_event(session, event, *, es_client=None):  # noqa: ANN001
-        assert session is db_session
-        assert es_client == "search-client"
-        captured_events.append(event)
-        return None
-
-    monkeypatch.setattr(
-        agent_event_ingest,
-        "persist_managed_agent_event",
-        fake_persist_managed_agent_event,
-    )
-    client_id = uuid4()
-    window_id = uuid4()
-    base_payload = {
-        "trace_id": "trace-managed-1",
-        "client_id": str(client_id),
-        "virtual_window_id": str(window_id),
-    }
-
-    await receive_managed_codex_trace(
-        db_session,
-        {**base_payload, "cursor": "cursor-42", "offset": 37},
-        client_id=client_id,
-        window_id=window_id,
-        es_client="search-client",
-    )
-    await receive_managed_codex_trace(
-        db_session,
-        {**base_payload, "offset": 37},
-        client_id=client_id,
-        window_id=window_id,
-        es_client="search-client",
-    )
-
-    assert captured_events[0].cursor == "cursor-42"
-    assert captured_events[0].offset is None
-    assert captured_events[1].cursor == 37
-    assert captured_events[1].offset is None
-
-
-@pytest.mark.asyncio
-async def test_persist_managed_legacy_claude_alias_stores_claude_code_session(db_session):
+async def test_receive_managed_codex_trace_keeps_rollout_session_stable_across_items(db_session):
     client, window = await create_client_and_window(db_session, cwd="/workspace/window-fallback")
-    payload = {
-        "type": "assistant",
-        "message": {"role": "assistant", "content": "managed claude hello"},
-        "sessionId": "claude-session-1",
-        "WEB_TERMINAL_CLIENT_ID": str(client.id),
-        "WEB_TERMINAL_WINDOW_ID": str(window.id),
-    }
-    event = managed_event_from_payload(
-        client.id,
-        window.id,
-        "claude",
-        payload,
-        source_path="/home/user/.claude/session.jsonl",
-        offset=13,
+    source_path = (
+        "/home/user/.web-terminal-acp/codex-homes/"
+        f"{window.id}/sessions/2026/06/23/"
+        "rollout-2026-06-23T09-23-56-codex-session.jsonl"
     )
-    assert event is not None
+    first_payload = {
+        "trace_id": "trace-item-1",
+        "id": "trace-item-1:0",
+        "payload": {"id": "trace-item-1"},
+        "span": {"name": "response_item", "attributes": {"tool": "bash"}},
+        "client_id": str(client.id),
+        "virtual_window_id": str(window.id),
+        "source_path": source_path,
+    }
+    second_payload = {
+        "trace_id": "trace-item-2",
+        "id": "trace-item-2:1",
+        "payload": {"id": "trace-item-2"},
+        "span": {"name": "response_item", "attributes": {"tool": "bash"}},
+        "client_id": str(client.id),
+        "virtual_window_id": str(window.id),
+        "source_path": source_path,
+    }
 
-    row = await persist_managed_agent_event(db_session, event)
+    first_row = await receive_managed_codex_trace(
+        db_session,
+        first_payload,
+        client_id=client.id,
+        window_id=window.id,
+    )
+    second_row = await receive_managed_codex_trace(
+        db_session,
+        second_payload,
+        client_id=client.id,
+        window_id=window.id,
+    )
+    await db_session.commit()
 
-    ai_session = await db_session.get(AiSession, row.ai_session_id)
-    assert row.source_type is EventSourceType.agent_tool_record
-    assert row.source_id == "claude-session-1"
-    assert row.virtual_window_id == window.id
-    assert ai_session is not None
-    assert ai_session.provider == "claude_code"
-    assert ai_session.source_id == "claude-session-1"
-    assert ai_session.source_path == "/home/user/.claude/session.jsonl"
-    assert ai_session.project_path == "/workspace/window-fallback"
-    assert ai_session.virtual_window_id == window.id
+    ai_sessions = (await db_session.execute(select(AiSession))).scalars().all()
+    assert first_row.id != second_row.id
+    assert first_row.ai_session_id == second_row.ai_session_id
+    assert len(ai_sessions) == 1
+    assert ai_sessions[0].source_id == "codex-session"

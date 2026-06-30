@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import json
-import re
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-_SESSION_ID_SUFFIX = re.compile(
-    r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
-    re.IGNORECASE,
-)
+from app.shared.codex_sessions import codex_session_id_from_payload
 
 def codex_home_for_window(window_id: UUID | str) -> Path:
     return Path.home() / ".web-terminal-acp" / "codex-homes" / str(window_id)
@@ -24,6 +21,20 @@ def iter_codex_session_files(window_id: UUID | str) -> list[Path]:
     if not sessions_dir.exists():
         return []
     return sorted(path for path in sessions_dir.rglob("*.jsonl") if path.is_file())
+
+
+def iter_recent_codex_session_files(window_id: UUID | str, *, days: int = 2) -> list[Path]:
+    sessions_dir = codex_sessions_dir(window_id)
+    if not sessions_dir.exists():
+        return []
+    paths: set[Path] = {path for path in sessions_dir.glob("*.jsonl") if path.is_file()}
+    today = datetime.now().date()
+    for offset in range(max(1, days)):
+        day = today - timedelta(days=offset)
+        day_dir = sessions_dir / f"{day.year:04d}" / f"{day.month:02d}" / f"{day.day:02d}"
+        if day_dir.exists():
+            paths.update(path for path in day_dir.glob("*.jsonl") if path.is_file())
+    return sorted(paths)
 
 
 def read_new_codex_events(
@@ -73,11 +84,7 @@ def read_new_codex_events(
 
 
 def _should_send_codex_event(raw_event: dict[str, Any]) -> bool:
-    if raw_event.get("type") == "event_msg":
-        payload = raw_event.get("payload")
-        if isinstance(payload, dict) and payload.get("type") == "token_count":
-            return False
-    return raw_event.get("type") in {"session_meta", "response_item", "event_msg"}
+    return raw_event.get("type") in {"session_meta", "turn_context", "response_item", "event_msg"}
 
 
 def _managed_codex_payload(
@@ -105,14 +112,9 @@ def _managed_codex_payload(
 
 
 def _session_id(raw_event: dict[str, Any], source_path: Path) -> str:
-    fallback = source_path.stem.removeprefix("rollout-")
-    suffix_match = _SESSION_ID_SUFFIX.search(fallback)
-    if suffix_match is not None:
-        fallback = suffix_match.group(1)
-
     payload = raw_event.get("payload")
     if isinstance(payload, dict):
-        raw_id = payload.get("id")
-        if isinstance(raw_id, str) and raw_id:
-            return raw_id
-    return fallback
+        session_id = codex_session_id_from_payload(payload, str(source_path))
+        if session_id is not None:
+            return session_id
+    return codex_session_id_from_payload(raw_event, str(source_path)) or source_path.stem

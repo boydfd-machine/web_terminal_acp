@@ -10,6 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from app.client_agent.config import ClientAgentConfig
+from app.client_agent.client_daemon import (
+    kill_existing_client_processes_command,
+    start_client_daemon_command,
+)
 
 _SAFE_JOB_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 
@@ -104,13 +108,12 @@ def _updater_script(
     python_path = venv_path / "bin" / "python"
     config_path = install_path / "config.json"
     update_log = install_path / "logs" / f"update-{job_id}.log"
-    client_log = install_path / "logs" / "client.log"
-    stop_existing_processes = _kill_existing_client_processes_command(config_path)
-    daemon_command = (
-        f"cd {shlex.quote(str(live_app))} && "
-        f"PYTHONPATH={shlex.quote(str(live_app))} "
-        f"{shlex.quote(str(python_path))} -m app.client_agent "
-        f"--config {shlex.quote(str(config_path))} >> {shlex.quote(str(client_log))} 2>&1"
+    start_daemon = start_client_daemon_command(
+        install_path=install_path,
+        app_path=live_app,
+        python_path=python_path,
+        config_path=config_path,
+        daemon_name=config.client_daemon_session,
     )
     return f"""#!/usr/bin/env bash
 set -euo pipefail
@@ -127,9 +130,7 @@ if [ -d {shlex.quote(str(live_app))} ]; then
   mv {shlex.quote(str(live_app))} {shlex.quote(str(backup_app))}
 fi
 mv {shlex.quote(str(next_app))} {shlex.quote(str(live_app))}
-tmux kill-session -t {shlex.quote(config.client_daemon_session)} >/dev/null 2>&1 || true
-{stop_existing_processes}
-tmux new-session -d -s {shlex.quote(config.client_daemon_session)} {shlex.quote(daemon_command)}
+{start_daemon}
 {_completion_notification_command(config, job_id, python_path)}
 echo "client update {job_id} finished $(date -Is)"
 """
@@ -167,12 +168,4 @@ except Exception as exc:
 
 
 def _kill_existing_client_processes_command(config_path: Path) -> str:
-    pattern = f"python.*-m app[.]client_agent.*--config {re.escape(str(config_path))}"
-    quoted_pattern = shlex.quote(pattern)
-    return f"""for pid in $(pgrep -f {quoted_pattern} || true); do
-  if [ "$pid" != "$$" ]; then kill "$pid" >/dev/null 2>&1 || true; fi
-done
-sleep 1
-for pid in $(pgrep -f {quoted_pattern} || true); do
-  if [ "$pid" != "$$" ]; then kill -9 "$pid" >/dev/null 2>&1 || true; fi
-done"""
+    return kill_existing_client_processes_command(config_path)

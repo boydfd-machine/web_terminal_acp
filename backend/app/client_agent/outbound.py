@@ -74,6 +74,10 @@ class ControlMessageWriter:
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._run())
 
+    @property
+    def task(self) -> asyncio.Task[None] | None:
+        return self._task
+
     async def send(self, message: AgentMessage) -> None:
         if self._closed:
             raise OutboundWriterClosed("outbound writer is closed")
@@ -151,6 +155,10 @@ class BulkUploadWriter:
             raise OutboundWriterClosed("outbound writer is closed")
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._run())
+
+    @property
+    def task(self) -> asyncio.Task[None] | None:
+        return self._task
 
     async def send_terminal_output(self, message: AgentMessage) -> None:
         if message.type not in {"terminal_output", "aux_terminal_output"}:

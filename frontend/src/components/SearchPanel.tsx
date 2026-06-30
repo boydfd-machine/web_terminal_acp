@@ -2,14 +2,15 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { search } from "../api";
+import { useI18n, type TranslateFn, type TranslationKey } from "../i18n";
 
-const sourceLabels: Record<string, string> = {
-  virtual_window_id: "Window",
-  title: "Title",
-  tags: "Tags",
-  folder_path: "Folder",
-  provider: "Provider",
-  kind: "Kind"
+const sourceLabelKeys: Partial<Record<string, TranslationKey>> = {
+  virtual_window_id: "search.source.window",
+  title: "search.source.title",
+  tags: "search.source.tags",
+  folder_path: "search.source.folder",
+  provider: "search.source.provider",
+  kind: "search.source.kind"
 };
 
 function formatSourceValue(value: string | string[] | null | undefined) {
@@ -25,6 +26,7 @@ type SearchPanelProps = {
 };
 
 export function SearchPanel({ clientId, onSelectWindowId }: SearchPanelProps) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
   const searchQuery = useQuery({
@@ -37,16 +39,16 @@ export function SearchPanel({ clientId, onSelectWindowId }: SearchPanelProps) {
 
   if (clientId === null) {
     return (
-      <section className="search-panel" aria-labelledby="artifact-search-heading" data-onboarding-id="artifact-search">
-        <h2 id="artifact-search-heading">Artifact search</h2>
-        <p className="muted">Select a client to search artifacts.</p>
+      <section className="search-panel" aria-labelledby="agent-record-search-heading" data-onboarding-id="agent-record-search">
+        <h2 id="agent-record-search-heading">{t("search.title")}</h2>
+        <p className="muted">{t("search.selectClient")}</p>
       </section>
     );
   }
 
   return (
-    <section className="search-panel" aria-labelledby="artifact-search-heading" data-onboarding-id="artifact-search">
-      <h2 id="artifact-search-heading">Artifact search</h2>
+    <section className="search-panel" aria-labelledby="agent-record-search-heading" data-onboarding-id="agent-record-search">
+      <h2 id="agent-record-search-heading">{t("search.title")}</h2>
       <form
         className="search-form"
         onSubmit={(event) => {
@@ -63,26 +65,26 @@ export function SearchPanel({ clientId, onSelectWindowId }: SearchPanelProps) {
           setSubmitted(trimmed);
         }}
       >
-        <label htmlFor="artifact-search-input">Search artifacts</label>
+        <label htmlFor="agent-record-search-input">{t("search.label")}</label>
         <div className="search-form-row">
           <input
-            id="artifact-search-input"
+            id="agent-record-search-input"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search artifacts..."
+            placeholder={t("search.placeholder")}
           />
-          <button type="submit">Search</button>
+          <button type="submit">{t("search.submit")}</button>
         </div>
       </form>
-      {searchQuery.isLoading && <p className="muted">Searching...</p>}
+      {searchQuery.isLoading && <p className="muted">{t("search.searching")}</p>}
       {searchQuery.isError && (
         <p className="error" role="alert">
-          Search failed.
+          {t("search.failed")}
         </p>
       )}
       {completedSearch && (
         <p className="muted">
-          {resultCount === 0 ? "No results found." : `${resultCount} result${resultCount === 1 ? "" : "s"} found.`}
+          {resultCount === 0 ? t("search.noResults") : t("search.resultCount", { count: resultCount })}
         </p>
       )}
       <div className="search-results">
@@ -93,19 +95,19 @@ export function SearchPanel({ clientId, onSelectWindowId }: SearchPanelProps) {
             <article key={`${result.index}:${result.id}`} className="search-result">
               <div className="search-result-header">
                 <strong>{result.index}</strong>
-                {result.score !== null && <span className="muted">Score {result.score.toFixed(2)}</span>}
+                {result.score !== null && <span className="muted">{t("search.score", { score: result.score.toFixed(2) })}</span>}
                 {windowId && onSelectWindowId && (
                   <button type="button" onClick={() => onSelectWindowId(windowId)}>
-                    Open window
+                    {t("search.openWindow")}
                   </button>
                 )}
               </div>
-              <p>{result.snippet || "No snippet available."}</p>
+              <p>{result.snippet || t("search.noSnippet")}</p>
               {sourceEntries.length > 0 && (
                 <dl>
                   {sourceEntries.map(([key, value]) => (
                     <div key={key}>
-                      <dt>{sourceLabels[key] ?? key}</dt>
+                      <dt>{sourceLabel(key, t)}</dt>
                       <dd>{formatSourceValue(value)}</dd>
                     </div>
                   ))}
@@ -117,4 +119,9 @@ export function SearchPanel({ clientId, onSelectWindowId }: SearchPanelProps) {
       </div>
     </section>
   );
+}
+
+function sourceLabel(key: string, t: TranslateFn): string {
+  const labelKey = sourceLabelKeys[key];
+  return labelKey === undefined ? key : t(labelKey);
 }

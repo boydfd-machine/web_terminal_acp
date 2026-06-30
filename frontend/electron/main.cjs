@@ -2,6 +2,7 @@ const { app, BrowserWindow, Menu, clipboard, ipcMain, shell } = require("electro
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+const { normalizePageCaptureRect } = require("./pageCapture.cjs");
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
 const STATIC_HOST = process.env.WTA_ELECTRON_STATIC_HOST ?? "127.0.0.1";
 const STATIC_PORT = Number(process.env.WTA_ELECTRON_STATIC_PORT ?? "4173");
@@ -9,6 +10,8 @@ const STATIC_PORT = Number(process.env.WTA_ELECTRON_STATIC_PORT ?? "4173");
 /** @type {import("node:http").Server | null} */
 let staticServer = null;
 let clipboardHandlersRegistered = false;
+let pageCaptureHandlersRegistered = false;
+let mainWindow = null;
 
 function installApplicationMenu() {
   const isMac = process.platform === "darwin";
@@ -70,6 +73,28 @@ function registerClipboardIpcHandlers() {
   ipcMain.handle("clipboard:read-text", () => clipboard.readText());
   ipcMain.handle("clipboard:write-text", (_event, text) => {
     clipboard.writeText(typeof text === "string" ? text : "");
+  });
+}
+
+function registerPageCaptureIpcHandlers() {
+  if (pageCaptureHandlersRegistered) {
+    return;
+  }
+
+  pageCaptureHandlersRegistered = true;
+  ipcMain.handle("page:capture-screenshot", async (_event, selection) => {
+    if (mainWindow === null || mainWindow.isDestroyed()) {
+      throw new Error("Main window is unavailable.");
+    }
+    const rect = normalizePageCaptureRect(selection);
+    const image = await mainWindow.webContents.capturePage(rect ?? undefined);
+    const size = image.getSize();
+    return {
+      dataUrl: image.toDataURL(),
+      width: size.width,
+      height: size.height,
+      capturedRect: rect ?? undefined,
+    };
   });
 }
 
@@ -193,6 +218,13 @@ async function createMainWindow() {
     return { action: "deny" };
   });
 
+  mainWindow = win;
+  win.on("closed", () => {
+    if (mainWindow === win) {
+      mainWindow = null;
+    }
+  });
+
   await win.loadURL(appUrl);
   return win;
 }
@@ -200,6 +232,7 @@ async function createMainWindow() {
 app.whenReady().then(() => {
   installApplicationMenu();
   registerClipboardIpcHandlers();
+  registerPageCaptureIpcHandlers();
   void createMainWindow();
 
   app.on("activate", () => {

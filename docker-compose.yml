@@ -13,6 +13,12 @@ services:
       - -c
       - track_io_timing=on
       - -c
+      - track_wal_io_timing=on
+      - -c
+      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-512MB}
+      - -c
+      - wal_buffers=${POSTGRES_WAL_BUFFERS:-16MB}
+      - -c
       - log_min_duration_statement=${POSTGRES_LOG_MIN_DURATION_STATEMENT_MS:-500}
       - -c
       - checkpoint_timeout=${POSTGRES_CHECKPOINT_TIMEOUT:-15min}
@@ -40,7 +46,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: ${POSTGRES_MEMORY_LIMIT:-2G}
     logging:
       driver: json-file
       options:
@@ -77,9 +83,25 @@ services:
   redis:
     image: redis:7.2-alpine
     restart: unless-stopped
-    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+    command:
+      [
+        "redis-server",
+        "--save",
+        "60",
+        "1",
+        "--appendonly",
+        "yes",
+        "--appendfsync",
+        "everysec",
+        "--maxmemory",
+        "${REDIS_MAXMEMORY:-2gb}",
+        "--maxmemory-policy",
+        "noeviction",
+      ]
     ports:
       - "${REDIS_PUBLISHED_PORT:-16379}:6379"
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -88,12 +110,55 @@ services:
     deploy:
       resources:
         limits:
-          memory: 768M
+          memory: ${REDIS_MEMORY_LIMIT:-3G}
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+
+  minio:
+    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2025-09-07T16-13-09Z}
+    restart: unless-stopped
+    command: ["server", "/data", "--address", ":9000", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${PROJECT_TODO_ATTACHMENT_S3_ACCESS_KEY:-web_terminal}
+      MINIO_ROOT_PASSWORD: ${PROJECT_TODO_ATTACHMENT_S3_SECRET_KEY:-web_terminal_dev_secret}
+      MINIO_API_CORS_ALLOW_ORIGIN: ${PROJECT_TODO_ATTACHMENT_S3_CORS_ALLOW_ORIGIN:-*}
+    ports:
+      - "${MINIO_API_PUBLISHED_PORT:-19000}:9000"
+      - "${MINIO_CONSOLE_PUBLISHED_PORT:-19001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/ready >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  minio-init:
+    image: ${MINIO_MC_IMAGE:-minio/mc:RELEASE.2025-08-13T08-35-41Z}
+    environment:
+      MINIO_ROOT_USER: ${PROJECT_TODO_ATTACHMENT_S3_ACCESS_KEY:-web_terminal}
+      MINIO_ROOT_PASSWORD: ${PROJECT_TODO_ATTACHMENT_S3_SECRET_KEY:-web_terminal_dev_secret}
+      PROJECT_TODO_ATTACHMENT_S3_BUCKET: ${PROJECT_TODO_ATTACHMENT_S3_BUCKET:-project-todo-attachments}
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
+        mc mb --ignore-existing "local/$$PROJECT_TODO_ATTACHMENT_S3_BUCKET"
 
   backend-base:
     image: ${BACKEND_BASE_IMAGE:-localhost/web_terminal_acp-backend-base:local}
@@ -129,14 +194,41 @@ services:
       DATABASE_URL: postgresql+asyncpg://web_terminal:dev_password@postgres:5432/web_terminal_acp
       ELASTICSEARCH_URL: http://elasticsearch:9200
       REDIS_URL: redis://redis:6379/0
+      AGENT_EVENT_STREAM_KEY: ${AGENT_EVENT_STREAM_KEY:-web-terminal-acp:agent-events}
+      AGENT_EVENT_DEAD_LETTER_STREAM_KEY: ${AGENT_EVENT_DEAD_LETTER_STREAM_KEY:-web-terminal-acp:agent-events:dead-letter}
+      AGENT_EVENT_CONSUMER_GROUP: ${AGENT_EVENT_CONSUMER_GROUP:-agent-event-ingest}
+      AGENT_EVENT_STREAM_MAXLEN: ${AGENT_EVENT_STREAM_MAXLEN:-50000}
+      AGENT_EVENT_WORKER_BATCH_SIZE: ${AGENT_EVENT_WORKER_BATCH_SIZE:-100}
+      AGENT_EVENT_WORKER_BLOCK_MS: ${AGENT_EVENT_WORKER_BLOCK_MS:-1000}
+      AGENT_EVENT_CLAIM_IDLE_MS: ${AGENT_EVENT_CLAIM_IDLE_MS:-60000}
+      AGENT_EVENT_MAX_DELIVERIES: ${AGENT_EVENT_MAX_DELIVERIES:-5}
+      AGENT_EVENT_REDIS_TIMEOUT_SECONDS: ${AGENT_EVENT_REDIS_TIMEOUT_SECONDS:-0.2}
+      UI_EVENT_REDIS_CHANNEL: ${UI_EVENT_REDIS_CHANNEL:-web-terminal-acp:ui-events}
+      PROJECT_TODO_ATTACHMENT_S3_ENDPOINT_URL: ${PROJECT_TODO_ATTACHMENT_S3_ENDPOINT_URL:-/minio}
+      PROJECT_TODO_ATTACHMENT_S3_INTERNAL_ENDPOINT_URL: ${PROJECT_TODO_ATTACHMENT_S3_INTERNAL_ENDPOINT_URL:-http://minio:9000}
+      PROJECT_TODO_ATTACHMENT_S3_REGION: ${PROJECT_TODO_ATTACHMENT_S3_REGION:-us-east-1}
+      PROJECT_TODO_ATTACHMENT_S3_BUCKET: ${PROJECT_TODO_ATTACHMENT_S3_BUCKET:-project-todo-attachments}
+      PROJECT_TODO_ATTACHMENT_S3_ACCESS_KEY: ${PROJECT_TODO_ATTACHMENT_S3_ACCESS_KEY:-web_terminal}
+      PROJECT_TODO_ATTACHMENT_S3_SECRET_KEY: ${PROJECT_TODO_ATTACHMENT_S3_SECRET_KEY:-web_terminal_dev_secret}
+      PROJECT_TODO_ATTACHMENT_PRESIGN_TTL_SECONDS: ${PROJECT_TODO_ATTACHMENT_PRESIGN_TTL_SECONDS:-900}
+      PROJECT_TODO_ATTACHMENT_MAX_BYTES: ${PROJECT_TODO_ATTACHMENT_MAX_BYTES:-20971520}
+      PROJECT_TODO_ATTACHMENT_CLIENT_TEMP_ROOT: ${PROJECT_TODO_ATTACHMENT_CLIENT_TEMP_ROOT:-/tmp/web-terminal-acp/project-todo-attachments}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-}
       WEB_TERMINAL_AUTH_SECRET: ${WEB_TERMINAL_AUTH_SECRET:-}
       WEB_TERMINAL_AUTH_SESSION_TTL_SECONDS: ${WEB_TERMINAL_AUTH_SESSION_TTL_SECONDS:-604800}
+      KEYCLOAK_BASE_URL: ${KEYCLOAK_BASE_URL:-}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
+      KEYCLOAK_PUBLIC_KEY_PEM: ${KEYCLOAK_PUBLIC_KEY_PEM:-}
+      KEYCLOAK_JWKS_CACHE_TTL_SECONDS: ${KEYCLOAK_JWKS_CACHE_TTL_SECONDS:-300}
       TMUX_POOL_SESSION: web_terminal_acp_pool
       DEFAULT_SHELL: ${DEFAULT_SHELL:-auto}
       CLAUDE_PROJECTS_DIR: /claude-projects
       OPENAI_COMPAT_BASE_URL: ${OPENAI_COMPAT_BASE_URL:-http://host.docker.internal:11434/v1}
       OPENAI_COMPAT_API_KEY: ${OPENAI_COMPAT_API_KEY:-dev-local-key}
       OPENAI_COMPAT_MODEL: ${OPENAI_COMPAT_MODEL:-local-summarizer}
+      WEB_TERMINAL_SERVER_ID: ${WEB_TERMINAL_SERVER_ID:-web-terminal-acp-dev}
       HOME: /home/appuser
       CHROME_PATH: /usr/bin/chromium
       BROWSER: /usr/bin/chromium
@@ -159,6 +251,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/healthz >/dev/null"]
       interval: 10s
@@ -174,6 +270,79 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  agent-event-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      additional_contexts:
+        backend-base: docker-image://${BACKEND_BASE_IMAGE:-localhost/web_terminal_acp-backend-base:local}
+      args:
+        BACKEND_BASE_IMAGE: backend-base
+    restart: unless-stopped
+    command: ["python", "-m", "app.contexts.activity.application.agent_event_worker"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://web_terminal:dev_password@postgres:5432/web_terminal_acp
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      REDIS_URL: redis://redis:6379/0
+      AGENT_EVENT_STREAM_KEY: ${AGENT_EVENT_STREAM_KEY:-web-terminal-acp:agent-events}
+      AGENT_EVENT_DEAD_LETTER_STREAM_KEY: ${AGENT_EVENT_DEAD_LETTER_STREAM_KEY:-web-terminal-acp:agent-events:dead-letter}
+      AGENT_EVENT_CONSUMER_GROUP: ${AGENT_EVENT_CONSUMER_GROUP:-agent-event-ingest}
+      AGENT_EVENT_STREAM_MAXLEN: ${AGENT_EVENT_STREAM_MAXLEN:-50000}
+      AGENT_EVENT_WORKER_BATCH_SIZE: ${AGENT_EVENT_WORKER_BATCH_SIZE:-100}
+      AGENT_EVENT_WORKER_BLOCK_MS: ${AGENT_EVENT_WORKER_BLOCK_MS:-1000}
+      AGENT_EVENT_CLAIM_IDLE_MS: ${AGENT_EVENT_CLAIM_IDLE_MS:-60000}
+      AGENT_EVENT_MAX_DELIVERIES: ${AGENT_EVENT_MAX_DELIVERIES:-5}
+      AGENT_EVENT_REDIS_TIMEOUT_SECONDS: ${AGENT_EVENT_REDIS_TIMEOUT_SECONDS:-0.2}
+      UI_EVENT_REDIS_CHANNEL: ${UI_EVENT_REDIS_CHANNEL:-web-terminal-acp:ui-events}
+      PROJECT_TODO_ATTACHMENT_S3_ENDPOINT_URL: ${PROJECT_TODO_ATTACHMENT_S3_ENDPOINT_URL:-/minio}
+      PROJECT_TODO_ATTACHMENT_S3_INTERNAL_ENDPOINT_URL: ${PROJECT_TODO_ATTACHMENT_S3_INTERNAL_ENDPOINT_URL:-http://minio:9000}
+      PROJECT_TODO_ATTACHMENT_S3_REGION: ${PROJECT_TODO_ATTACHMENT_S3_REGION:-us-east-1}
+      PROJECT_TODO_ATTACHMENT_S3_BUCKET: ${PROJECT_TODO_ATTACHMENT_S3_BUCKET:-project-todo-attachments}
+      PROJECT_TODO_ATTACHMENT_S3_ACCESS_KEY: ${PROJECT_TODO_ATTACHMENT_S3_ACCESS_KEY:-web_terminal}
+      PROJECT_TODO_ATTACHMENT_S3_SECRET_KEY: ${PROJECT_TODO_ATTACHMENT_S3_SECRET_KEY:-web_terminal_dev_secret}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-}
+      WEB_TERMINAL_AUTH_SECRET: ${WEB_TERMINAL_AUTH_SECRET:-}
+      KEYCLOAK_BASE_URL: ${KEYCLOAK_BASE_URL:-}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
+      KEYCLOAK_PUBLIC_KEY_PEM: ${KEYCLOAK_PUBLIC_KEY_PEM:-}
+      KEYCLOAK_JWKS_CACHE_TTL_SECONDS: ${KEYCLOAK_JWKS_CACHE_TTL_SECONDS:-300}
+      TMUX_POOL_SESSION: web_terminal_acp_pool
+      HOME: /home/appuser
+      CHROME_PATH: /usr/bin/chromium
+      BROWSER: /usr/bin/chromium
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${CLAUDE_PROJECTS_DIR:-~/.claude/projects}:/claude-projects:ro
+      - ${HOST_CLAUDE_CONFIG_DIR:-~/.claude}:/home/appuser/.claude
+      - ${HOST_CLAUDE_JSON:-~/.claude.json}:/home/appuser/.claude.json
+      - ${CODEX_CONFIG_DIR:-~/.codex}:/home/appuser/.codex
+      - ${AGENTS_CONFIG_DIR:-~/.agents}:/home/appuser/.agents
+      - ${ACPX_CONFIG_DIR:-~/.acpx}:/home/appuser/.acpx
+      - ${WORKSPACE_DIR:-~/workspace}:/workspace
+    depends_on:
+      postgres:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   frontend:
     build:
       context: ./frontend
@@ -181,6 +350,7 @@ services:
       args:
         VITE_API_BASE: ${VITE_API_BASE:-}
         VITE_ENABLE_ONBOARDING: ${VITE_ENABLE_ONBOARDING:-}
+        VITE_ENABLE_PAGE_ANNOTATION: ${VITE_ENABLE_PAGE_ANNOTATION:-true}
         VITE_CLIENT_AGENT_SERVER_URL: ${VITE_CLIENT_AGENT_SERVER_URL:-}
         NPM_REGISTRY: ${NPM_REGISTRY:-}
     restart: unless-stopped
@@ -213,3 +383,5 @@ networks:
 volumes:
   postgres_data:
   elasticsearch_data:
+  redis_data:
+  minio_data:

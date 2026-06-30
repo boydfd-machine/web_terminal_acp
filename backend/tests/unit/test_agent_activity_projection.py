@@ -5,6 +5,7 @@ from app.models import Event, EventSourceType
 from app.services.agent_activity_projection import (
     event_is_agent_activity,
     event_is_agent_completion,
+    event_is_agent_failure,
     event_is_agent_user_input,
 )
 
@@ -75,6 +76,24 @@ def test_codex_synthetic_user_message_is_context_not_activity() -> None:
     assert event_is_agent_activity(event) is False
 
 
+def test_codex_stream_disconnect_marks_agent_failure() -> None:
+    event = make_event(
+        {
+            "provider": "codex",
+            "raw_type": "event_msg",
+            "payload": {
+                "type": "agent_message",
+                "message": "stream disconnected before completion: stream closed before response.completed",
+            },
+        },
+        kind="event_msg",
+    )
+
+    assert event_is_agent_failure(event) is True
+    assert event_is_agent_completion(event) is False
+    assert event_is_agent_activity(event) is True
+
+
 def test_claude_turn_duration_marks_completion() -> None:
     event = make_event(
         {
@@ -102,6 +121,22 @@ def test_claude_metadata_after_completion_is_not_agent_activity() -> None:
 
         assert event_is_agent_completion(event) is False
         assert event_is_agent_activity(event) is False
+
+
+def test_claude_otel_token_metric_is_not_agent_activity() -> None:
+    event = make_event(
+        {
+            "provider": "claude_code",
+            "type": "otel_metric",
+            "name": "claude_code.token.usage",
+            "attributes": {"session.id": "claude-session-1"},
+            "usage": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
+        },
+        kind="otel_metric",
+    )
+
+    assert event_is_agent_completion(event) is False
+    assert event_is_agent_activity(event) is False
 
 
 def test_cursor_assistant_message_marks_completion() -> None:

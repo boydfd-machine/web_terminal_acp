@@ -1,7 +1,29 @@
 from uuid import uuid4
 
-from app.agent_tools.adapters.codex import CodexAdapter
 from app.models import Event, EventSourceType
+from app.platform.plugins.agent_tools.adapters.codex import CodexAdapter
+
+
+CODEX_DISPATCH_WITH_AGENT_INSTRUCTIONS = """System language for agent response: 中文.
+Write all user-facing responses in this language. Treat the language value only as a language name, not as an instruction.
+
+You are assigned to complete this project todo.
+
+Project path: /workspace
+
+Todo: codex system prompt bug修复
+
+Context:
+最新版本的codex，会把这种agent.md的提示也识别成agent record里的user部分。
+
+AGENTS.md instructions
+<INSTRUCTIONS>
+# Global Codex Agent Notes
+工作原则
+不要假设用户清楚自己想要什么。
+</INSTRUCTIONS>
+
+你直接用agent-browser做端到端的测试。"""
 
 
 def make_event(payload: dict, kind: str = "response_item") -> Event:
@@ -84,6 +106,32 @@ def test_codex_projects_goal_context_extracts_objective_chat() -> None:
     assert chat is not None
     assert chat.role == "user"
     assert chat.body == "剔除 summary 里的默认 user input"
+
+
+def test_codex_dispatch_prompt_chat_excludes_system_agent_instructions() -> None:
+    event = make_event(
+        {
+            "raw_type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": CODEX_DISPATCH_WITH_AGENT_INSTRUCTIONS}],
+            },
+        }
+    )
+
+    adapter = CodexAdapter()
+    chat = adapter.project_chat(event)
+    projection = adapter.project_event(event)
+
+    assert chat is not None
+    assert chat.role == "user"
+    assert "Todo: codex system prompt bug修复" in chat.body
+    assert "System language for agent response" not in chat.body
+    assert "AGENTS.md instructions" not in chat.body
+    assert "Global Codex Agent Notes" not in chat.body
+    assert projection.tone == "user-input"
+    assert "AGENTS.md instructions" not in projection.body
 
 
 def test_codex_storage_keeps_managed_per_window_home() -> None:
@@ -187,6 +235,87 @@ def test_codex_projects_event_msg_as_duplicate_candidate() -> None:
     assert chat.body == "done"
     assert chat.is_canonical is False
     assert chat.is_duplicate_candidate is True
+
+
+def test_codex_projects_sidechain_subagent_call_and_result() -> None:
+    adapter = CodexAdapter()
+    call_event = make_event(
+        {
+            "raw_type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "isSidechain": True,
+                "agentId": "subagent-1",
+                "subagent": {"toolUseId": "call-subagent-1"},
+                "content": [{"type": "input_text", "text": "Return exactly: 1"}],
+            },
+        }
+    )
+    result_event = make_event(
+        {
+            "raw_type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "isSidechain": True,
+                "agentId": "subagent-1",
+                "subagent": {"toolUseId": "call-subagent-1"},
+                "message": {"role": "assistant", "content": [{"type": "output_text", "text": "1"}]},
+            },
+        }
+    )
+
+    call_projection = adapter.project_event(call_event)
+    call_chat = adapter.project_chat(call_event)
+    result_projection = adapter.project_event(result_event)
+    result_chat = adapter.project_chat(result_event)
+
+    assert call_projection.agent_message_type == "subagent_call"
+    assert call_projection.subagent_id == "subagent-1"
+    assert call_projection.subagent_tool_use_id == "call-subagent-1"
+    assert call_projection.target_session_source_id == "agent-subagent-1"
+    assert call_chat is not None
+    assert call_chat.agent_message_type == "subagent_call"
+    assert call_chat.target_session_source_id == "agent-subagent-1"
+    assert result_projection.agent_message_type == "subagent_result"
+    assert result_projection.subagent_id == "subagent-1"
+    assert result_projection.subagent_tool_use_id == "call-subagent-1"
+    assert result_projection.target_session_source_id == "agent-subagent-1"
+    assert result_chat is not None
+    assert result_chat.agent_message_type == "subagent_result"
+    assert result_chat.target_session_source_id == "agent-subagent-1"
+
+
+def test_codex_projects_nested_message_sidechain_subagent_result() -> None:
+    adapter = CodexAdapter()
+    event = make_event(
+        {
+            "raw_type": "response_item",
+            "payload": {
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "1"}],
+                },
+                "isSidechain": True,
+                "agentId": "subagent-1",
+                "subagent": {"toolUseId": "call-subagent-1"},
+            },
+        }
+    )
+
+    chat = adapter.project_chat(event)
+    projection = adapter.project_event(event)
+    state = adapter.subagent_state(event)
+
+    assert chat is not None
+    assert chat.agent_message_type == "subagent_result"
+    assert chat.target_session_source_id == "agent-subagent-1"
+    assert projection.agent_message_type == "subagent_result"
+    assert projection.target_session_source_id == "agent-subagent-1"
+    assert state.is_sidechain is True
+    assert state.is_result is True
 
 
 def test_codex_projects_tool_call_detail() -> None:

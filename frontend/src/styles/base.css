@@ -1,0 +1,121 @@
+body {
+  --skin-canvas: #0d1117;
+  --skin-workspace: #0d1117;
+  --skin-panel: #161b22;
+  --skin-panel-raised: #1c2128;
+  --skin-panel-soft: #22272e;
+  --skin-border: #30363d;
+  --skin-border-soft: #30363d;
+  --skin-text: #c9d1d9;
+  --skin-text-strong: #c9d1d9;
+  --skin-muted: #8b949e;
+  --skin-accent: #38bdf8;
+  --skin-accent-strong: #075985;
+  --skin-accent-soft: #082f49;
+  --skin-accent-text: #e0f2fe;
+  --skin-danger: #ef4444;
+  --skin-danger-soft: #450a0a;
+  --skin-success: #22c55e;
+  --skin-warning: #f59e0b;
+  --skin-overlay: rgba(2, 6, 23, 0.72);
+  --skin-shadow: rgb(0 0 0 / 45%);
+  --skin-radius: 8px;
+  --scrollbar-size: 10px;
+  --scrollbar-radius: 999px;
+  --scrollbar-track: transparent;
+  --scrollbar-track-hover: color-mix(in srgb, var(--skin-panel) 68%, transparent);
+  --scrollbar-thumb: color-mix(in srgb, var(--skin-border) 72%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--skin-accent) 40%, var(--skin-border));
+  --scrollbar-thumb-active: color-mix(in srgb, var(--skin-accent) 68%, var(--skin-text));
+  margin: 0;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--skin-canvas);
+  color: var(--skin-text);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+:where(body, body *) {
+  scrollbar-color: transparent transparent;
+  scrollbar-width: thin;
+}
+
+.scrollbars-active {
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+:where(body, body *)::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+:where(body, body *)::-webkit-scrollbar-track {
+  border-radius: var(--scrollbar-radius);
+  background: var(--scrollbar-track);
+}
+
+:where(body, body *)::-webkit-scrollbar-track:hover {
+  background: transparent;
+}
+
+:where(body, body *)::-webkit-scrollbar-thumb {
+  min-width: 36px;
+  min-height: 36px;
+  border: 2px solid transparent;
+  border-radius: var(--scrollbar-radius);
+  background: transparent;
+  background-clip: padding-box;
+}
+
+:where(body, body *)::-webkit-scrollbar-thumb:hover {
+  background: transparent;
+  background-clip: padding-box;
+}
+
+:where(body, body *)::-webkit-scrollbar-thumb:active {
+  background: transparent;
+  background-clip: padding-box;
+}
+
+.scrollbars-active::-webkit-scrollbar-track:hover {
+  background: var(--scrollbar-track-hover);
+}
+
+.scrollbars-active::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+.scrollbars-active::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
+.scrollbars-active::-webkit-scrollbar-thumb:active {
+  background: var(--scrollbar-thumb-active);
+  background-clip: padding-box;
+}
+
+:where(body, body *)::-webkit-scrollbar-button {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+:where(body, body *)::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}

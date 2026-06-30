@@ -1,6 +1,6 @@
 import pytest
 
-from app.repositories.folders import split_folder_path
+from app.domain.folders import split_folder_path
 
 
 def test_split_folder_path_handles_rooted_path():

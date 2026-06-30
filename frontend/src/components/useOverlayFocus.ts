@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 
 type OverlayFocusOptions<T extends HTMLElement> = {
   isOpen: boolean;
@@ -7,6 +7,8 @@ type OverlayFocusOptions<T extends HTMLElement> = {
   initialFocusSelector?: string;
   preserveExistingFocus?: boolean;
 };
+
+const overlayEscapeStack: object[] = [];
 
 function containsActiveElement(element: HTMLElement): boolean {
   const activeElement = document.activeElement;
@@ -34,6 +36,12 @@ export function useOverlayFocus<T extends HTMLElement>({
   initialFocusSelector,
   preserveExistingFocus = false
 }: OverlayFocusOptions<T>): void {
+  const onEscapeRef = useRef(onEscape);
+
+  useEffect(() => {
+    onEscapeRef.current = onEscape;
+  }, [onEscape]);
+
   useEffect(() => {
     if (!isOpen) {
       return;
@@ -54,21 +62,34 @@ export function useOverlayFocus<T extends HTMLElement>({
   }, [initialFocusSelector, isOpen, preserveExistingFocus, ref]);
 
   useEffect(() => {
-    if (!isOpen || onEscape === undefined) {
+    if (!isOpen) {
       return;
     }
 
+    const stackEntry = {};
+    overlayEscapeStack.push(stackEntry);
+
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      if (overlayEscapeStack[overlayEscapeStack.length - 1] !== stackEntry) {
         return;
       }
 
       event.preventDefault();
       event.stopPropagation();
-      onEscape(event);
+      onEscapeRef.current?.(event);
     };
 
     window.addEventListener("keydown", handleKeyDown, { capture: true });
-    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [isOpen, onEscape]);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, { capture: true });
+      const index = overlayEscapeStack.indexOf(stackEntry);
+      if (index >= 0) {
+        overlayEscapeStack.splice(index, 1);
+      }
+    };
+  }, [isOpen]);
 }

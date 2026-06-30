@@ -102,18 +102,18 @@ describe("OnboardingTour", () => {
     const onStepAction = renderTour();
 
     act(() => {
-      buttonWithText("下一步").click();
+      buttonWithText("Next").click();
     });
 
     expect(container?.textContent).toContain("Registration key");
     expect(onStepAction).toHaveBeenLastCalledWith("remote-registration");
 
     act(() => {
-      buttonWithText("完成").click();
+      buttonWithText("Finish").click();
     });
 
     expect(window.localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("true");
-    expect(container?.textContent).not.toContain("新手引导");
+    expect(container?.textContent).not.toContain("Onboarding");
     expect(container?.textContent).not.toContain("Registration key");
   });
 
@@ -121,9 +121,9 @@ describe("OnboardingTour", () => {
     renderTour();
 
     act(() => {
-      buttonWithText("跳过").click();
+      buttonWithText("Skip").click();
     });
-    expect(container?.textContent).not.toContain("新手引导");
+    expect(container?.textContent).not.toContain("Onboarding");
 
     act(() => {
       window.dispatchEvent(new Event("web-terminal-acp:start-onboarding"));
@@ -137,12 +137,12 @@ describe("OnboardingTour", () => {
     renderTour();
 
     act(() => {
-      buttonWithText("下一步").click();
+      buttonWithText("Next").click();
     });
 
-    expect(container?.textContent).toContain("进入路径");
+    expect(container?.textContent).toContain("Path");
     expect(container?.textContent).toContain("Settings -> Client registration");
-    expect(container?.textContent).toContain("快捷键");
+    expect(container?.textContent).toContain("Shortcut");
     expect(container?.textContent).toContain("Alt+,");
   });
 });

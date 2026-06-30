@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef } from "react";
 
+import { useI18n } from "../i18n";
 import type { TerminalNotification } from "../terminalNotifications";
+import { UiIcon } from "./UiIcon";
 import { useOverlayFocus } from "./useOverlayFocus";
 
 type NotificationCenterProps = {
@@ -20,6 +22,7 @@ export function NotificationCenter({
   onDeleteNotification,
   onClearNotifications
 }: NotificationCenterProps) {
+  const { t } = useI18n();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const unreadCount = notifications.filter((notification) => !notification.read).length;
   const handleEscape = useCallback(() => {
@@ -57,27 +60,40 @@ export function NotificationCenter({
 
   return (
     <div className="notification-center-backdrop" role="presentation">
-      <div ref={panelRef} className="notification-center" role="dialog" aria-modal="true" aria-label="通知中心">
+      <div ref={panelRef} className="notification-center" role="dialog" aria-modal="true" aria-label={t("notifications.center")}>
         <div className="notification-center-header">
           <div>
-            <h2>通知中心</h2>
+            <h2>{t("notifications.center")}</h2>
             <p className="muted">
-              {unreadCount > 0 ? `${unreadCount} 条未读` : "暂无未读通知"}
+              {unreadCount > 0 ? t("notifications.unread", { count: unreadCount }) : t("notifications.noUnread")}
             </p>
           </div>
           <div className="notification-center-actions">
-            <button type="button" disabled={notifications.length === 0} onClick={onClearNotifications}>
-              清空全部
+            <button
+              type="button"
+              className="ui-icon-button"
+              disabled={notifications.length === 0}
+              aria-label={t("notifications.clearAll")}
+              title={t("notifications.clearAll")}
+              onClick={onClearNotifications}
+            >
+              <UiIcon name="trash" />
             </button>
-            <button type="button" onClick={onClose}>
-              关闭
+            <button
+              type="button"
+              className="ui-icon-button"
+              aria-label={t("notifications.close")}
+              title={t("notifications.close")}
+              onClick={onClose}
+            >
+              <UiIcon name="x" />
             </button>
           </div>
         </div>
 
         {notifications.length === 0 ? (
           <p className="notification-center-empty">
-            Agent 任务完成后会在这里显示通知；可在设置中开启系统桌面通知。
+            {t("notifications.empty")}
           </p>
         ) : (
           <ul className="notification-center-list">
@@ -93,7 +109,11 @@ export function NotificationCenter({
                 >
                   <span className="notification-item-title">{notification.windowTitle}</span>
                   <span className="notification-item-body">
-                    {notification.status === "ABORTED" ? "Agent 可能已中断" : "Agent 任务已完成"}
+                    {notification.status === "ABORTED"
+                      ? t("notifications.body.aborted")
+                      : notification.status === "FAILED"
+                        ? t("notifications.body.failed")
+                        : t("notifications.body.finished")}
                   </span>
                   <span className="notification-item-time">
                     {new Date(notification.completedAt).toLocaleString()}
@@ -102,11 +122,11 @@ export function NotificationCenter({
                 <button
                   type="button"
                   className="notification-item-delete"
-                  aria-label={`删除通知 ${notification.windowTitle}`}
-                  title="删除通知"
+                  aria-label={t("notifications.deleteNamed", { title: notification.windowTitle })}
+                  title={t("notifications.delete")}
                   onClick={() => onDeleteNotification(notification)}
                 >
-                  <TrashIcon />
+                  <UiIcon name="trash" className="notification-trash-icon" />
                 </button>
               </li>
             ))}
@@ -126,13 +146,20 @@ export function NotificationBellButton({
   isOpen: boolean;
   onClick: () => void;
 }) {
+  const { t } = useI18n();
+  const className = [
+    "notification-bell",
+    isOpen ? "active" : "",
+    unreadCount > 0 ? "unread" : ""
+  ].filter(Boolean).join(" ");
+
   return (
     <button
       type="button"
-      className={isOpen ? "notification-bell active" : "notification-bell"}
+      className={className}
       data-onboarding-id="notification-bell"
       aria-expanded={isOpen}
-      aria-label={unreadCount > 0 ? `通知中心，${unreadCount} 条未读` : "通知中心"}
+      aria-label={unreadCount > 0 ? t("notifications.bellUnread", { count: unreadCount }) : t("notifications.center")}
       onClick={onClick}
     >
       <NotificationBellIcon />
@@ -142,11 +169,13 @@ export function NotificationBellButton({
 }
 
 export function TerminalUnreadDot({ visible }: { visible: boolean }) {
+  const { t } = useI18n();
+
   if (!visible) {
     return null;
   }
 
-  return <span className="terminal-unread-dot" aria-label="有新通知" />;
+  return <span className="terminal-unread-dot" aria-label={t("notifications.new")} />;
 }
 
 function NotificationBellIcon() {
@@ -163,26 +192,6 @@ function NotificationBellIcon() {
       <path d="M18 8a6 6 0 0 0-12 0c0 6.2-2.2 7.3-3 8h18c-.8-.7-3-1.8-3-8Z" />
       <path d="M10 20a2.4 2.4 0 0 0 4 0" />
       <path className="notification-bell-shine" d="M19.4 3.6 21 2m.2 5h-2.1" />
-    </svg>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg
-      className="notification-trash-icon"
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M4 7h16" />
-      <path d="M10 11v6" />
-      <path d="M14 11v6" />
-      <path d="M6 7l1 13h10l1-13" />
-      <path d="M9 7V4h6v3" />
     </svg>
   );
 }

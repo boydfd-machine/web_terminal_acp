@@ -1,0 +1,1240 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ACAS UI Spec Renderer</title>
+  <style>
+    :root {
+      --bg: #f7f5f2;
+      --panel: #fffdfa;
+      --panel-strong: #ffffff;
+      --ink: #1a1c1e;
+      --muted: #6c7278;
+      --line: #ddd6cc;
+      --line-strong: #c8bfb2;
+      --accent: #b8422e;
+      --accent-soft: #f6e5df;
+      --ok: #1f6b57;
+      --ok-soft: #e3f2ec;
+      --warn: #a66a00;
+      --warn-soft: #fff2d6;
+      --shadow: 0 18px 42px rgba(26, 28, 30, 0.08);
+      font-family: Inter, "Public Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); }
+    main { min-width: 360px; padding: 24px; }
+    h1, h2, h3, h4 { margin: 0; line-height: 1.2; }
+    h1 { font-size: clamp(28px, 4vw, 44px); letter-spacing: -0.03em; }
+    h2 { font-size: 20px; margin-bottom: 12px; }
+    h3 { font-size: 16px; margin-bottom: 8px; }
+    h4 { font-size: 13px; color: var(--muted); margin: 12px 0 6px; text-transform: uppercase; letter-spacing: 0.04em; }
+    p { margin: 0 0 10px; line-height: 1.55; }
+    ul, ol { margin: 8px 0 0; padding-left: 20px; }
+    li { margin: 4px 0; line-height: 1.45; }
+    code { background: #f4eee6; border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px; }
+    iframe { display: block; }
+
+    .shell { display: grid; gap: 16px; width: min(92vw, 1680px); margin: 0 auto; }
+    .panel, .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+    .top { padding: 20px 24px; display: grid; gap: 10px; }
+    .summary { color: var(--muted); font-size: 14px; max-width: 980px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; }
+    .lang-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
+    .lang-controls a { border: 1px solid var(--line); border-radius: 999px; padding: 4px 8px; color: var(--ink); text-decoration: none; background: #fff; }
+    .lang-controls a.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+    .current-tabs { display: grid; gap: 14px; }
+    .tab-toggle { position: absolute; opacity: 0; pointer-events: none; }
+    .tab-labels { display: flex; flex-wrap: wrap; gap: 8px; }
+    .tab-label { border: 1px solid var(--line); border-radius: 999px; padding: 8px 12px; background: #fff; color: var(--muted); cursor: pointer; font-weight: 700; }
+    .tab-panel { display: none; }
+    #current-tab-detail-design:checked ~ .tab-labels label[for="current-tab-detail-design"],
+    #current-tab-global-design:checked ~ .tab-labels label[for="current-tab-global-design"] { background: var(--ink); color: #fff; border-color: var(--ink); }
+    #current-tab-detail-design:checked ~ .tab-panels #detail-design-panel,
+    #current-tab-global-design:checked ~ .tab-panels #global-design-panel { display: block; }
+    .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+    .three { display: grid; grid-template-columns: 270px minmax(0, 1fr) 340px; gap: 14px; align-items: start; }
+    .page-layout { display: grid; grid-template-columns: 280px minmax(0, 1fr) 360px; gap: 14px; align-items: start; }
+    .ia-current-shell { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 430px); gap: 16px; align-items: start; }
+    .preview-stage { display: grid; gap: 12px; padding: 16px; }
+    .preview-bar { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+    .page-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+    .page-tabs button { border: 1px solid var(--line-strong); background: var(--panel-strong); border-radius: 6px; padding: 8px 11px; color: var(--ink); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+    .page-tabs button.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+    .open-link { border: 1px solid var(--line-strong); background: var(--panel-strong); border-radius: 6px; padding: 8px 11px; color: var(--ink); text-decoration: none; font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .route-panel { position: sticky; top: 16px; display: grid; gap: 12px; }
+    .ia-flow { display: grid; gap: 8px; }
+    .ia-node { display: block; border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: var(--panel-strong); color: var(--ink); text-decoration: none; }
+    .ia-node.active { border-color: var(--ink); background: #f7f2ea; box-shadow: inset 0 0 0 1px var(--ink); }
+    .ia-node strong { display: block; font-size: 13px; }
+    .ia-node span { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; overflow-wrap: anywhere; }
+    .ia-arrow { color: var(--muted); text-align: center; font-size: 12px; font-weight: 800; }
+    .route-dag { border: 1px solid var(--line); border-radius: 8px; background: linear-gradient(180deg, #fffdfa, #fbf7ef); overflow: hidden; }
+    .route-dag svg { display: block; width: 100%; height: auto; }
+    .route-actions { display: grid; gap: 6px; margin-top: 8px; }
+    .route-actions button { border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; background: var(--panel-strong); color: var(--ink); text-align: left; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+    .route-actions button:hover { border-color: var(--accent); color: var(--accent); }
+    .dag-hit { fill: none; stroke: transparent; stroke-width: 18; pointer-events: stroke; cursor: pointer; }
+    .dag-edge { fill: none; stroke: #5a626a; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 10 8; animation: routeFlow 1.5s linear infinite; cursor: pointer; transition: stroke .15s, stroke-width .15s, opacity .15s, filter .15s; pointer-events: stroke; }
+    .dag-edge.back { stroke: var(--accent); stroke-dasharray: 6 7; }
+    .dag-edge:hover, .dag-edge.hover { stroke: var(--accent); stroke-width: 4; filter: drop-shadow(0 0 5px rgba(184, 66, 46, .25)); }
+    .dag-edge.dim, .dag-label.dim, .dag-node.dim { opacity: .28; }
+    .dag-node { cursor: pointer; }
+    .dag-node rect { fill: #fff; stroke: var(--line-strong); stroke-width: 1.2; rx: 8; transition: stroke .15s, fill .15s, filter .15s; }
+    .dag-node text { fill: var(--ink); font-size: 12px; font-weight: 800; }
+    .dag-node .dag-sub { fill: var(--muted); font-size: 10px; font-weight: 700; }
+    .dag-node.active rect { stroke: var(--ink); fill: #f7f2ea; filter: drop-shadow(0 8px 12px rgba(26, 28, 30, .12)); }
+    .dag-node.hover rect { stroke: var(--accent); fill: #fff7f1; }
+    .dag-label { pointer-events: auto; cursor: pointer; transition: opacity .15s; }
+    .dag-label rect { fill: #fffdfa; stroke: var(--line); rx: 6; }
+    .dag-label text { fill: #4a5158; font-size: 10px; font-weight: 700; }
+    .dag-marker { fill: #5a626a; }
+    .dag-marker.back { fill: var(--accent); }
+    @keyframes routeFlow { to { stroke-dashoffset: -36; } }
+    .cards { display: grid; gap: 12px; }
+    .card { padding: 14px; overflow: hidden; }
+    details.card summary { cursor: pointer; list-style-position: inside; }
+    details.card summary h2 { display: inline; margin-left: 4px; }
+    details.card[open] summary { margin-bottom: 12px; }
+    .detail-section { border-top: 1px solid var(--line); padding-top: 10px; }
+    .detail-section summary { cursor: pointer; color: var(--ink); font-size: 13px; font-weight: 800; }
+    .detail-section[open] summary { margin-bottom: 8px; }
+    .contract-block { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: var(--panel-strong); margin-top: 8px; }
+    .contract-block h4 { margin-top: 0; }
+    .card.compact { box-shadow: none; background: var(--panel-strong); }
+    .card.highlight { border-left: 4px solid var(--accent); }
+    .card.ok { border-left: 4px solid var(--ok); background: linear-gradient(90deg, var(--ok-soft), var(--panel) 28%); }
+    .card.warn { border-left: 4px solid var(--warn); background: linear-gradient(90deg, var(--warn-soft), var(--panel) 28%); }
+    .empty, .waiting { color: var(--muted); padding: 18px; }
+    .waiting { max-width: 720px; margin: 48px auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+
+    .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+    .chip { border: 1px solid var(--line); border-radius: 999px; padding: 5px 9px; color: var(--muted); background: #fbf8f3; font-size: 12px; }
+    .chip.strong { color: var(--ink); border-color: var(--line-strong); font-weight: 700; }
+    .pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 9px; font-size: 12px; font-weight: 700; }
+    .pill.ok { color: var(--ok); background: var(--ok-soft); }
+    .pill.warn { color: var(--warn); background: var(--warn-soft); }
+
+    .table { display: grid; border-top: 1px solid var(--line); margin-top: 8px; }
+    .row { display: grid; grid-template-columns: minmax(130px, 180px) minmax(0, 1fr); border-bottom: 1px solid var(--line); }
+    .row div { padding: 9px; font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+    .row div:first-child { background: #f5f0e8; color: var(--muted); font-weight: 700; }
+    .matrix-row { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+
+    .style-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+    .style-card { display: grid; gap: 8px; }
+    .style-frame { width: 100%; height: 190px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+    .option-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 12px; }
+    .proposal-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 12px; }
+    .preview { width: 100%; height: 360px; border: 1px solid var(--line); border-radius: 8px; background: white; margin-top: 10px; }
+    .mini-preview { width: 100%; height: 210px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+    .focused-preview { width: 100%; height: 620px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+    .tree { position: sticky; top: 16px; }
+    .tree-list { list-style: none; margin: 6px 0 0; padding: 0; }
+    .tree-item { display: block; width: 100%; border: 1px solid var(--line); background: white; border-radius: 8px; padding: 9px; margin: 6px 0; color: var(--ink); }
+    .tree .group { margin-top: 12px; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+    .token-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+    .token { border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: white; }
+    .token strong { display: block; font-size: 12px; color: var(--muted); }
+    .token span { overflow-wrap: anywhere; }
+    .visual-specimen { display: grid; gap: 14px; font-family: var(--vs-font), Inter, system-ui, sans-serif; color: var(--vs-primary); }
+    .specimen-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 20px; border: 1px solid var(--vs-line); border-radius: 12px; background: var(--vs-surface); box-shadow: var(--shadow); }
+    .specimen-hero p { color: var(--vs-secondary); }
+    .specimen-eyebrow { margin: 0 0 6px; color: var(--vs-accent); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; }
+    .specimen-title { margin: 0 0 8px; font-size: 28px; letter-spacing: 0; line-height: 1.15; }
+    .specimen-action { border: 0; border-radius: 8px; padding: 10px 14px; background: var(--vs-accent); color: var(--vs-surface); font-weight: 800; }
+    .specimen-secondary { border: 1px solid var(--vs-line); border-radius: 8px; padding: 10px 14px; background: var(--vs-surface); color: var(--vs-primary); font-weight: 800; }
+    .swatch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+    .swatch { min-height: 94px; border: 1px solid var(--vs-line); border-radius: 10px; overflow: hidden; background: var(--vs-surface); }
+    .swatch-color { height: 48px; border-bottom: 1px solid rgba(0,0,0,.08); }
+    .swatch-body { padding: 8px; }
+    .swatch-body strong { display: block; font-size: 12px; color: var(--vs-primary); }
+    .swatch-body span { font-size: 12px; color: var(--vs-secondary); overflow-wrap: anywhere; }
+    .specimen-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(260px, .9fr); gap: 12px; }
+    .specimen-card { border: 1px solid var(--vs-line); border-radius: 10px; padding: 14px; background: var(--vs-surface); }
+    .specimen-card.accented { border-left: 4px solid var(--vs-accent); }
+    .specimen-row { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--vs-line); color: var(--vs-secondary); }
+    .specimen-row:last-child { border-bottom: 0; }
+    .specimen-chip { display: inline-flex; border-radius: 999px; padding: 4px 8px; color: var(--vs-surface); background: var(--vs-success); font-size: 12px; font-weight: 800; }
+    .specimen-chip.warn { background: var(--vs-warning); }
+    .specimen-chip.error { background: var(--vs-error); }
+
+    @media (max-width: 1100px) {
+      main { padding: 16px; }
+      .grid, .three, .page-layout, .ia-current-shell, .specimen-grid, .specimen-hero { grid-template-columns: 1fr; }
+      .tree, .route-panel { position: static; }
+      .preview-bar { display: grid; }
+    }
+  </style>
+</head>
+<body>
+  <main id="root"><div class="waiting">正在等待 ACAS UI Spec 工件数据...</div></main>
+  <script>
+    (function () {
+      'use strict';
+
+      var root = document.getElementById('root');
+      var demoFiles = {
+        raw: 'demo-ui-spec-raw.json',
+        exploration: 'demo-ui-spec-exploration.json',
+        current: 'demo-ui-spec-current.json'
+      };
+      var chromeText = {
+        zh: {
+          languageLabel: '语言',
+          waiting: '正在等待 ACAS UI Spec 工件数据...',
+          unableToRender: '无法渲染 UI Spec。',
+          noReferences: '没有提供引用。',
+          noEntries: '没有记录条目。',
+          noStructuredDetails: '没有结构化详情。',
+          noData: '没有数据。',
+          noTokenSummary: '没有 token 摘要。',
+          previewUnavailable: '预览不可用：无效路径。',
+          rawTitle: 'UI Spec 原始输入',
+          rawSummary: 'raw_inputs 会在选择 UI 设计备选方案前冻结已评审上游输入、视觉风格就绪度、提取的 UI 信号、假设和证据。',
+          sourceRefs: '来源引用',
+          inputReadiness: '输入就绪度',
+          scopeBoundary: '范围边界',
+          visualStyleGate: '视觉风格门禁',
+          extractedSignals: '提取的信号',
+          assumptions: '假设',
+          evidenceRefs: '证据引用',
+          sourceRefsHeading: '来源引用',
+          implications: '影响',
+          risks: '风险',
+          ready: '就绪',
+          blocked: '阻塞',
+          explorationTitle: 'UI Spec 探索评审',
+          explorationSummary: 'exploration_review 会在选择一个 Current UI Spec 前比较全局视觉风格选项、UI Spec 备选方案、局部高保真提案、风险和有边界的评审问题。',
+          globalVisualStyles: '全局视觉风格候选 · globalVisualStyleOptions',
+          uiSpecAlternatives: 'UI Spec 备选方案 · uiSpecOptions',
+          localHiFiProposals: '局部高保真提案 · localHiFiProposals',
+          explorationRecommendation: '探索建议',
+          reviewQuestions: '评审问题',
+          openRisks: '开放风险',
+          tradeoffs: '取舍',
+          accessibilityNotes: '无障碍说明',
+          uiArchitecture: 'UI 架构',
+          pageSpecs: '页面规格 · pageSpecs',
+          componentStrategy: '组件策略',
+          stateCoverage: '状态覆盖',
+          accessibilityCoverage: '无障碍覆盖',
+          traceabilityCoverage: '可追溯性覆盖',
+          changes: '变更',
+          validationTasks: '验证任务',
+          affects: '影响范围',
+          options: '选项',
+          currentTitle: 'UI Spec 当前版本',
+          currentSummary: 'current_ui_spec 先呈现信息架构、页面地图和当前页面高保真，再把跨页面视觉规则单独收纳为全局规范。',
+          globalDesignTab: '视觉规范',
+          detailDesignTab: '信息架构与页面',
+          uiObjectTree: 'UI 对象树',
+          workspaces: '工作区',
+          pages: '页面',
+          pageMap: '页面地图',
+          selectedPageContract: '当前页面契约',
+          currentPagePreview: '页面预览',
+          sharedComponentRules: '共享组件视觉规则',
+          supportingContracts: '支撑契约',
+          reviewRecord: '评审记录',
+          implementationNotes: '实现注意事项',
+          routeMap: '页面路径',
+          openPreview: '打开页面',
+          components: '组件',
+          componentSpecs: '组件规格 · componentSpecs',
+          visualSystem: '视觉系统 · visualSystem',
+          tokenSummary: 'Token 摘要',
+          applicationRules: '应用规则',
+          interactionSpecs: '交互规格 · interactionSpecs',
+          stateSpecs: '状态规格 · stateSpecs',
+          traceability: '可追溯性 · traceabilityMatrix',
+          decisionTrace: '决策追踪',
+          dataSources: '数据来源',
+          layout: '布局',
+          states: '状态',
+          interactions: '交互',
+          accessibility: '无障碍',
+          variants: '变体',
+          tokenRefs: 'Token 引用',
+          keyboardBehavior: '键盘行为',
+          sourceFlowRefs: '来源流程引用',
+          upstream: '上游',
+          downstream: '下游',
+          selectedPage: '当前页面',
+          selectedStyle: '通过 ?style 选中',
+          noGlobalStyleNeeded: '不需要全局风格探索；已存在已评审视觉系统。',
+          noUiSpecOptions: '没有记录 UI Spec 选项。',
+          noHiFiProposals: '没有记录局部高保真提案。',
+          noQuestions: '没有记录澄清问题。',
+          noBeforePreview: '没有前态预览。',
+          noAfterPreview: '没有后态预览。',
+          uiPreview: 'UI 预览',
+          stylePreview: '风格预览',
+          pagePreview: '页面预览',
+          beforePreview: '前态预览',
+          afterPreview: '后态预览',
+          inputFallback: '输入',
+          sourceFallback: '来源',
+          signalFallback: '信号',
+          typeFallback: '类型',
+          entryFallback: '条目',
+          styleOption: '风格选项',
+          page: '页面',
+          uiSpecOption: 'UI Spec 选项',
+          change: '变更',
+          highFiProposal: '高保真提案',
+          option: '选项',
+          reviewQuestion: '评审问题',
+          required: '必填',
+          recommendedPrefix: '建议：',
+          workspace: '工作区',
+          component: '组件',
+          interaction: '交互',
+          state: '状态',
+          uiObject: 'UI 对象',
+          resourceMissing: '未在 acas-render-resource 消息中找到 UI Spec 资源。',
+          loadDemoError: '无法加载 demo 数据：'
+        },
+        en: {
+          languageLabel: 'Language',
+          waiting: 'Waiting for ACAS UI Spec artifact data...',
+          unableToRender: 'Unable to render UI Spec.',
+          noReferences: 'No references provided.',
+          noEntries: 'No entries recorded.',
+          noStructuredDetails: 'No structured details.',
+          noData: 'No data.',
+          noTokenSummary: 'No token summary.',
+          previewUnavailable: 'Preview unavailable: invalid path.',
+          rawTitle: 'UI Spec Raw',
+          rawSummary: 'raw_inputs freezes reviewed upstream inputs, visual-style readiness, extracted UI signals, assumptions, and evidence before UI design alternatives are chosen.',
+          sourceRefs: 'Source refs',
+          inputReadiness: 'Input readiness',
+          scopeBoundary: 'Scope boundary',
+          visualStyleGate: 'Visual style gate',
+          extractedSignals: 'Extracted signals',
+          assumptions: 'Assumptions',
+          evidenceRefs: 'Evidence refs',
+          sourceRefsHeading: 'Source refs',
+          implications: 'Implications',
+          risks: 'Risks',
+          ready: 'ready',
+          blocked: 'blocked',
+          explorationTitle: 'UI Spec Exploration',
+          explorationSummary: 'exploration_review compares globalVisualStyleOptions, uiSpecOptions, localHiFiProposals, risks, and bounded review questions before one Current UI Spec is selected.',
+          globalVisualStyles: 'Global visual style candidates · globalVisualStyleOptions',
+          uiSpecAlternatives: 'UI Spec alternatives · uiSpecOptions',
+          localHiFiProposals: 'Local high-fidelity proposals · localHiFiProposals',
+          explorationRecommendation: 'Exploration recommendation',
+          reviewQuestions: 'Review questions',
+          openRisks: 'Open risks',
+          tradeoffs: 'Tradeoffs',
+          accessibilityNotes: 'Accessibility notes',
+          uiArchitecture: 'UI architecture',
+          pageSpecs: 'Page specs · pageSpecs',
+          componentStrategy: 'Component strategy',
+          stateCoverage: 'State coverage',
+          accessibilityCoverage: 'Accessibility coverage',
+          traceabilityCoverage: 'Traceability coverage',
+          changes: 'Changes',
+          validationTasks: 'Validation tasks',
+          affects: 'Affects',
+          options: 'Options',
+          currentTitle: 'UI Spec Current',
+          currentSummary: 'current_ui_spec presents information architecture, page map, and the focused high-fidelity page first, while global visual rules live in their own specification tab.',
+          globalDesignTab: 'Visual specification',
+          detailDesignTab: 'IA and pages',
+          uiObjectTree: 'UI object tree',
+          workspaces: 'Workspaces',
+          pages: 'Pages',
+          pageMap: 'Page map',
+          selectedPageContract: 'Selected page contract',
+          currentPagePreview: 'Page preview',
+          sharedComponentRules: 'Shared component visual rules',
+          supportingContracts: 'Supporting contracts',
+          reviewRecord: 'Review record',
+          implementationNotes: 'Implementation notes',
+          routeMap: 'Page path',
+          openPreview: 'Open page',
+          components: 'Components',
+          componentSpecs: 'Component specs · componentSpecs',
+          visualSystem: 'Visual system · visualSystem',
+          tokenSummary: 'Token summary',
+          applicationRules: 'Application rules',
+          interactionSpecs: 'Interaction specs · interactionSpecs',
+          stateSpecs: 'State specs · stateSpecs',
+          traceability: 'Traceability · traceabilityMatrix',
+          decisionTrace: 'Decision trace',
+          dataSources: 'Data sources',
+          layout: 'Layout',
+          states: 'States',
+          interactions: 'Interactions',
+          accessibility: 'Accessibility',
+          variants: 'Variants',
+          tokenRefs: 'Token refs',
+          keyboardBehavior: 'Keyboard behavior',
+          sourceFlowRefs: 'Source flow refs',
+          upstream: 'Upstream',
+          downstream: 'Downstream',
+          selectedPage: 'selected page',
+          selectedStyle: 'selected via ?style',
+          noGlobalStyleNeeded: 'No global style exploration needed; a reviewed visual system is already available.',
+          noUiSpecOptions: 'No UI Spec options recorded.',
+          noHiFiProposals: 'No local high-fidelity proposals recorded.',
+          noQuestions: 'No clarification questions recorded.',
+          noBeforePreview: 'No before preview.',
+          noAfterPreview: 'No after preview.',
+          uiPreview: 'UI preview',
+          stylePreview: 'style preview',
+          pagePreview: 'page preview',
+          beforePreview: 'Before preview',
+          afterPreview: 'After preview',
+          inputFallback: 'Input',
+          sourceFallback: 'source',
+          signalFallback: 'signal',
+          typeFallback: 'type',
+          entryFallback: 'entry',
+          styleOption: 'Style option',
+          page: 'Page',
+          uiSpecOption: 'UI Spec option',
+          change: 'change',
+          highFiProposal: 'High-fidelity proposal',
+          option: 'option',
+          reviewQuestion: 'Review question',
+          required: 'required',
+          recommendedPrefix: 'recommended: ',
+          workspace: 'Workspace',
+          component: 'Component',
+          interaction: 'Interaction',
+          state: 'State',
+          uiObject: 'UI object',
+          resourceMissing: 'No UI Spec resource found in acas-render-resource message.',
+          loadDemoError: 'Unable to load demo data: '
+        }
+      };
+      var selectedPageId = '';
+      var selectedStyleId = '';
+      var selectedPreviewParams = {};
+      var currentRenderData = null;
+      var currentLang = 'zh';
+
+      function esc(value) {
+        return String(value == null ? '' : value)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function arr(value) {
+        if (Array.isArray(value)) return value.filter(function (item) { return item != null; });
+        if (value == null || value === '') return [];
+        return [value];
+      }
+
+      function obj(value) {
+        return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+      }
+
+      function textOf(value) {
+        if (value == null || value === '') return '';
+        if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
+        return JSON.stringify(value, null, 2);
+      }
+
+      function shortText(value, max) {
+        var text = textOf(value);
+        var limit = max || 30;
+        return text.length > limit ? text.slice(0, limit - 1) + '...' : text;
+      }
+
+      function currentLanguage(value) {
+        return value === 'en' ? 'en' : 'zh';
+      }
+
+      function tr(key) {
+        return (chromeText[currentLang] && chromeText[currentLang][key]) || chromeText.zh[key] || key;
+      }
+
+      function normalizeDemoName(name) {
+        var value = String(name || '').toLowerCase().trim().replace(/_/g, '-');
+        if (value === 'raw' || value === 'raw-inputs' || value === 'raw-input' || value === 'raw_inputs') return 'raw';
+        if (value === 'exploration' || value === 'exploration-review' || value === 'exploration_review') return 'exploration';
+        if (value === 'current' || value === 'current-ui-spec' || value === 'current_ui_spec') return 'current';
+        return 'current';
+      }
+
+      function rendererPathScope() {
+        var pathname = '';
+        try {
+          pathname = String(window.location && window.location.pathname || '');
+        } catch (error) {
+          pathname = '';
+        }
+        pathname = pathname.replace(/\\/g, '/');
+        if (pathname.indexOf('/assets/') !== -1) return 'assets';
+        if (pathname.indexOf('/renderers/') !== -1) return 'renderers';
+        return 'renderers';
+      }
+
+      function resolveDemoFile(file) {
+        var value = String(file || '').trim();
+        if (!/^[A-Za-z0-9._-]+\.json$/.test(value)) return 'demo-ui-spec-current.json';
+        if (rendererPathScope() === 'assets') return value;
+        return '../' + value;
+      }
+
+      function languageHref(lang) {
+        var next = new URLSearchParams(location.search);
+        next.set('lang', currentLanguage(lang));
+        var query = next.toString();
+        return location.pathname + (query ? '?' + query : '') + location.hash;
+      }
+
+      function pageHref(pageId) {
+        var next = new URLSearchParams(location.search);
+        if (pageId) next.set('page', pageId);
+        else next.delete('page');
+        var query = next.toString();
+        return location.pathname + (query ? '?' + query : '') + location.hash;
+      }
+
+      function setSelectedPage(pageId, params) {
+        selectedPageId = String(pageId || '').trim();
+        selectedPreviewParams = obj(params);
+        var next = new URLSearchParams(location.search);
+        if (selectedPageId) next.set('page', selectedPageId);
+        else next.delete('page');
+        var query = next.toString();
+        history.replaceState(null, '', location.pathname + (query ? '?' + query : '') + location.hash);
+        if (currentRenderData) render(currentRenderData);
+      }
+
+      function resolveLocalPath(path) {
+        var value = String(path || '').trim();
+        var allowedPrefixes = ['demo-pages/', 'assets/demo-pages/'];
+        var segments;
+        var normalized;
+        var demoPath;
+
+        if (!value) return '';
+        if (/[\x00-\x1f\x7f]/.test(value)) return '';
+        if (value.indexOf('%') !== -1) return '';
+        if (value.indexOf('\\') !== -1) return '';
+        if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|\/)/i.test(value)) return '';
+        if (/^[a-z]:/i.test(value)) return '';
+        if (/[?#]/.test(value)) return '';
+
+        segments = value.split('/');
+        if (segments.some(function (segment) { return segment === '..' || segment === ''; })) return '';
+        normalized = segments.filter(function (segment) { return segment !== '.'; }).join('/');
+        if (!allowedPrefixes.some(function (prefix) { return normalized.indexOf(prefix) === 0; })) return '';
+
+        if (normalized.indexOf('assets/demo-pages/') === 0) demoPath = normalized.slice('assets/'.length);
+        if (normalized.indexOf('demo-pages/') === 0) demoPath = normalized;
+        if (!demoPath) return '';
+
+        if (rendererPathScope() === 'assets') return demoPath;
+        return '../' + demoPath;
+      }
+
+      function previewPlaceholder(label) {
+        return '<p class="empty">' + esc(tr('previewUnavailable')) + (label ? ' ' + esc(label) : '') + '</p>';
+      }
+
+      function previewFrame(className, title, path, label) {
+        var src = resolveLocalPath(path);
+        if (!src) return previewPlaceholder(label);
+        return '<iframe class="' + esc(className) + '" title="' + esc(title || tr('uiPreview')) + '" src="' + esc(src) + '" sandbox="" referrerpolicy="no-referrer"></iframe>';
+      }
+
+      function previewPageSrc(page) {
+        var src = resolveLocalPath(page && page.previewFile);
+        var params;
+        if (!src) return '';
+        params = new URLSearchParams();
+        params.set('page', page.pageId || '');
+        Object.entries(obj(page.defaultParams)).forEach(function (entry) { params.set(entry[0], entry[1]); });
+        Object.entries(selectedPreviewParams).forEach(function (entry) { params.set(entry[0], entry[1]); });
+        return src + (src.indexOf('?') === -1 ? '?' : '&') + params.toString();
+      }
+
+      function previewPageFrame(className, page, label) {
+        var src = previewPageSrc(page);
+        if (!src) return previewPlaceholder(label);
+        return '<iframe class="' + esc(className) + '" title="' + esc(page.title || page.pageId || tr('uiPreview')) + '" src="' + esc(src) + '" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe>';
+      }
+
+      function chip(value, strong) {
+        if (value == null || value === '') return '';
+        return '<span class="chip' + (strong ? ' strong' : '') + '">' + esc(value) + '</span>';
+      }
+
+      function chips(values) {
+        var html = arr(values).map(function (value) {
+          return chip(typeof value === 'object' ? textOf(value) : value);
+        }).join('');
+        return html ? '<div class="chips">' + html + '</div>' : '<p class="empty">' + esc(tr('noReferences')) + '</p>';
+      }
+
+      function list(values) {
+        var items = arr(values);
+        if (!items.length) return '<p class="empty">' + esc(tr('noEntries')) + '</p>';
+        return '<ul>' + items.map(function (item) {
+          return '<li>' + esc(textOf(item)) + '</li>';
+        }).join('') + '</ul>';
+      }
+
+      function keyValueTable(source) {
+        var entries = Object.entries(obj(source));
+        if (!entries.length) return '<p class="empty">' + esc(tr('noStructuredDetails')) + '</p>';
+        return '<div class="table">' + entries.map(function (entry) {
+          return '<div class="row"><div>' + esc(entry[0]) + '</div><div>' + esc(textOf(entry[1])) + '</div></div>';
+        }).join('') + '</div>';
+      }
+
+      function card(title, body, extraClass) {
+        return '<section class="card ' + esc(extraClass || '') + '"><h2>' + esc(title) + '</h2>' + (body || '<p class="empty">' + esc(tr('noData')) + '</p>') + '</section>';
+      }
+
+      function compactCard(title, body, extraClass) {
+        return '<article class="card compact ' + esc(extraClass || '') + '"><h3>' + esc(title) + '</h3>' + (body || '<p class="empty">' + esc(tr('noData')) + '</p>') + '</article>';
+      }
+
+      function detailsCard(title, body, extraClass, open) {
+        return '<details class="card ' + esc(extraClass || '') + '"' + (open ? ' open' : '') + '><summary><h2>' + esc(title) + '</h2></summary>' + (body || '<p class="empty">' + esc(tr('noData')) + '</p>') + '</details>';
+      }
+
+      function inlineDetails(title, body, open) {
+        return '<details class="detail-section"' + (open ? ' open' : '') + '><summary>' + esc(title) + '</summary>' + (body || '<p class="empty">' + esc(tr('noData')) + '</p>') + '</details>';
+      }
+
+      function shell(title, summary, mode, data, body) {
+        var meta = [chip(mode, true), chip(data.kind), chip(data.layer)].join('');
+        var langControls = '<div class="lang-controls"><span>' + esc(tr('languageLabel')) + '</span><a class="' + (currentLang === 'zh' ? 'active' : '') + '" data-lang="zh" href="' + esc(languageHref('zh')) + '">中文</a><a class="' + (currentLang === 'en' ? 'active' : '') + '" data-lang="en" href="' + esc(languageHref('en')) + '">English</a></div>';
+        return '<div class="shell"><section class="panel top">' + langControls + '<h1>' + esc(title) + '</h1><p class="summary">' + esc(summary) + '</p><div class="meta">' + meta + '</div></section>' + body + '</div>';
+      }
+
+      function renderObjectList(title, items, titleKey, fallbackKey) {
+        var values = arr(items);
+        if (!values.length) return card(title, '<p class="empty">' + esc(tr('noEntries')) + '</p>');
+        return card(title, values.map(function (item) {
+          var itemObj = obj(item);
+          var heading = itemObj[titleKey] || itemObj[fallbackKey] || itemObj.id || tr('entryFallback');
+          return compactCard(heading, keyValueTable(itemObj));
+        }).join(''));
+      }
+
+      function renderRaw(data) {
+        var readiness = arr(data.inputReadiness).map(function (item) {
+          var statusClass = item && item.ready ? 'ok' : 'warn';
+          var status = item && item.ready ? tr('ready') : tr('blocked');
+          return compactCard(item.artifactType || tr('inputFallback'), '<p><span class="pill ' + statusClass + '">' + esc(status) + '</span></p><p>' + esc(item.reason || '') + '</p>' + list(item.blockingIssues), statusClass);
+        }).join('');
+
+        var refs = arr(data.sourceRefs).map(function (ref) {
+          return compactCard(ref.refId || tr('sourceFallback'), '<p><strong>' + esc(ref.artifactType || '') + '</strong> · ' + esc(ref.layer || '') + ' · ' + esc(ref.status || '') + '</p><p>' + esc(ref.summary || '') + '</p>' + chips(ref.evidenceRefs));
+        }).join('');
+
+        var signals = arr(data.extractedSignals).map(function (signal) {
+          return compactCard((signal.signalId || tr('signalFallback')) + ' · ' + (signal.signalType || tr('typeFallback')), '<p>' + esc(signal.summary || '') + '</p><h4>' + esc(tr('sourceRefsHeading')) + '</h4>' + chips(signal.sourceRefs) + '<h4>' + esc(tr('implications')) + '</h4>' + list(signal.implications) + '<h4>' + esc(tr('risks')) + '</h4>' + list(signal.risks));
+        }).join('');
+
+        var gate = obj(data.visualStyleGate);
+        var gateClass = gate.status === 'reviewed' ? 'ok' : 'warn';
+        var body = '<div class="grid"><div class="cards">' +
+          card(tr('sourceRefs'), refs) +
+          card(tr('inputReadiness'), readiness) +
+          card(tr('scopeBoundary'), keyValueTable(data.scopeBoundary)) +
+          '</div><div class="cards">' +
+          card(tr('visualStyleGate'), keyValueTable(gate), gateClass) +
+          card(tr('extractedSignals'), signals) +
+          card(tr('assumptions'), list(data.openAssumptions)) +
+          card(tr('evidenceRefs'), chips(data.evidenceRefs)) +
+          '</div></div>';
+
+        return shell(tr('rawTitle'), tr('rawSummary'), 'raw_inputs', data, body);
+      }
+
+      function renderTokenSummary(tokens) {
+        var entries = Object.entries(obj(tokens));
+        if (!entries.length) return '<p class="empty">' + esc(tr('noTokenSummary')) + '</p>';
+        return '<div class="token-grid">' + entries.map(function (entry) {
+          return '<div class="token"><strong>' + esc(entry[0]) + '</strong><span>' + esc(textOf(entry[1])) + '</span></div>';
+        }).join('') + '</div>';
+      }
+
+      function cssColor(value, fallback) {
+        var text = String(value || '').trim();
+        return /^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/i.test(text) ? text : fallback;
+      }
+
+      function cssFont(value) {
+        var text = String(value || '').trim();
+        return /^[A-Za-z0-9 "'_,.-]+$/.test(text) ? text : 'Inter';
+      }
+
+      function renderColorSwatches(tokens) {
+        var values = [
+          ['primary', cssColor(tokens.primary, '#1A1C1E')],
+          ['secondary', cssColor(tokens.secondary, '#6C7278')],
+          ['accent', cssColor(tokens.accent, '#B8422E')],
+          ['neutral', cssColor(tokens.neutral, '#F7F5F2')],
+          ['surface', cssColor(tokens.surface, '#FFFDFA')],
+          ['success', cssColor(tokens.success, '#1F6B57')],
+          ['warning', cssColor(tokens.warning, '#A66A00')],
+          ['error', cssColor(tokens.error, '#B8422E')]
+        ];
+        return '<div class="swatch-grid">' + values.map(function (item) {
+          return '<div class="swatch"><div class="swatch-color" style="background:' + esc(item[1]) + '"></div><div class="swatch-body"><strong>' + esc(item[0]) + '</strong><span>' + esc(item[1]) + '</span></div></div>';
+        }).join('') + '</div>';
+      }
+
+      function renderStyleOption(style) {
+        var isSelected = selectedStyleId && style.styleId === selectedStyleId;
+        var frame = style.previewFile ? previewFrame('style-frame', (style.title || style.styleId || tr('styleOption')), style.previewFile, tr('stylePreview')) : '';
+        return '<article class="card style-card' + (isSelected ? ' highlight' : '') + '"><h3>' + esc(style.title || style.styleId || tr('styleOption')) + '</h3>' + frame + '<p>' + esc(style.rationale || '') + '</p>' + renderTokenSummary(style.tokenSummary) + '<h4>' + esc(tr('tradeoffs')) + '</h4>' + list(style.tradeoffs) + '<h4>' + esc(tr('accessibilityNotes')) + '</h4>' + list(style.accessibilityNotes) + '<div class="chips">' + chip(style.styleId, true) + chip(isSelected ? tr('selectedStyle') : '') + chip(style.designMdRef) + '</div></article>';
+      }
+
+      function renderPagePreview(page) {
+        return compactCard(page.title || page.pageId || tr('page'), '<p><code>' + esc(page.route || '') + '</code></p><p>' + esc(page.purpose || '') + '</p>' + chips(page.sourceRefs));
+      }
+
+      function renderUiSpecOption(option) {
+        var architecture = obj(option.uiArchitecture);
+        return '<article class="card"><h3>' + esc(option.title || option.optionId || tr('uiSpecOption')) + '</h3><p>' + esc(option.strategy || '') + '</p><p>' + esc(option.rationale || '') + '</p><div class="chips">' + chip(option.optionId, true) + '</div><h4>' + esc(tr('uiArchitecture')) + '</h4>' + keyValueTable(architecture) + '<h4>' + esc(tr('pageSpecs')) + '</h4><div class="cards">' + arr(option.pageSpecs).map(renderPagePreview).join('') + '</div><h4>' + esc(tr('componentStrategy')) + '</h4>' + keyValueTable(option.componentStrategy) + '<h4>' + esc(tr('stateCoverage')) + '</h4>' + list(option.stateCoverage) + '<h4>' + esc(tr('accessibilityCoverage')) + '</h4>' + list(option.accessibilityCoverage) + '<h4>' + esc(tr('traceabilityCoverage')) + '</h4>' + list(option.traceabilityCoverage) + '<h4>' + esc(tr('tradeoffs')) + '</h4>' + list(option.tradeoffs) + '</article>';
+      }
+
+      function renderLocalHiFiProposal(proposal) {
+        var before = proposal.beforePreview ? previewFrame('mini-preview', tr('beforePreview'), proposal.beforePreview, tr('beforePreview')) : '<p class="empty">' + esc(tr('noBeforePreview')) + '</p>';
+        var after = proposal.afterPreview ? previewFrame('mini-preview', tr('afterPreview'), proposal.afterPreview, tr('afterPreview')) : '<p class="empty">' + esc(tr('noAfterPreview')) + '</p>';
+        var changes = arr(proposal.changes).map(function (change) {
+          return compactCard(change.changeId || change.targetId || tr('change'), '<p><strong>' + esc(change.changeType || '') + '</strong> · ' + esc(change.targetId || '') + '</p><p>' + esc(change.summary || '') + '</p>' + chips(change.sourceRefs));
+        }).join('');
+        return '<article class="card"><h3>' + esc(proposal.proposalId || tr('highFiProposal')) + '</h3><p>' + esc(proposal.sourcePrototypePageRef || '') + '</p><div class="grid">' + before + after + '</div><h4>' + esc(tr('changes')) + '</h4><div class="cards">' + changes + '</div><h4>' + esc(tr('validationTasks')) + '</h4>' + list(proposal.validationTasks) + '</article>';
+      }
+
+      function renderQuestion(question) {
+        var options = arr(question.options).map(function (option) {
+          return compactCard(option.label || option.optionId || tr('option'), '<p>' + esc(option.description || '') + '</p>' + keyValueTable(option.impact));
+        }).join('');
+        return '<article class="card"><h3>' + esc(question.question || question.questionId || tr('reviewQuestion')) + '</h3><p>' + esc(question.whyItMatters || '') + '</p><div class="chips">' + chip(question.questionId, true) + chip(question.answerType) + chip(question.required ? tr('required') : '') + chip(question.recommendedOptionId ? tr('recommendedPrefix') + question.recommendedOptionId : '') + '</div><h4>' + esc(tr('affects')) + '</h4>' + chips(question.affects) + '<h4>' + esc(tr('options')) + '</h4><div class="cards">' + options + '</div><p>' + esc(question.recommendationReason || '') + '</p></article>';
+      }
+
+      function renderExploration(data) {
+        var styles = arr(data.globalVisualStyleOptions);
+        if (selectedStyleId) {
+          styles = styles.slice().sort(function (left, right) {
+            return (right.styleId === selectedStyleId ? 1 : 0) - (left.styleId === selectedStyleId ? 1 : 0);
+          });
+        }
+        var styleBody = styles.length ? '<div class="style-grid">' + styles.map(renderStyleOption).join('') + '</div>' : '<p class="empty">' + esc(tr('noGlobalStyleNeeded')) + '</p>';
+        var options = arr(data.uiSpecOptions);
+        var optionBody = options.length ? '<div class="option-grid">' + options.map(renderUiSpecOption).join('') + '</div>' : '<p class="empty">' + esc(tr('noUiSpecOptions')) + '</p>';
+        var proposals = arr(data.localHiFiProposals);
+        var proposalBody = proposals.length ? '<div class="proposal-grid">' + proposals.map(renderLocalHiFiProposal).join('') + '</div>' : '<p class="empty">' + esc(tr('noHiFiProposals')) + '</p>';
+        var questions = arr(data.clarificationQuestions);
+        var questionBody = questions.length ? '<div class="cards">' + questions.map(renderQuestion).join('') + '</div>' : '<p class="empty">' + esc(tr('noQuestions')) + '</p>';
+
+        var body = '<div class="cards">' +
+          card(tr('globalVisualStyles'), styleBody) +
+          card(tr('uiSpecAlternatives'), optionBody) +
+          card(tr('localHiFiProposals'), proposalBody) +
+          card(tr('explorationRecommendation'), keyValueTable({
+            recommendedStyleId: data.recommendedStyleId,
+            recommendedOptionId: data.recommendedOptionId,
+            recommendationRationale: data.recommendationRationale
+          }), 'highlight') +
+          card(tr('reviewQuestions'), questionBody) +
+          card(tr('openRisks'), list(data.openRisks), 'warn') +
+          card(tr('evidenceRefs'), chips(data.evidenceRefs)) +
+          '</div>';
+
+        return shell(tr('explorationTitle'), tr('explorationSummary'), 'exploration_review', data, body);
+      }
+
+      function renderTreeSection(label, items, getItemLabel) {
+        var values = arr(items);
+        var body = values.length ? '<ul class="tree-list">' + values.map(function (item) {
+          return '<li class="tree-item">' + esc(getItemLabel(item)) + '</li>';
+        }).join('') + '</ul>' : '<p class="empty">' + esc(tr('noEntries')) + '</p>';
+        return '<div class="group">' + esc(label) + '</div>' + body;
+      }
+
+      function renderWorkspaceTree(data) {
+        var workspaces = arr(obj(data.uiArchitecture).workspaces);
+        var pages = arr(data.pageSpecs);
+        var components = arr(data.componentSpecs);
+        var html = '<div class="tree">' +
+          renderTreeSection(tr('workspaces'), workspaces, function (workspace) { return obj(workspace).name || obj(workspace).workspaceId || tr('workspace'); }) +
+          renderTreeSection(tr('pages'), pages, function (page) { return obj(page).title || obj(page).pageId || tr('page'); }) +
+          renderTreeSection(tr('components'), components, function (component) { return obj(component).name || obj(component).componentId || tr('component'); }) +
+          '</div>';
+        return card(tr('uiObjectTree'), html);
+      }
+
+      function renderPageSpec(page) {
+        var isSelected = selectedPageId && page.pageId === selectedPageId;
+        var preview = page.previewFile ? previewFrame('preview', (page.title || page.pageId || tr('page')), page.previewFile, tr('pagePreview')) : '';
+        return '<article class="card' + (isSelected ? ' highlight' : '') + '"><h3>' + esc(page.title || page.pageId || tr('page')) + '</h3><div class="chips">' + chip(isSelected ? tr('selectedPage') : '') + '</div>' + keyValueTable({
+          pageId: page.pageId,
+          workspaceId: page.workspaceId,
+          route: page.route,
+          pageType: page.pageType,
+          purpose: page.purpose,
+          sourceFile: page.sourceFile
+        }) + preview + '<h4>' + esc(tr('sourceRefsHeading')) + '</h4>' + chips(page.sourceRefs) + '<h4>' + esc(tr('dataSources')) + '</h4>' + chips(page.dataSources) + '<h4>' + esc(tr('layout')) + '</h4>' + keyValueTable(page.layout) + '<h4>' + esc(tr('components')) + '</h4>' + chips(page.components) + '<h4>' + esc(tr('states')) + '</h4>' + chips(page.states) + '<h4>' + esc(tr('interactions')) + '</h4>' + chips(page.interactions) + '<h4>' + esc(tr('accessibility')) + '</h4>' + list(page.accessibility) + '</article>';
+      }
+
+      function renderPageMap(pages, focusedPageId) {
+        var body = arr(pages).map(function (page) {
+          var active = page.pageId === focusedPageId;
+          return compactCard(page.title || page.pageId || tr('page'), '<div class="chips">' + chip(page.pageId, true) + chip(active ? tr('selectedPage') : '') + '</div><p><code>' + esc(page.route || '') + '</code></p><p>' + esc(page.purpose || '') + '</p>');
+        }).join('');
+        return card(tr('pageMap'), body || '<p class="empty">' + esc(tr('noEntries')) + '</p>');
+      }
+
+      function findById(items, key, ids) {
+        var wanted = arr(ids).reduce(function (set, id) {
+          set[String(id)] = true;
+          return set;
+        }, {});
+        return arr(items).filter(function (item) {
+          return wanted[String(obj(item)[key] || '')];
+        });
+      }
+
+      function renderFocusedPagePreview(page) {
+        var preview = page.previewFile ? previewFrame('focused-preview', (page.title || page.pageId || tr('page')), page.previewFile, tr('pagePreview')) : previewPlaceholder(tr('pagePreview'));
+        return card(page.title || page.pageId || tr('page'), '<div class="chips">' + chip(page.pageId, true) + chip(page.pageType) + chip(page.route) + '</div><p>' + esc(page.purpose || '') + '</p>' + preview, 'highlight');
+      }
+
+      function renderFocusedPageContract(page) {
+        return card(tr('selectedPageContract'), keyValueTable({
+          pageId: page.pageId,
+          workspaceId: page.workspaceId,
+          route: page.route,
+          pageType: page.pageType,
+          purpose: page.purpose,
+          sourceFile: page.sourceFile
+        }) + '<h4>' + esc(tr('layout')) + '</h4>' + keyValueTable(page.layout) + '<h4>' + esc(tr('components')) + '</h4>' + chips(page.components) + '<h4>' + esc(tr('states')) + '</h4>' + chips(page.states) + '<h4>' + esc(tr('interactions')) + '</h4>' + chips(page.interactions) + '<h4>' + esc(tr('accessibility')) + '</h4>' + list(page.accessibility));
+      }
+
+      function renderPageSourceSummaryBody(page) {
+        return '<h4>' + esc(tr('sourceRefsHeading')) + '</h4>' + chips(page.sourceRefs) + '<h4>' + esc(tr('dataSources')) + '</h4>' + chips(page.dataSources) + '<h4>' + esc(tr('evidenceRefs')) + '</h4>' + chips(page.evidenceRefs);
+      }
+
+      function renderPageSourceSummary(page) {
+        return detailsCard(tr('evidenceRefs'), renderPageSourceSummaryBody(page));
+      }
+
+      function renderPageTabs(pages, focusedPage) {
+        return '<nav class="page-tabs">' + arr(pages).map(function (page) {
+          var active = focusedPage && page.pageId === focusedPage.pageId;
+          return '<button type="button" class="' + (active ? 'active' : '') + '" data-page="' + esc(page.pageId) + '">' + esc(page.title || page.pageId || tr('page')) + '</button>';
+        }).join('') + '</nav>';
+      }
+
+      function renderIaFlow(pages, focusedPage) {
+        var values = arr(pages);
+        if (!values.length) return '<p class="empty">' + esc(tr('noEntries')) + '</p>';
+        return '<div class="ia-flow">' + values.map(function (page, index) {
+          var active = focusedPage && page.pageId === focusedPage.pageId;
+          var node = '<a class="ia-node ' + (active ? 'active' : '') + '" href="' + esc(pageHref(page.pageId)) + '"><strong>' + esc(page.title || page.pageId || tr('page')) + '</strong><span>' + esc(page.route || page.pageId || '') + '</span><span>' + esc(page.purpose || '') + '</span></a>';
+          return node + (index < values.length - 1 ? '<div class="ia-arrow">↓</div>' : '');
+        }).join('') + '</div>';
+      }
+
+      function routeKey(from, to) {
+        return String(from || '') + '->' + String(to || '');
+      }
+
+      function routeEdges(data, pages) {
+        var architecture = obj(data.uiArchitecture);
+        var edges = arr(architecture.routeMap);
+        if (edges.length) return edges;
+        return arr(pages).slice(0, -1).map(function (page, index) {
+          return { fromPageId: page.pageId, toPageId: pages[index + 1].pageId, trigger: tr('routeMap') };
+        });
+      }
+
+      function smokePath(data, pages) {
+        var path = arr(obj(data.uiArchitecture).smokePath);
+        return path.length ? path : arr(pages).map(function (page) { return page.pageId; });
+      }
+
+      function renderRouteDag(data, pages, selected) {
+        var ids = [];
+        var path = smokePath(data, pages);
+        var edges = routeEdges(data, pages);
+        var byId = arr(pages).reduce(function (map, page) {
+          map[page.pageId] = page;
+          return map;
+        }, {});
+        var x = 58;
+        var nodeW = 236;
+        var nodeH = 60;
+        var gap = 104;
+        var w = 420;
+        var h;
+        var pos;
+        var defs;
+        var edgeHtml;
+        var nodeHtml;
+        path.concat(arr(pages).map(function (page) { return page.pageId; })).forEach(function (id) {
+          if (id && ids.indexOf(id) === -1) ids.push(id);
+        });
+        if (!ids.length) return '<p class="empty">' + esc(tr('noEntries')) + '</p>';
+        h = 36 + ids.length * gap;
+        pos = ids.reduce(function (map, id, index) {
+          map[id] = { x: x, y: 24 + index * gap, i: index };
+          return map;
+        }, {});
+        defs = '<defs><marker id="routeArrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path class="dag-marker" d="M0,0 L8,3 L0,6 Z"></path></marker><marker id="routeArrowBack" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path class="dag-marker back" d="M0,0 L8,3 L0,6 Z"></path></marker></defs>';
+        edgeHtml = edges.map(function (edge, index) {
+          var from = edge.fromPageId || edge.from;
+          var to = edge.toPageId || edge.to;
+          var a = pos[from];
+          var b = pos[to];
+          var back;
+          var marker;
+          var d;
+          var lx;
+          var ly;
+          var label;
+          if (!a || !b) return '';
+          back = b.i <= a.i;
+          marker = back ? 'routeArrowBack' : 'routeArrow';
+          if (back) {
+            var rx = 370;
+            var sx = a.x + nodeW;
+            var sy = a.y + nodeH / 2;
+            var tx = b.x + nodeW;
+            var ty = b.y + nodeH / 2;
+            d = 'M ' + sx + ' ' + sy + ' C ' + rx + ' ' + sy + ', ' + rx + ' ' + ty + ', ' + tx + ' ' + ty;
+            lx = rx - 66;
+            ly = (sy + ty) / 2 - 12;
+          } else {
+            var dsx = a.x + nodeW / 2;
+            var dsy = a.y + nodeH;
+            var dtx = b.x + nodeW / 2;
+            var dty = b.y;
+            var mid = (dsy + dty) / 2;
+            d = 'M ' + dsx + ' ' + dsy + ' C ' + dsx + ' ' + mid + ', ' + dtx + ' ' + mid + ', ' + dtx + ' ' + dty;
+            lx = dtx + 22;
+            ly = mid - 12;
+          }
+          label = shortText(edge.trigger || edge.guard || routeKey(from, to), 18);
+          return '<path class="dag-hit" data-dag-route="' + index + '" data-from="' + esc(from) + '" data-to="' + esc(to) + '" onclick="window.__uiSpecDagRoute(this.dataset.dagRoute)" d="' + esc(d) + '"></path><path class="dag-edge ' + (back ? 'back' : '') + '" data-dag-route="' + index + '" data-from="' + esc(from) + '" data-to="' + esc(to) + '" onclick="window.__uiSpecDagRoute(this.dataset.dagRoute)" d="' + esc(d) + '" marker-end="url(#' + marker + ')"><title>' + esc(label) + '</title></path><g class="dag-label" data-dag-route="' + index + '" data-from="' + esc(from) + '" data-to="' + esc(to) + '" onclick="window.__uiSpecDagRoute(this.dataset.dagRoute)" transform="translate(' + Math.max(8, lx) + ' ' + Math.max(8, ly) + ')"><rect width="112" height="22"></rect><text x="56" y="15" text-anchor="middle">' + esc(label) + '</text></g>';
+        }).join('');
+        nodeHtml = ids.map(function (id, index) {
+          var page = byId[id] || { pageId: id };
+          var active = selected && selected.pageId === id;
+          return '<g class="dag-node ' + (active ? 'active' : '') + '" data-dag-page="' + esc(id) + '" onclick="window.__uiSpecDagPage(this.dataset.dagPage)" transform="translate(' + x + ' ' + pos[id].y + ')"><title>' + esc(id) + '</title><rect width="' + nodeW + '" height="' + nodeH + '"></rect><text x="12" y="25">' + esc(shortText(page.title || page.pageId || id, 24)) + '</text><text class="dag-sub" x="12" y="44">' + String(index + 1).padStart(2, '0') + ' · ' + esc(shortText(page.route || id, 28)) + '</text></g>';
+        }).join('');
+        return '<div class="route-dag"><svg viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + esc(tr('routeMap')) + '">' + defs + edgeHtml + nodeHtml + '</svg></div>';
+      }
+
+      function renderRouteActions(data, pages) {
+        return '<div class="route-actions">' + routeEdges(data, pages).map(function (edge, index) {
+          var from = edge.fromPageId || edge.from;
+          var to = edge.toPageId || edge.to;
+          return '<button type="button" data-dag-route="' + index + '">' + esc(from) + ' → ' + esc(to) + ' · ' + esc(edge.trigger || tr('routeMap')) + '</button>';
+        }).join('') + '</div>';
+      }
+
+      function renderPreviewStage(page, pages) {
+        var preview = page && page.previewFile ? previewPageFrame('focused-preview', page, tr('pagePreview')) : '<p class="empty">' + esc(tr('previewUnavailable')) + '</p>';
+        var open = page && page.previewFile ? '<a class="open-link" target="_blank" rel="noopener" href="' + esc(previewPageSrc(page)) + '">' + esc(tr('openPreview')) + '</a>' : '';
+        return '<section class="card preview-stage"><div class="preview-bar"><div><h2>' + esc(tr('currentPagePreview')) + ': ' + esc(page && (page.title || page.pageId) || tr('page')) + '</h2><p class="summary">' + esc(page && page.purpose || '') + '</p></div>' + open + '</div>' + renderPageTabs(pages, page) + preview + '</section>';
+      }
+
+      function renderComponentSpec(component) {
+        return '<article class="card"><h3>' + esc(component.name || component.componentId || tr('component')) + '</h3>' + keyValueTable({
+          componentId: component.componentId,
+          componentType: component.componentType,
+          usage: component.usage
+        }) + '<h4>' + esc(tr('variants')) + '</h4>' + chips(component.variants) + '<h4>' + esc(tr('states')) + '</h4>' + chips(component.states) + '<h4>' + esc(tr('tokenRefs')) + '</h4>' + chips(component.tokenRefs) + '<h4>' + esc(tr('keyboardBehavior')) + '</h4>' + list(component.keyboardBehavior) + '<h4>' + esc(tr('accessibility')) + '</h4>' + list(component.accessibility) + '<h4>' + esc(tr('sourceRefsHeading')) + '</h4>' + chips(component.sourceRefs) + '</article>';
+      }
+
+      function renderGlobalComponentRule(component) {
+        return compactCard(component.name || component.componentId || tr('component'), keyValueTable({
+          componentId: component.componentId,
+          componentType: component.componentType,
+          usage: component.usage
+        }) + '<h4>' + esc(tr('variants')) + '</h4>' + chips(component.variants) + '<h4>' + esc(tr('tokenRefs')) + '</h4>' + chips(component.tokenRefs) + '<h4>' + esc(tr('accessibility')) + '</h4>' + list(component.accessibility));
+      }
+
+      function renderInteractionSpec(interaction) {
+        return compactCard(interaction.interactionId || tr('interaction'), keyValueTable({
+          trigger: interaction.trigger,
+          target: interaction.target,
+          guard: interaction.guard,
+          mutation: interaction.mutation,
+          successFeedback: interaction.successFeedback,
+          failureRecovery: interaction.failureRecovery
+        }) + '<h4>' + esc(tr('sourceFlowRefs')) + '</h4>' + chips(interaction.sourceFlowRefs));
+      }
+
+      function renderStateSpec(state) {
+        return compactCard(state.stateId || tr('state'), keyValueTable({
+          stateType: state.stateType,
+          surface: state.surface,
+          behavior: state.behavior,
+          recovery: state.recovery
+        }) + '<h4>' + esc(tr('accessibility')) + '</h4>' + list(state.accessibility) + '<h4>' + esc(tr('sourceRefsHeading')) + '</h4>' + chips(state.sourceRefs));
+      }
+
+      function contractBlock(title, body) {
+        return '<section class="contract-block"><h4>' + esc(title) + '</h4>' + body + '</section>';
+      }
+
+      function renderSupportingContractsBody(data, page) {
+        var components = findById(data.componentSpecs, 'componentId', page.components);
+        var interactions = findById(data.interactionSpecs, 'interactionId', page.interactions);
+        var states = findById(data.stateSpecs, 'stateId', page.states);
+        return '<h4>' + esc(tr('components')) + '</h4>' + (components.map(function (component) {
+          return contractBlock(component.name || component.componentId || tr('component'), keyValueTable({
+            componentId: component.componentId,
+            componentType: component.componentType,
+            usage: component.usage
+          }) + chips(component.variants));
+        }).join('') || '<p class="empty">' + esc(tr('noEntries')) + '</p>') + '<h4>' + esc(tr('interactions')) + '</h4>' + (interactions.map(function (interaction) {
+          return contractBlock(interaction.interactionId || tr('interaction'), keyValueTable({
+            trigger: interaction.trigger,
+            guard: interaction.guard,
+            successFeedback: interaction.successFeedback,
+            failureRecovery: interaction.failureRecovery
+          }));
+        }).join('') || '<p class="empty">' + esc(tr('noEntries')) + '</p>') + '<h4>' + esc(tr('states')) + '</h4>' + (states.map(function (state) {
+          return contractBlock(state.stateId || tr('state'), keyValueTable({
+            stateType: state.stateType,
+            surface: state.surface,
+            behavior: state.behavior,
+            recovery: state.recovery
+          }));
+        }).join('') || '<p class="empty">' + esc(tr('noEntries')) + '</p>');
+      }
+
+      function renderSupportingContracts(data, page) {
+        return detailsCard(tr('supportingContracts'), renderSupportingContractsBody(data, page));
+      }
+
+      function traceRefs(title, refs) {
+        var entries = Object.entries(obj(refs));
+        if (!entries.length) return '';
+        return '<h4>' + esc(title) + '</h4>' + entries.map(function (entry) {
+          return '<p><strong>' + esc(entry[0]) + '</strong></p>' + chips(entry[1]);
+        }).join('');
+      }
+
+      function renderTraceabilityEntry(entry) {
+        return '<div class="matrix-row"><div><h3>' + esc(entry.uiObjectId || tr('uiObject')) + '</h3><div class="chips">' + chip(entry.type, true) + '</div></div><div><p>' + esc(entry.rationale || '') + '</p>' + traceRefs(tr('upstream'), entry.upstream) + traceRefs(tr('downstream'), entry.downstream) + '<h4>' + esc(tr('risks')) + '</h4>' + list(entry.risks) + '</div></div>';
+      }
+
+      function renderVisualSpecimen(visualSystem) {
+        var tokens = obj(visualSystem.tokenSummary);
+        var primary = cssColor(tokens.primary, '#1A1C1E');
+        var secondary = cssColor(tokens.secondary, '#6C7278');
+        var accent = cssColor(tokens.accent, '#B8422E');
+        var neutral = cssColor(tokens.neutral, '#F7F5F2');
+        var surface = cssColor(tokens.surface, '#FFFDFA');
+        var success = cssColor(tokens.success, '#1F6B57');
+        var warning = cssColor(tokens.warning, '#A66A00');
+        var error = cssColor(tokens.error, accent);
+        var style = '--vs-primary:' + primary + ';--vs-secondary:' + secondary + ';--vs-accent:' + accent + ';--vs-neutral:' + neutral + ';--vs-surface:' + surface + ';--vs-success:' + success + ';--vs-warning:' + warning + ';--vs-error:' + error + ';--vs-line:color-mix(in srgb, ' + primary + ' 18%, ' + surface + ');--vs-font:' + cssFont(tokens.typography) + ';background:' + neutral + ';padding:14px;border-radius:12px;';
+        return '<div class="visual-specimen" style="' + esc(style) + '">' +
+          '<section class="specimen-hero"><div><p class="specimen-eyebrow">' + esc(visualSystem.title || visualSystem.styleId || tr('visualSystem')) + '</p><h3 class="specimen-title">账单调整请求 SUP-1042</h3><p>紧凑企业界面，用暖中性色承载长时间工作区，并把证据、负责人和下一步动作放在同一视野内。</p></div><div class="chips"><button class="specimen-action">复核并提交</button><button class="specimen-secondary">保存草稿</button></div></section>' +
+          renderColorSwatches(tokens) +
+          '<section class="specimen-grid"><article class="specimen-card accented"><h3>证据就绪度</h3><div class="specimen-row"><span>发票截图</span><span class="specimen-chip">已完成</span></div><div class="specimen-row"><span>付款参考号</span><span class="specimen-chip warn">缺失</span></div><div class="specimen-row"><span>政策校验</span><span class="specimen-chip error">需复核</span></div></article><article class="specimen-card"><h3>负责人和 SLA</h3><p style="color:var(--vs-secondary)">负责人：账单支持队列</p><p style="color:var(--vs-secondary)">预计更新：1 个工作日内</p><div class="specimen-row"><span>主操作</span><strong style="color:var(--vs-accent)">克制强调</strong></div><div class="specimen-row"><span>卡片圆角</span><strong>' + esc(tokens.radius || '8px') + '</strong></div><div class="specimen-row"><span>间距节奏</span><strong>' + esc(tokens.spacing || '8px') + '</strong></div></article></section>' +
+          '</div>';
+      }
+
+      function renderVisualSystem(data) {
+        var visualSystem = obj(data.visualSystem);
+        return card(tr('visualSystem'), renderVisualSpecimen(visualSystem) + '<h4>' + esc(tr('tokenSummary')) + '</h4>' + renderTokenSummary(visualSystem.tokenSummary) + keyValueTable({
+          styleId: visualSystem.styleId,
+          title: visualSystem.title,
+          sourceType: visualSystem.sourceType,
+          designMdRef: visualSystem.designMdRef,
+          designSystemRef: visualSystem.designSystemRef
+        }) + '<h4>' + esc(tr('applicationRules')) + '</h4>' + list(visualSystem.applicationRules));
+      }
+
+      function renderGlobalDesignTab(data) {
+        var components = arr(data.componentSpecs);
+        return '<div class="cards">' +
+          renderVisualSystem(data) +
+          card(tr('keyboardBehavior'), components.map(function (component) { return compactCard(component.name || component.componentId || tr('component'), list(component.keyboardBehavior)); }).join('')) +
+          card(tr('sharedComponentRules'), components.map(renderGlobalComponentRule).join('')) +
+          card(tr('evidenceRefs'), chips(data.evidenceRefs)) +
+          '</div>';
+      }
+
+      function renderDetailDesignTab(data, pages, focusedPage) {
+        focusedPage = focusedPage || pages[0] || {};
+        var traceabilityMatrix = arr(data.traceabilityMatrix);
+        return '<div class="ia-current-shell">' +
+          renderPreviewStage(focusedPage, pages) +
+          '<aside class="card route-panel"><h2>' + esc(tr('uiArchitecture')) + '</h2>' + keyValueTable(data.uiArchitecture) + '<h3>' + esc(tr('routeMap')) + '</h3>' + renderRouteDag(data, pages, focusedPage) + renderRouteActions(data, pages) + '<h3>' + esc(tr('selectedPageContract')) + '</h3>' + keyValueTable({
+            pageId: focusedPage.pageId,
+            workspaceId: focusedPage.workspaceId,
+            route: focusedPage.route,
+            pageType: focusedPage.pageType,
+            purpose: focusedPage.purpose,
+            sourceFile: focusedPage.sourceFile
+          }) + '<h4>' + esc(tr('layout')) + '</h4>' + keyValueTable(focusedPage.layout) + '<h4>' + esc(tr('components')) + '</h4>' + chips(focusedPage.components) + '<h4>' + esc(tr('states')) + '</h4>' + chips(focusedPage.states) + '<h4>' + esc(tr('interactions')) + '</h4>' + chips(focusedPage.interactions) + '<h4>' + esc(tr('accessibility')) + '</h4>' + list(focusedPage.accessibility) + inlineDetails(tr('supportingContracts'), renderSupportingContractsBody(data, focusedPage)) + inlineDetails(tr('evidenceRefs'), renderPageSourceSummaryBody(focusedPage)) + inlineDetails(tr('traceability'), traceabilityMatrix.map(renderTraceabilityEntry).join('')) + inlineDetails(tr('reviewRecord'), keyValueTable(data.decisionTrace)) + '<h3>' + esc(tr('implementationNotes')) + '</h3>' + list(data.openRisks) + '</aside>' +
+          '</div>';
+      }
+
+      function renderCurrent(data) {
+        var pages = arr(data.pageSpecs);
+        var focusedPage = pages.find(function (page) { return page.pageId === selectedPageId; }) || pages[0] || {};
+
+        var body = '<div class="current-tabs">' +
+          '<input class="tab-toggle" type="radio" name="current-tab" id="current-tab-detail-design" checked>' +
+          '<input class="tab-toggle" type="radio" name="current-tab" id="current-tab-global-design">' +
+          '<div class="tab-labels" role="tablist"><label class="tab-label" role="tab" for="current-tab-detail-design">' + esc(tr('detailDesignTab')) + '</label><label class="tab-label" role="tab" for="current-tab-global-design">' + esc(tr('globalDesignTab')) + '</label></div>' +
+          '<div class="tab-panels"><section class="tab-panel" id="detail-design-panel" role="tabpanel">' + renderDetailDesignTab(data, pages, focusedPage) + '</section><section class="tab-panel" id="global-design-panel" role="tabpanel">' + renderGlobalDesignTab(data) + '</section></div>' +
+          '</div>';
+        return shell(tr('currentTitle'), tr('currentSummary'), 'current_ui_spec', data, body);
+      }
+
+      function setDagRouteHover(from, to, on) {
+        document.querySelectorAll('.dag-edge,.dag-label').forEach(function (element) {
+          var hit = element.dataset.from === from && element.dataset.to === to;
+          element.classList.toggle('hover', on && hit);
+          element.classList.toggle('dim', on && !hit);
+        });
+        document.querySelectorAll('.dag-node').forEach(function (element) {
+          var hit = element.dataset.dagPage === from || element.dataset.dagPage === to;
+          element.classList.toggle('hover', on && hit);
+          element.classList.toggle('dim', on && !hit);
+        });
+      }
+
+      function setDagNodeHover(id, on) {
+        document.querySelectorAll('.dag-edge,.dag-label').forEach(function (element) {
+          var hit = element.dataset.from === id || element.dataset.to === id;
+          element.classList.toggle('hover', on && hit);
+          element.classList.toggle('dim', on && !hit);
+        });
+        document.querySelectorAll('.dag-node').forEach(function (element) {
+          var hit = element.dataset.dagPage === id;
+          element.classList.toggle('hover', on && hit);
+          element.classList.toggle('dim', on && !hit);
+        });
+      }
+
+      function bindCurrentInteractions(data) {
+        var pages = arr(data.pageSpecs);
+        var edges = routeEdges(data, pages);
+        window.__uiSpecDagRoute = function (routeIndex) {
+          var edge = edges[Number(routeIndex)];
+          if (!edge) return;
+          setSelectedPage(edge.toPageId || edge.to, edge.queryParams);
+        };
+        window.__uiSpecDagPage = function (pageId) {
+          setSelectedPage(pageId);
+        };
+        document.querySelectorAll('[data-page]').forEach(function (element) {
+          element.addEventListener('click', function () {
+            setSelectedPage(element.dataset.page);
+          });
+        });
+        document.querySelectorAll('[data-dag-route]').forEach(function (element) {
+          element.addEventListener('click', function () {
+            var edge = edges[Number(element.dataset.dagRoute)];
+            if (!edge) return;
+            setSelectedPage(edge.toPageId || edge.to, edge.queryParams);
+          });
+          element.addEventListener('mouseenter', function () { setDagRouteHover(element.dataset.from, element.dataset.to, true); });
+          element.addEventListener('mouseleave', function () { setDagRouteHover(element.dataset.from, element.dataset.to, false); });
+        });
+        document.querySelectorAll('[data-dag-page]').forEach(function (element) {
+          element.addEventListener('click', function () { setSelectedPage(element.dataset.dagPage); });
+          element.addEventListener('mouseenter', function () { setDagNodeHover(element.dataset.dagPage, true); });
+          element.addEventListener('mouseleave', function () { setDagNodeHover(element.dataset.dagPage, false); });
+        });
+      }
+
+      function detectMode(data, explicitMode) {
+        var mode = String(explicitMode || '').toLowerCase();
+        if (mode === 'raw_inputs' || mode === 'raw-inputs') return 'raw_inputs';
+        if (mode === 'exploration_review' || mode === 'exploration-review') return 'exploration_review';
+        if (mode === 'current_ui_spec' || mode === 'current-ui-spec') return 'current_ui_spec';
+        if (data.kind === 'UISpecRaw' || data.layer === 'Raw') return 'raw_inputs';
+        if (data.kind === 'UISpecExploration' || data.layer === 'Exploration') return 'exploration_review';
+        if (data.kind === 'UISpecCurrent' || data.layer === 'Current') return 'current_ui_spec';
+        return 'current_ui_spec';
+      }
+
+      function render(data, explicitMode) {
+        var mode = detectMode(data, explicitMode);
+        currentRenderData = data;
+        if (mode === 'raw_inputs') root.innerHTML = renderRaw(data);
+        else if (mode === 'exploration_review') root.innerHTML = renderExploration(data);
+        else {
+          root.innerHTML = renderCurrent(data);
+          bindCurrentInteractions(data);
+        }
+      }
+
+      function parseResource(input) {
+        var envelope = input && input.resource ? input.resource : input;
+        var raw = envelope && Object.prototype.hasOwnProperty.call(envelope, 'content') ? envelope.content : envelope;
+        if (typeof raw === 'string') return JSON.parse(raw);
+        if (raw && typeof raw === 'object') return raw;
+        throw new Error(tr('resourceMissing'));
+      }
+
+      function showError(error) {
+        root.innerHTML = '<div class="waiting"><strong>' + esc(tr('unableToRender')) + '</strong><p>' + esc(error && error.message ? error.message : error) + '</p></div>';
+      }
+
+      async function loadDemo(name) {
+        var key = normalizeDemoName(name);
+        var demoFile = resolveDemoFile(demoFiles[key]);
+        var response = await fetch(demoFile, { cache: 'no-store' });
+        if (!response.ok) throw new Error(tr('loadDemoError') + demoFile);
+        render(await response.json());
+      }
+
+      window.addEventListener('message', function (event) {
+        if (event.data && event.data.type === 'acas-ui-spec-navigate') {
+          if (event.origin !== 'null' && event.origin !== window.location.origin) return;
+          setSelectedPage(event.data.pageId, event.data.params);
+          return;
+        }
+        if (event.source !== window.parent && event.source !== window) return;
+        if (event.origin !== 'null' && event.origin !== window.location.origin) return;
+        if (!event.data || event.data.type !== 'acas-render-resource') return;
+        try {
+          render(parseResource(event.data), event.data.mode || event.data.renderMode);
+        } catch (error) {
+          showError(error);
+        }
+      });
+
+      var params = new URLSearchParams(location.search);
+      currentLang = currentLanguage(params.get('lang'));
+      document.documentElement.lang = currentLang;
+      root.innerHTML = '<div class="waiting">' + esc(tr('waiting')) + '</div>';
+      selectedPageId = String(params.get('page') || '').trim();
+      selectedStyleId = String(params.get('style') || '').trim();
+      var demo = params.get('demo') || params.get('layer');
+      if (demo) {
+        loadDemo(demo).catch(showError);
+      } else if (window.__ACAS_RENDER_RESOURCE__) {
+        try {
+          render(parseResource(window.__ACAS_RENDER_RESOURCE__), window.__ACAS_RENDER_MODE__);
+        } catch (error) {
+          showError(error);
+        }
+      }
+    })();
+  </script>
+</body>
+</html>

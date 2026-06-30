@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from importlib import resources
+import sys
 
+from app.contexts.clients.application import direct_registration_script as _direct_registration_script
 
-def read_direct_registration_script() -> str:
-    return resources.files("app.resources").joinpath("register-client-direct.sh").read_text(encoding="utf-8")
+sys.modules[__name__] = _direct_registration_script

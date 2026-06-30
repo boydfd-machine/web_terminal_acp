@@ -1,0 +1,256 @@
+.project-todo-agent-record-stats,
+.window-project-todo-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.project-todo-agent-record-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-todo-agent-record-header strong {
+  min-width: 0;
+  color: var(--skin-text);
+  font-size: 12px;
+}
+
+.project-todo-agent-record-preview-button {
+  flex: 0 0 auto;
+}
+
+.project-todo-agent-record-preview-button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.project-todo-agent-record .agent-record-modal {
+  z-index: 90;
+}
+
+.project-todo-agent-record .agent-chat-message-overlay {
+  z-index: 95;
+}
+
+.project-todo-card-agent-conversation-dialog {
+  z-index: 92;
+}
+
+.project-todo-card-agent-conversation-panel {
+  position: relative;
+  z-index: 1;
+  width: min(520px, 100%);
+  max-height: min(320px, calc(var(--web-terminal-viewport-height, 100dvh) - 32px));
+  align-self: center;
+  justify-self: center;
+  display: grid;
+  gap: 12px;
+  overflow: auto;
+  border: 1px solid var(--skin-border);
+  border-radius: 8px;
+  background: var(--skin-panel-raised);
+  padding: 12px;
+  box-shadow: 0 24px 80px rgb(0 0 0 / 55%);
+}
+
+.project-todo-card-agent-conversation-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.project-todo-card-agent-conversation-panel p {
+  margin: 0;
+}
+
+.project-todo-agent-record-stats span {
+  border: 1px solid var(--skin-border);
+  border-radius: 999px;
+  color: var(--skin-text);
+  padding: 2px 7px;
+  font-size: 11px;
+}
+
+.project-todo-agent-record-list article {
+  --todo-chat-bubble-bg: var(--skin-success-soft);
+  --todo-chat-bubble-border: var(--skin-success);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  justify-self: stretch;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.project-todo-agent-record-list article.project-todo-agent-record-item-agent {
+  grid-template-columns: minmax(0, 1fr) 30px;
+}
+
+.project-todo-agent-record-list article.project-todo-agent-record-item-subagent-call {
+  grid-template-columns: minmax(0, 1fr) 30px;
+}
+
+.project-todo-agent-record-list article.project-todo-agent-record-item-subagent-result {
+  grid-template-columns: minmax(0, 1fr) 30px;
+}
+
+.project-todo-agent-record-item-agent {
+  --todo-chat-bubble-bg: var(--skin-accent-soft);
+  --todo-chat-bubble-border: var(--skin-accent-strong);
+}
+
+.project-todo-agent-record-item-subagent-call {
+  --todo-chat-bubble-bg: var(--skin-accent-soft);
+  --todo-chat-bubble-border: var(--skin-accent-strong);
+}
+
+.project-todo-agent-record-item-subagent-result {
+  --todo-chat-bubble-bg: var(--skin-danger-soft);
+  --todo-chat-bubble-border: var(--skin-accent);
+}
+
+.project-todo-agent-record-item-agent .project-todo-agent-record-avatar,
+.project-todo-agent-record-item-subagent-call .project-todo-agent-record-avatar,
+.project-todo-agent-record-item-subagent-result .project-todo-agent-record-avatar {
+  grid-column: 2;
+}
+
+.project-todo-agent-record-message-content {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  grid-row: 1;
+  display: grid;
+  border: 1px solid var(--todo-chat-bubble-border);
+  border-radius: 11px 11px 11px 4px;
+  background: var(--todo-chat-bubble-bg);
+  padding: 7px 30px 8px 10px;
+}
+
+.project-todo-agent-record-item-agent .project-todo-agent-record-message-content,
+.project-todo-agent-record-item-subagent-call .project-todo-agent-record-message-content,
+.project-todo-agent-record-item-subagent-result .project-todo-agent-record-message-content {
+  grid-column: 1;
+  border-radius: 11px 11px 4px 11px;
+  padding: 7px 10px 8px 30px;
+}
+
+.project-todo-agent-record-message-content::before {
+  content: "";
+  position: absolute;
+  top: 11px;
+  left: -5px;
+  width: 9px;
+  height: 9px;
+  transform: rotate(45deg);
+  border-bottom: 1px solid var(--todo-chat-bubble-border);
+  border-left: 1px solid var(--todo-chat-bubble-border);
+  background: var(--todo-chat-bubble-bg);
+}
+
+.project-todo-agent-record-item-agent .project-todo-agent-record-message-content::before,
+.project-todo-agent-record-item-subagent-call .project-todo-agent-record-message-content::before,
+.project-todo-agent-record-item-subagent-result .project-todo-agent-record-message-content::before {
+  right: -5px;
+  left: auto;
+  border: 0;
+  border-top: 1px solid var(--todo-chat-bubble-border);
+  border-right: 1px solid var(--todo-chat-bubble-border);
+}
+
+.project-todo-agent-record-message-content p {
+  min-width: 0;
+  margin: 0;
+  color: var(--skin-text);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.project-todo-agent-record-avatar {
+  width: 28px;
+  min-width: 28px;
+  max-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  max-height: 28px;
+  grid-row: 1;
+  justify-self: center;
+  margin-top: 1px;
+}
+
+.project-todo-agent-record-message-expand {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--skin-border);
+  border-radius: 6px;
+  background: rgb(15 23 42 / 82%);
+  color: var(--skin-text);
+  opacity: 0;
+  padding: 0;
+  transform: translateY(-1px);
+  transition: opacity 120ms ease, border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.project-todo-agent-record-item-agent .project-todo-agent-record-message-expand,
+.project-todo-agent-record-item-subagent-call .project-todo-agent-record-message-expand,
+.project-todo-agent-record-item-subagent-result .project-todo-agent-record-message-expand {
+  right: auto;
+  left: 4px;
+}
+
+.project-todo-agent-record-list article:hover .project-todo-agent-record-message-expand,
+.project-todo-agent-record-list article:focus-within .project-todo-agent-record-message-expand,
+.project-todo-agent-record-message-expand:focus-visible {
+  opacity: 1;
+}
+
+.project-todo-agent-record-message-expand:hover,
+.project-todo-agent-record-message-expand:focus-visible {
+  border-color: var(--skin-accent);
+  background: var(--skin-control-hover);
+  color: var(--skin-text-strong);
+}
+
+.project-todo-agent-record-message-expand svg {
+  width: 14px;
+  height: 14px;
+}
+
+.window-project-todo-links button {
+  max-width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+}
+
+.window-project-todo-links button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.window-project-todo-links button strong {
+  color: var(--skin-accent);
+  font-size: 11px;
+}

@@ -1,5 +1,4 @@
-declare const process: { exitCode?: number };
-
+import { describe, it } from "vitest";
 import { createTerminalOutputBuffer } from "../src/terminalOutputBuffer.js";
 
 function assert(condition: unknown, message: string): void {
@@ -42,7 +41,7 @@ async function testBatchedOutputCallbacksRunAfterWriteCompletes(): Promise<void>
     write: (data, onWrite) => {
       writes.push(data);
       if (onWrite !== undefined) {
-        writeCallbacks.push(onWrite);
+        writeCallbacks.push(() => onWrite(data));
       }
     },
     schedule: (callback) => {
@@ -140,6 +139,39 @@ async function testOversizedChunkFlushesWithoutDroppingData(): Promise<void> {
   assert(writes[1] === "efg", "remaining output should preserve ordering without dropping following chunks");
 }
 
+async function testOversizedChunkCallbacksTrackWrittenSlices(): Promise<void> {
+  const writes: Array<string | Uint8Array> = [];
+  const acknowledgements: Array<string | Uint8Array> = [];
+  const callbacks: Array<() => void> = [];
+  const scheduled: Array<() => void> = [];
+  const writer = createTerminalOutputBuffer({
+    write: (data, onWrite) => {
+      writes.push(data);
+      if (onWrite !== undefined) {
+        callbacks.push(() => onWrite(data));
+      }
+    },
+    schedule: (callback) => {
+      scheduled.push(callback);
+      return scheduled.length;
+    },
+    cancel: () => undefined,
+    maxFlushCharacters: 4,
+  });
+
+  writer.enqueue("abcdef", { onWrite: (writtenChunk) => acknowledgements.push(writtenChunk) });
+
+  scheduled.shift()?.();
+  callbacks.shift()?.();
+  scheduled.shift()?.();
+  callbacks.shift()?.();
+
+  assert(writes.length === 2, "oversized output should be written in two slices");
+  assert(acknowledgements.length === 2, "each written slice should trigger an acknowledgement callback");
+  assert(acknowledgements[0] === "abcd", "first acknowledgement should match the first slice");
+  assert(acknowledgements[1] === "ef", "second acknowledgement should match the second slice");
+}
+
 async function testLargeOutputCanFlushAsOneActiveWrite(): Promise<void> {
   const writes: Array<string | Uint8Array> = [];
   const callbacks: Array<() => void> = [];
@@ -149,7 +181,7 @@ async function testLargeOutputCanFlushAsOneActiveWrite(): Promise<void> {
     write: (data, onWrite) => {
       writes.push(data);
       if (onWrite !== undefined) {
-        callbacks.push(onWrite);
+        callbacks.push(() => onWrite(data));
       }
     },
     schedule: (callback) => {
@@ -284,7 +316,7 @@ async function testInteractiveOutputFlushesSynchronouslyWhenQueueIsIdle(): Promi
     write: (data, onWrite) => {
       writes.push(data);
       if (onWrite !== undefined) {
-        callbacks.push(onWrite);
+        callbacks.push(() => onWrite(data));
       }
     },
     schedule: (callback) => {
@@ -440,25 +472,21 @@ async function testCanClearQueuedOutputAndCancelPendingFlush(): Promise<void> {
   assert(writes.length === 0, "cleared output should not be written later");
 }
 
-async function run(): Promise<void> {
-  await testBatchesOutputUntilScheduledFlush();
-  await testBatchedOutputCallbacksRunAfterWriteCompletes();
-  await testSmallInteractiveOutputIsDeferredOutOfSocketCallback();
-  await testYieldsBetweenLargeFlushes();
-  await testOversizedChunkFlushesWithoutDroppingData();
-  await testLargeOutputCanFlushAsOneActiveWrite();
-  await testOversizedByteChunkSplitsWithoutDroppingData();
-  await testCanDeferQueuedOutputAfterUserInput();
-  await testDeferDoesNotDelayFutureEchoWhenQueueIsEmpty();
-  await testInteractiveOutputFlushesSynchronouslyWhenQueueIsIdle();
-  await testInteractiveOutputPreservesOrderingWhenQueueIsBusy();
-  await testOversizedInteractiveOutputUsesScheduledSlicedFlush();
-  await testInputPendingYieldsWithoutWritingOutput();
-  await testLowPriorityOutputUsesDelayedSmallFlushes();
-  await testCanClearQueuedOutputAndCancelPendingFlush();
-}
-
-run().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
+describe("terminalOutputBuffer", () => {
+  it("batches output until scheduled flush", testBatchesOutputUntilScheduledFlush);
+  it("runs batched output callbacks after write completes", testBatchedOutputCallbacksRunAfterWriteCompletes);
+  it("defers small interactive output out of socket callback", testSmallInteractiveOutputIsDeferredOutOfSocketCallback);
+  it("yields between large flushes", testYieldsBetweenLargeFlushes);
+  it("splits oversized chunks without dropping data", testOversizedChunkFlushesWithoutDroppingData);
+  it("tracks written slices in oversized chunk callbacks", testOversizedChunkCallbacksTrackWrittenSlices);
+  it("can flush large active output as one write", testLargeOutputCanFlushAsOneActiveWrite);
+  it("splits oversized byte chunks without dropping data", testOversizedByteChunkSplitsWithoutDroppingData);
+  it("can defer queued output after user input", testCanDeferQueuedOutputAfterUserInput);
+  it("does not delay future echo when queue is empty", testDeferDoesNotDelayFutureEchoWhenQueueIsEmpty);
+  it("flushes interactive output synchronously when queue is idle", testInteractiveOutputFlushesSynchronouslyWhenQueueIsIdle);
+  it("preserves ordering when interactive output queue is busy", testInteractiveOutputPreservesOrderingWhenQueueIsBusy);
+  it("uses scheduled sliced flush for oversized interactive output", testOversizedInteractiveOutputUsesScheduledSlicedFlush);
+  it("yields without writing output when input is pending", testInputPendingYieldsWithoutWritingOutput);
+  it("uses delayed small flushes for low priority output", testLowPriorityOutputUsesDelayedSmallFlushes);
+  it("can clear queued output and cancel pending flush", testCanClearQueuedOutputAndCancelPendingFlush);
 });

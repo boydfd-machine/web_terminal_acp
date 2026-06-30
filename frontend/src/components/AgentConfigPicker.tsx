@@ -1,4 +1,5 @@
 import { AgentConfigViewer } from "./AgentConfigViewer";
+import { useI18n } from "../i18n";
 import type { AgentConfig, AgentConfigSection, AgentConfigSelection } from "../types";
 import { updateSelectionItem } from "../agentLaunch";
 
@@ -51,6 +52,7 @@ export function AgentConfigPicker({
   readOnly = false,
   onSelectionChange
 }: AgentConfigPickerProps) {
+  const { t } = useI18n();
   const mergedConfig = mergeConfigWithSelection(config, selection);
 
   return (
@@ -59,9 +61,9 @@ export function AgentConfigPicker({
       isLoading={isLoading}
       isError={isError}
       isFetching={isFetching}
-      title="配置"
+      title={t("terminal.create.config")}
       metaPrefix="launch config"
-      emptyMessage="Failed to load agent config."
+      emptyMessage={t("settings.agent.loadFailed")}
       readOnly={readOnly}
       onToggleItem={(sectionId, itemId, nextEnabled) => {
         if (selection === null) {

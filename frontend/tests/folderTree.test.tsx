@@ -4,7 +4,14 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FolderTree } from "../src/components/FolderTree";
+import {
+  collapsedStorageKey,
+  defaultCollapsedKeys,
+  loadCollapsedKeys,
+  writeCollapsedKeys
+} from "../src/components/folderTreeState";
 import { TERMINAL_TIME_RANGE_OPTIONS } from "../src/terminalTimeRange";
+import type { SwitcherNode } from "../src/terminalGrouping";
 import type { TreeFolder } from "../src/types";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -121,6 +128,33 @@ afterEach(() => {
 });
 
 describe("FolderTree", () => {
+  it("loads collapsed keys from storage before using tree defaults", () => {
+    const displayTree: SwitcherNode[] = [
+      {
+        type: "group",
+        key: "root",
+        label: "Root",
+        count: 2,
+        children: [
+          {
+            type: "group",
+            key: "child",
+            label: "Child",
+            count: 1,
+            children: []
+          }
+        ]
+      }
+    ];
+    const key = collapsedStorageKey("client-1", "topic");
+
+    expect(Array.from(defaultCollapsedKeys(displayTree))).toEqual(["child"]);
+
+    writeCollapsedKeys(key, new Set(["stored", 42 as unknown as string]));
+
+    expect(Array.from(loadCollapsedKeys(key, displayTree))).toEqual(["stored"]);
+  });
+
   it("locates the selected window without moving focus into the sidebar", () => {
     const input = document.createElement("input");
     document.body.appendChild(input);

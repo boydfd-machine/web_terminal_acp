@@ -150,6 +150,25 @@ describe("MobileShortcutFab", () => {
     expect((rootElement as HTMLDivElement).style.top).toBe("128px");
   });
 
+  it("keeps long press drag armed when the finger drifts before the delay", () => {
+    vi.useFakeTimers();
+    const onPress = vi.fn();
+    const onDirectionInput = vi.fn();
+    const button = renderFab(onPress, onDirectionInput);
+
+    dispatchTouchPointer(button, "pointerdown", 346, 800);
+    dispatchTouchPointer(button, "pointermove", 330, 784);
+    act(() => {
+      vi.advanceTimersByTime(430);
+    });
+    dispatchTouchPointer(button, "pointermove", 112, 156);
+    dispatchTouchPointer(button, "pointerup", 112, 156);
+
+    expect(window.localStorage.getItem(FAB_POSITION_STORAGE_KEY)).toBe(JSON.stringify({ x: 84, y: 128 }));
+    expect(onDirectionInput).not.toHaveBeenCalled();
+    expect(onPress).not.toHaveBeenCalled();
+  });
+
   it("opens the right drawer on tap and closes it from the left scrim", () => {
     const onPress = vi.fn();
     const button = renderFab(onPress);

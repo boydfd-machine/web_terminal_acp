@@ -1,0 +1,423 @@
+.project-kanban-workspace {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  overflow: hidden;
+  overscroll-behavior-y: contain;
+  background: var(--skin-workspace);
+  padding: 12px;
+}
+
+.project-kanban-workspace .project-todos {
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.project-kanban-workspace .project-todo-board-shell {
+  min-width: 0;
+  min-height: 0;
+}
+
+.project-kanban-workspace .project-todo-board {
+  min-height: 0;
+}
+
+.project-kanban-workspace .project-todo-column {
+  min-width: 240px;
+  overflow: hidden;
+}
+
+.project-kanban-empty {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  background: var(--skin-workspace);
+  color: var(--skin-muted);
+  padding: 24px;
+  text-align: center;
+}
+
+.project-kanban-empty strong {
+  color: var(--skin-text);
+  font-size: 14px;
+}
+
+.project-todo-list {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.project-todo-list-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--skin-control-hover);
+  border-radius: 8px;
+  background: rgb(15 23 42 / 52%);
+  padding: 6px;
+}
+
+.project-todo-list-row.selected {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent-soft);
+  box-shadow: 0 0 0 1px rgb(56 189 248 / 20%);
+}
+
+.project-todo-list-row:focus,
+.project-todo-card:focus {
+  outline: 2px solid var(--skin-accent);
+  outline-offset: 2px;
+}
+
+.project-todo-list-main,
+.project-todo-card-main {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.project-todo-list-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-todo-list-main:hover,
+.project-todo-card-main:hover {
+  background: transparent;
+}
+
+.project-todo-list-main strong,
+.project-todo-card-main strong {
+  min-width: 0;
+  color: var(--skin-text-strong);
+  font-size: 13px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.project-todo-card-main strong {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--skin-text);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.project-todo-board {
+  grid-auto-columns: minmax(252px, 1fr);
+  gap: 10px;
+  background: var(--skin-workspace);
+  padding-bottom: 6px;
+}
+
+.project-todo-column {
+  min-width: 252px;
+  border-color: var(--skin-border);
+  background: var(--skin-panel);
+  padding: 12px;
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.project-todo-column.drop-available {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent-soft);
+  box-shadow: inset 0 0 0 1px rgb(56 139 253 / 16%);
+}
+
+.project-todo-column.drop-target {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent-soft);
+  box-shadow: inset 0 0 0 1px rgb(88 166 255 / 34%);
+}
+
+.project-todo-column > header {
+  min-height: 28px;
+  color: var(--skin-text);
+  letter-spacing: 0;
+}
+
+.project-todo-column-card-count {
+  background: var(--skin-panel-soft);
+  color: var(--skin-muted);
+}
+
+.project-todo-column-cards {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-todo-card {
+  position: relative;
+  gap: 10px;
+  align-content: start;
+  border-color: var(--skin-border);
+  background: var(--skin-panel-soft);
+  padding: 12px;
+  box-shadow: none;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+
+.project-todo-card:hover {
+  background: var(--skin-panel-soft);
+}
+
+.project-todo-review-unseen-dot {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--skin-panel-soft);
+  border-radius: 50%;
+  background: var(--skin-danger);
+  box-shadow: 0 0 0 2px rgb(248 81 73 / 18%);
+  pointer-events: none;
+}
+
+.project-todo-card.dragging {
+  border-color: var(--skin-accent);
+  opacity: 0.62;
+}
+
+.project-todo-card.merge-target {
+  border-color: var(--skin-warning);
+  box-shadow: 0 0 0 2px rgb(210 153 34 / 28%);
+}
+
+.project-todo-card-main {
+  display: grid;
+  gap: 7px;
+}
+
+.project-todo-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-todo-schedule-toggle {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  flex: 0 0 34px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.project-todo-schedule-toggle input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.project-todo-schedule-toggle input:disabled {
+  cursor: not-allowed;
+}
+
+.project-todo-schedule-toggle span {
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--skin-panel-soft);
+  border-radius: 999px;
+  background: var(--skin-panel-soft);
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.project-todo-schedule-toggle span::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--skin-muted);
+  transition: transform 120ms ease, background 120ms ease;
+}
+
+.project-todo-schedule-toggle input:checked + span {
+  border-color: var(--skin-success);
+  background: rgb(76 175 80 / 22%);
+}
+
+.project-todo-schedule-toggle input:checked + span::after {
+  background: var(--skin-success);
+  transform: translateX(14px);
+}
+
+.project-todo-schedule-toggle input:focus-visible + span {
+  outline: 2px solid var(--skin-accent);
+  outline-offset: 2px;
+}
+
+.project-todo-schedule-toggle input:disabled + span {
+  opacity: 0.52;
+}
+
+.project-todo-card-meta,
+.project-todo-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+  color: var(--skin-muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 10.5px;
+  line-height: 1.2;
+}
+
+.project-todo-card-meta span,
+.project-todo-card-meta time {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-todo-card-tags span {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 18px;
+  border: 1px solid var(--skin-border);
+  border-radius: 999px;
+  background: var(--skin-panel-soft);
+  color: var(--skin-muted);
+  padding: 1px 6px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-todo-agent-status-icon {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--skin-panel-soft);
+  border-radius: 999px;
+  background: var(--skin-panel-soft);
+  color: var(--skin-muted);
+}
+
+.project-todo-agent-status-icon svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 2;
+}
+
+.project-todo-agent-status-icon.gray {
+  border-color: var(--skin-border);
+  color: var(--skin-muted);
+}
+
+.project-todo-agent-status-icon.green {
+  border-color: rgb(76 175 80 / 56%);
+  background: rgb(76 175 80 / 16%);
+  color: var(--skin-success);
+}
+
+.project-todo-agent-status-icon.orange {
+  border-color: rgb(255 213 79 / 56%);
+  background: rgb(255 213 79 / 14%);
+  color: var(--skin-warning);
+}
+
+.project-todo-agent-status-icon.red {
+  border-color: rgb(239 83 80 / 56%);
+  background: rgb(239 83 80 / 16%);
+  color: var(--skin-danger-text);
+}
+
+.project-todo-agent-status-icon.dispatch-active {
+  background: var(--skin-border-soft);
+}
+
+.project-todo-agent-status-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgb(148 163 184 / 35%);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: terminal-create-progress-spin 0.8s linear infinite;
+}
+
+.project-todo-terminal-button {
+  min-height: 28px;
+  white-space: nowrap;
+}
+
+.project-todo-card-action-button svg,
+.project-todo-detail-icon-button svg {
+  width: 17px;
+  height: 17px;
+  stroke-width: 2;
+}
+
+.project-todo-status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  border: 1px solid var(--skin-border);
+  border-radius: 999px;
+  background: var(--skin-control);
+  color: var(--skin-text);
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.project-todo-status-todo {
+  border-color: var(--skin-border);
+  color: var(--skin-text);
+}
+
+.project-todo-status-blocked {
+  border-color: var(--skin-danger);
+  background: rgb(127 29 29 / 24%);
+  color: var(--skin-danger-text);
+}
+
+.project-todo-status-dispatched {
+  border-color: var(--skin-accent-strong);
+  background: rgb(14 116 144 / 22%);
+  color: var(--skin-accent);
+}
+
+.project-todo-status-awaiting-review {
+  border-color: var(--skin-warning-text);
+  background: rgb(133 77 14 / 22%);
+  color: var(--skin-warning-text);
+}
+
+.project-todo-status-done {
+  border-color: var(--skin-success);
+  background: rgb(22 101 52 / 22%);
+  color: var(--skin-success-text);
+}

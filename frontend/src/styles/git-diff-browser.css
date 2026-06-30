@@ -1,0 +1,345 @@
+.git-diff-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.git-diff-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  border: 0;
+  border-radius: 0;
+  background: rgb(2 6 23 / 78%);
+  padding: 0;
+}
+
+.git-diff-modal-panel {
+  position: relative;
+  z-index: 1;
+  width: min(1120px, 100%);
+  max-height: min(820px, calc(100vh - 48px));
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 10px;
+  overflow: hidden;
+  border: 1px solid var(--skin-border);
+  border-radius: 8px;
+  background: var(--skin-control);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 55%);
+  padding: 14px;
+}
+
+.git-diff-modal-panel.added {
+  border-color: var(--skin-success);
+}
+
+.git-diff-modal-panel.deleted {
+  border-color: var(--skin-danger);
+}
+
+.git-diff-modal-panel header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+
+.git-diff-modal-panel header div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.git-diff-modal-panel header strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--skin-text-strong);
+  font-size: 14px;
+}
+
+.git-diff-modal-panel header p {
+  margin: 0;
+  color: var(--skin-muted);
+  font-size: 12px;
+}
+
+.git-diff-modal-panel header button {
+  flex: 0 0 auto;
+}
+
+.git-diff-modal-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.git-diff-modal-meta span {
+  border: 1px solid var(--skin-border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.git-diff-patch {
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  border-radius: 6px;
+  background: var(--skin-code-bg);
+  color: var(--skin-text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.git-diff-line {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  min-width: max-content;
+  border-left: 3px solid transparent;
+}
+
+.git-diff-line code {
+  display: block;
+  padding: 1px 10px;
+  color: inherit;
+  white-space: pre;
+}
+
+.git-diff-line-number {
+  border-right: 1px solid var(--skin-control-hover);
+  color: var(--skin-muted);
+  padding: 1px 8px;
+  text-align: right;
+  user-select: none;
+}
+
+.git-diff-line.addition {
+  border-left-color: var(--skin-success);
+  background: rgb(20 83 45 / 38%);
+  color: var(--skin-success-text);
+}
+
+.git-diff-line.deletion {
+  border-left-color: var(--skin-danger);
+  background: rgb(127 29 29 / 42%);
+  color: var(--skin-danger-text);
+}
+
+.git-diff-line.hunk {
+  border-left-color: var(--skin-accent);
+  background: rgb(12 74 110 / 42%);
+  color: var(--skin-accent);
+}
+
+.git-diff-line.meta {
+  color: var(--skin-muted);
+}
+
+.git-diff-line.context {
+  color: var(--skin-text);
+}
+
+.git-diff-browser-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 130;
+  background: var(--skin-code-bg);
+}
+
+.git-diff-browser-panel {
+  width: 100%;
+  height: var(--web-terminal-viewport-height, 100dvh);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  overflow: hidden;
+  padding: 16px;
+}
+
+.git-diff-browser-header {
+  min-width: 0;
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--skin-control-hover);
+  padding-bottom: 12px;
+}
+
+.git-diff-browser-header > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.git-diff-browser-header strong {
+  color: var(--skin-text-strong);
+  font-size: 18px;
+}
+
+.git-diff-browser-header p {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--skin-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-diff-browser-header-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 8px;
+}
+
+.git-diff-browser-grid {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(240px, 0.82fr) minmax(280px, 0.95fr) minmax(0, 2.2fr);
+  gap: 12px;
+}
+
+.git-diff-browser-column,
+.git-diff-browser-diff {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--skin-border);
+  border-radius: 8px;
+  background: var(--skin-panel-raised);
+}
+
+.git-diff-browser-column {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.git-diff-browser-column-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--skin-control-hover);
+  padding: 10px 12px;
+}
+
+.git-diff-browser-column-header strong {
+  color: var(--skin-text-strong);
+  font-size: 13px;
+}
+
+.git-diff-browser-column-header span {
+  color: var(--skin-muted);
+  font-size: 12px;
+}
+
+.git-diff-browser-list {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.git-diff-browser-row {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--skin-text);
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.git-diff-browser-row:hover,
+.git-diff-browser-row.selected {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent-soft);
+}
+
+.git-diff-browser-row-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--skin-text-strong);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-diff-browser-row-meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--skin-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-diff-browser-file-row {
+  grid-template-columns: 82px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.git-diff-browser-diff {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.git-diff-browser-diff.added {
+  border-color: var(--skin-success);
+}
+
+.git-diff-browser-diff.deleted {
+  border-color: var(--skin-danger);
+}
+
+.git-diff-browser-diff-header {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  border-bottom: 1px solid var(--skin-control-hover);
+  padding: 10px 12px;
+}
+
+.git-diff-browser-diff-header > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.git-diff-browser-diff-header strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--skin-text-strong);
+  font-size: 13px;
+}
+
+.git-diff-browser-diff-header p {
+  margin: 0;
+  color: var(--skin-muted);
+  font-size: 12px;
+}
+
+.git-diff-browser-empty {
+  align-self: start;
+  margin: 0;
+  padding: 16px;
+}
+
+.git-diff-browser-mobile-step {
+  min-height: 0;
+  overflow: hidden;
+}

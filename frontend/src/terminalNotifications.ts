@@ -1,3 +1,4 @@
+import type { TranslateFn } from "./i18n";
 import type { TerminalNotification as BackendTerminalNotification } from "./types";
 
 export type TerminalNotification = {
@@ -6,9 +7,19 @@ export type TerminalNotification = {
   windowId: string;
   windowTitle: string;
   completedAt: string;
-  status: "FINISHED" | "ABORTED";
+  status: "FINISHED" | "ABORTED" | "FAILED";
   read: boolean;
 };
+
+export function terminalNotificationBody(status: TerminalNotification["status"], t?: TranslateFn): string {
+  if (status === "ABORTED") {
+    return t?.("notifications.body.aborted") ?? "Agent 可能已中断";
+  }
+  if (status === "FAILED") {
+    return t?.("notifications.body.failed") ?? "Agent 运行失败";
+  }
+  return t?.("notifications.body.finished") ?? "Agent 任务已完成";
+}
 
 export function normalizeTerminalNotifications(
   notifications: BackendTerminalNotification[] | undefined

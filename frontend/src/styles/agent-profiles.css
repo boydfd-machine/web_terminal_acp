@@ -1,0 +1,205 @@
+.agent-profile-settings {
+  min-height: 0;
+  display: grid;
+  gap: 16px;
+  overflow: hidden;
+}
+
+.agent-profile-grid {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--skin-border);
+  border-radius: 8px;
+  background: var(--skin-canvas);
+}
+
+.agent-profile-list,
+.agent-profile-editor,
+.agent-profile-detail,
+.agent-profile-create-row {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.agent-profile-list {
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border-right: 1px solid var(--skin-border);
+  background: var(--skin-panel);
+  padding: 14px;
+}
+
+.agent-profile-list-header,
+.agent-profile-editor {
+  min-width: 0;
+}
+
+.agent-profile-list-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+}
+
+.agent-profile-list-header .quick-key-list-header {
+  min-width: 0;
+}
+
+.agent-profile-list-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-profile-create-button {
+  width: 34px;
+  height: 34px;
+  border-color: var(--skin-accent-strong);
+  background: var(--skin-accent-strong);
+  color: var(--skin-accent-text);
+}
+
+.agent-profile-create-button .ui-icon {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2.2;
+}
+
+.agent-profile-list-scroll,
+.agent-profile-editor-scroll {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.agent-profile-list-scroll {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.agent-profile-editor {
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--skin-code-bg);
+  padding: 12px;
+}
+
+.agent-profile-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  border-bottom: 1px solid var(--skin-border-soft);
+  padding-bottom: 10px;
+}
+
+.agent-profile-tabs button {
+  min-height: 34px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-profile-tabs button.active {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent-soft);
+  color: var(--skin-accent-text);
+}
+
+.agent-profile-row {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  min-height: 68px;
+  justify-items: start;
+  overflow: hidden;
+  border: 1px solid var(--skin-border);
+  border-radius: 8px;
+  background: var(--skin-panel-raised);
+  color: var(--skin-text-strong);
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.agent-profile-row.selected {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent-soft);
+  box-shadow: inset 3px 0 0 var(--skin-accent);
+}
+
+.agent-profile-row strong,
+.agent-profile-row span,
+.agent-profile-row small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-profile-row strong {
+  display: -webkit-box;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.25;
+  white-space: normal;
+}
+
+.agent-profile-row span,
+.agent-profile-row small {
+  color: var(--skin-muted);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.agent-profile-detail {
+  gap: 14px;
+}
+
+.agent-profile-detail-toolbar {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  border-bottom: 1px solid var(--skin-border-soft);
+  padding-bottom: 10px;
+}
+
+.agent-profile-detail .settings-agent-command-grid {
+  grid-template-columns: minmax(220px, 1fr) minmax(200px, 360px);
+}
+
+.agent-profile-agent-md textarea {
+  min-height: 340px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  line-height: 1.45;
+}
+
+@media (max-width: 760px) {
+  .agent-profile-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(220px, 0.4fr) minmax(360px, 0.6fr);
+  }
+
+  .agent-profile-list {
+    border-right: 0;
+    border-bottom: 1px solid var(--skin-border-soft);
+  }
+
+  .agent-profile-detail .settings-agent-command-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-profile-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

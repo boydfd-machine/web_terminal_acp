@@ -1,0 +1,308 @@
+/*
+ * Universal skin overrides
+ * ------------------------
+ * Body always carries a `.theme-skin-*` class that defines the `--skin-*`
+ * tokens. These overrides consume those tokens so every theme (default
+ * included) shares one consistent surface system. Component CSS should also
+ * consume the same tokens directly rather than hardcode hex values.
+ *
+ * Selectors here are written as plain element/class selectors so the rules
+ * cascade naturally with the rest of the stylesheet. Specific overrides for
+ * a single theme, when genuinely needed, are written as
+ * `.theme-skin-<name> <selector>` at the bottom of this file.
+ */
+
+:where(body) {
+  background: var(--skin-canvas);
+  color: var(--skin-text);
+}
+
+/* --- App shell surfaces ----------------------------------------------- */
+
+.sidebar,
+.detail-panel {
+  border-color: var(--skin-border-soft);
+  background: var(--skin-panel);
+}
+
+.workspace,
+.terminal-stage,
+.aux-terminal-drawer {
+  background: var(--skin-workspace);
+}
+
+.toolbar,
+.aux-terminal-header {
+  border-color: var(--skin-border-soft);
+  background: var(--skin-panel-raised);
+}
+
+/* --- Native form controls -------------------------------------------- */
+
+button {
+  border: 1px solid var(--skin-border);
+  border-radius: var(--skin-radius);
+  background: var(--skin-control);
+  color: var(--skin-text-strong);
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease,
+    transform 80ms ease;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--skin-accent);
+  background: var(--skin-control-hover);
+  color: var(--skin-text-strong);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(0.5px);
+}
+
+button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--skin-focus-ring);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+input,
+textarea,
+select {
+  border: 1px solid var(--skin-border);
+  border-radius: var(--skin-radius);
+  background: var(--skin-workspace);
+  color: var(--skin-text-strong);
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    background-color 120ms ease;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--skin-accent);
+  box-shadow: 0 0 0 2px var(--skin-focus-ring);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--skin-muted);
+}
+
+/* --- Raised surfaces (cards / modals / menus) ------------------------ */
+
+.terminal-tab,
+.client-card,
+.settings-modal,
+.add-client-modal,
+.app-prompt-dialog,
+.terminal-controls-menu,
+.notification-center,
+.terminal-create-modal,
+.terminal-quick-input-panel,
+.agent-chat-message,
+.command-history-item {
+  border: 1px solid var(--skin-border);
+  border-radius: var(--skin-radius-lg);
+  background: var(--skin-panel-raised);
+  box-shadow: var(--skin-shadow-md);
+}
+
+/* --- Selected states -------------------------------------------------- */
+
+.client-card.selected,
+.terminal-tab.selected,
+.tree-window.selected,
+.project-file-node.selected,
+.git-diff-browser-row.selected {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--skin-accent) 30%, transparent);
+}
+
+/* --- Muted text helpers ---------------------------------------------- */
+
+.muted,
+.client-meta,
+.client-version,
+.client-update-time,
+.settings-field,
+.notification-item-body,
+.notification-item-time {
+  color: var(--skin-muted);
+}
+
+/* --- Folder / disclosure accents ------------------------------------- */
+
+.folder-label,
+.folder-label-button,
+.disclosure {
+  color: var(--skin-accent);
+}
+
+/* --- Modal backdrops ------------------------------------------------- */
+
+.settings-modal-backdrop,
+.add-client-modal-backdrop,
+.app-prompt-backdrop,
+.terminal-create-modal-backdrop,
+.notification-center-backdrop,
+.agent-record-modal-backdrop,
+.agent-chat-message-overlay-backdrop {
+  background: var(--skin-overlay);
+  backdrop-filter: blur(6px) saturate(120%);
+  -webkit-backdrop-filter: blur(6px) saturate(120%);
+}
+
+/* --- Terminal surfaces ----------------------------------------------- */
+
+.terminal-virtual-keys {
+  border-color: var(--skin-border-soft);
+  background: var(--skin-panel);
+}
+
+.terminal-clipboard-copy {
+  border-color: var(--skin-accent-strong);
+  background: var(--skin-accent-strong);
+  color: var(--skin-accent-text);
+}
+
+.terminal-mode-toggle button.active,
+.terminal-quick-input-actions button[type="submit"] {
+  border-color: var(--skin-accent-strong);
+  background: var(--skin-accent-strong);
+  color: var(--skin-accent-text);
+}
+
+.theme-skin-vercel .terminal-mode-toggle button.active,
+.theme-skin-raycast .terminal-mode-toggle button.active,
+.theme-skin-vercel .terminal-quick-input-actions button[type="submit"],
+.theme-skin-raycast .terminal-quick-input-actions button[type="submit"] {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent);
+  color: var(--skin-accent-text);
+}
+
+.theme-skin-vercel .terminal-clipboard-copy,
+.theme-skin-raycast .terminal-clipboard-copy {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent);
+  color: var(--skin-accent-text);
+}
+
+/* --- Notification bell ----------------------------------------------- */
+
+.notification-bell {
+  border-color: var(--skin-border);
+  background: var(--skin-panel-raised);
+  color: var(--skin-accent);
+  box-shadow: var(--kin-shadow-sm, var(--skin-shadow-sm));
+}
+
+.notification-bell-shine {
+  color: var(--skin-accent);
+}
+
+.theme-skin-raycast .notification-bell-shine {
+  color: #ff6161;
+}
+
+/* --- Settings skin preview cards ------------------------------------- */
+
+.settings-skin-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-skin-preview.settings-skin-preview {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--skin-border);
+  border-radius: var(--skin-radius-lg);
+  background: var(--skin-panel-raised);
+  color: var(--skin-text);
+  padding: 12px;
+  text-align: left;
+  box-shadow: var(--skin-shadow-sm);
+}
+
+.settings-skin-preview.settings-skin-preview:hover:not(:disabled) {
+  border-color: var(--skin-accent);
+  background: var(--skin-panel-soft);
+  color: var(--skin-text-strong);
+}
+
+.settings-skin-preview.settings-skin-preview.selected {
+  border-color: var(--skin-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--skin-accent) 32%, transparent);
+}
+
+.settings-skin-preview-header {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.settings-skin-preview-header strong,
+.settings-skin-preview-header span,
+.settings-skin-preview-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-skin-preview-header strong {
+  color: var(--skin-text-strong);
+  font-size: var(--skin-font-md);
+  font-weight: var(--skin-weight-semibold);
+}
+
+.settings-skin-preview-header span,
+.settings-skin-preview-summary {
+  color: var(--skin-muted);
+  font-size: var(--skin-font-sm);
+}
+
+.settings-skin-preview-swatch {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr 0.8fr;
+  gap: 4px;
+  height: 30px;
+}
+
+.settings-skin-preview-swatch i {
+  border: 1px solid var(--skin-border);
+  border-radius: calc(var(--skin-radius) - 2px);
+}
+
+.settings-skin-preview-swatch i:nth-child(1) {
+  background: var(--skin-workspace);
+}
+
+.settings-skin-preview-swatch i:nth-child(2) {
+  background: var(--skin-panel-soft);
+}
+
+.settings-skin-preview-swatch i:nth-child(3) {
+  background: var(--skin-accent);
+}
+
+.settings-skin-preview.theme-skin-raycast::before {
+  content: "";
+  width: 42px;
+  height: 4px;
+  border-radius: var(--skin-radius-pill);
+  background: linear-gradient(90deg, #ff5757, #a1131a);
+}

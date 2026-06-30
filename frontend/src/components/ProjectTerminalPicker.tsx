@@ -7,13 +7,16 @@ import {
   isAgentLaunchKind,
 } from "../agentLaunch";
 import type { AgentLaunchMode } from "../agentLaunch";
-import type { AgentClient, AgentLaunchKind, AgentLaunchConfig, ProjectSummary } from "../types";
+import { agentLaunchFromProjectPreference } from "../projectAgentPreference";
+import type { AgentClient, AgentLaunchConfig, Project, ProjectSummary } from "../types";
+import { useI18n } from "../i18n";
 import { projectGroupLabel } from "../terminalGrouping";
 import { useOverlayFocus } from "./useOverlayFocus";
 
 type ProjectTerminalPickerProps = {
   isOpen: boolean;
   projectPaths: string[];
+  projects?: Project[];
   projectSummaries: ProjectSummary[];
   agentClients?: AgentClient[];
   loadingProjects?: boolean;
@@ -21,7 +24,7 @@ type ProjectTerminalPickerProps = {
   createTerminalDisabled?: boolean;
   onClose: () => void;
   onCreateTerminal: (projectPath: string, agentLaunch: AgentLaunchConfig | null) => void;
-  onConfigureTerminal?: (projectPath: string, agent: AgentLaunchKind) => void;
+  onConfigureTerminal?: (projectPath: string, agentLaunch: AgentLaunchConfig) => void;
 };
 
 type ProjectOption = {
@@ -29,9 +32,12 @@ type ProjectOption = {
   label: string;
 };
 
+type ProjectTerminalLaunchMode = "project-default" | AgentLaunchMode;
+
 export function ProjectTerminalPicker({
   isOpen,
   projectPaths,
+  projects = [],
   projectSummaries,
   agentClients: agentClientsProp,
   loadingProjects,
@@ -41,12 +47,19 @@ export function ProjectTerminalPicker({
   onCreateTerminal,
   onConfigureTerminal
 }: ProjectTerminalPickerProps) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
-  const [selectedMode, setSelectedMode] = useState<AgentLaunchMode>("shell");
+  const [selectedMode, setSelectedMode] = useState<ProjectTerminalLaunchMode>("project-default");
   const panelRef = useRef<HTMLDivElement | null>(null);
   const agentClients = agentClientsProp ?? DEFAULT_AGENT_CLIENTS;
-  const launchOptions = useMemo(() => agentLaunchOptions(agentClients), [agentClients]);
+  const launchOptions = useMemo(
+    () => [
+      { id: "project-default" as const, label: t("projectTerminal.projectDefault") },
+      ...agentLaunchOptions(agentClients)
+    ],
+    [agentClients, t]
+  );
   const projectSummaryLookup = useMemo(() => {
     const lookup = new Map<string, ProjectSummary>();
     for (const summary of projectSummaries) {
@@ -77,7 +90,7 @@ export function ProjectTerminalPicker({
     if (!isOpen) {
       setQuery("");
       setActiveIndex(0);
-      setSelectedMode("shell");
+      setSelectedMode("project-default");
     }
   }, [isOpen]);
 
@@ -92,9 +105,25 @@ export function ProjectTerminalPicker({
   }, [filteredOptions.length]);
 
   const activeOption = filteredOptions[activeIndex] ?? null;
+  const projectPreferencesByPath = useMemo(() => {
+    const lookup = new Map<string, Project["agent_preference"]>();
+    for (const project of projects) {
+      lookup.set(project.path, project.agent_preference ?? null);
+    }
+    return lookup;
+  }, [projects]);
+  const agentLaunchForSelection = useCallback((projectPath: string): AgentLaunchConfig | null => {
+    if (selectedMode === "project-default") {
+      return agentLaunchFromProjectPreference(projectPreferencesByPath.get(projectPath), agentClients);
+    }
+    if (selectedMode !== "project-default" && isAgentLaunchKind(selectedMode)) {
+      return agentLaunchForClient(selectedMode, agentClients);
+    }
+    return null;
+  }, [agentClients, projectPreferencesByPath, selectedMode]);
   const createTerminalForProject = useCallback((projectPath: string) => {
-    onCreateTerminal(projectPath, isAgentLaunchKind(selectedMode) ? agentLaunchForClient(selectedMode, agentClients) : null);
-  }, [agentClients, onCreateTerminal, selectedMode]);
+    onCreateTerminal(projectPath, agentLaunchForSelection(projectPath));
+  }, [agentLaunchForSelection, onCreateTerminal]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -179,8 +208,8 @@ export function ProjectTerminalPicker({
       <div ref={panelRef} aria-modal="true" className="project-terminal-picker" role="dialog">
         <div className="project-terminal-picker-header">
           <div>
-            <h2>New terminal by project path</h2>
-            <p className="muted">选择现有项目路径新建 terminal</p>
+            <h2>{t("projectTerminal.title")}</h2>
+            <p className="muted">{t("projectTerminal.description")}</p>
           </div>
           <div className="project-terminal-picker-actions">
             {onConfigureTerminal && (
@@ -188,33 +217,38 @@ export function ProjectTerminalPicker({
                 type="button"
                 disabled={
                   activeOption === null
-                  || !isAgentLaunchKind(selectedMode)
+                  || agentLaunchForSelection(activeOption.path) === null
                   || creatingTerminal
                   || createTerminalDisabled
                 }
                 onClick={() => {
-                  if (activeOption !== null && isAgentLaunchKind(selectedMode)) {
-                    onConfigureTerminal(activeOption.path, selectedMode);
+                  if (activeOption !== null) {
+                    const agentLaunch = agentLaunchForSelection(activeOption.path);
+                    if (agentLaunch !== null) {
+                      onConfigureTerminal(activeOption.path, agentLaunch);
+                    }
                   }
                 }}
               >
-                配置
+                {t("projectTerminal.configure")}
               </button>
             )}
             <button type="button" onClick={onClose}>
-              Close
+              {t("common.close")}
             </button>
           </div>
         </div>
 
-        <div className="project-terminal-picker-agent-tabs" role="tablist" aria-label="Agent">
+        <div className="project-terminal-picker-agent-tabs" role="tablist" aria-label={t("projectTerminal.agentTabs")}>
           {launchOptions.map((option) => (
             <button
               key={option.id}
               type="button"
               className={selectedMode === option.id ? "active" : undefined}
               aria-selected={selectedMode === option.id}
-              onClick={() => setSelectedMode(option.id)}
+              onClick={() => {
+                setSelectedMode(option.id);
+              }}
             >
               {option.label}
             </button>
@@ -222,26 +256,26 @@ export function ProjectTerminalPicker({
         </div>
 
         <input
-          aria-label="Search project paths"
+          aria-label={t("projectTerminal.search")}
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);
             setActiveIndex(0);
           }}
-          placeholder="Search project path..."
+          placeholder={t("projectTerminal.searchPlaceholder")}
         />
 
         {loadingProjects && projectPaths.length === 0 && (
-          <p className="project-terminal-picker-empty">Loading project paths...</p>
+          <p className="project-terminal-picker-empty">{t("projectTerminal.loading")}</p>
         )}
         {!loadingProjects && projectPaths.length === 0 && (
-          <p className="project-terminal-picker-empty">No project paths found for this client.</p>
+          <p className="project-terminal-picker-empty">{t("projectTerminal.empty")}</p>
         )}
         {!loadingProjects && projectPaths.length > 0 && filteredOptions.length === 0 && (
-          <p className="project-terminal-picker-empty">No matching project paths.</p>
+          <p className="project-terminal-picker-empty">{t("projectTerminal.noMatch")}</p>
         )}
         {filteredOptions.length > 0 && (
-          <ul className="project-terminal-picker-results" role="listbox" aria-label="Project paths">
+          <ul className="project-terminal-picker-results" role="listbox" aria-label={t("projectTerminal.projectPaths")}>
             {filteredOptions.map((option, index) => {
               const isActive = index === activeIndex;
 

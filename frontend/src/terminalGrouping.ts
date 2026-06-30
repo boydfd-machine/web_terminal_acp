@@ -115,7 +115,7 @@ export function buildTopicSwitcherTree(folders: TreeFolder[], query: string): Sw
       .map((child: TreeFolder) => convert(child))
       .filter((node): node is SwitcherGroupNode => node !== null);
     const windowNodes = folder.windows
-      .filter((window) => matchesWindow(window, folder.path, normalizedQuery))
+      .filter((window) => matchesSwitcherWindow(window, folder.path, normalizedQuery))
       .map((window): SwitcherWindowNode => ({
         type: "window",
         key: `window:${window.id}`,
@@ -220,7 +220,7 @@ function buildTopicSwitcherTreeForProject(
       .filter((node): node is SwitcherGroupNode => node !== null);
     const windowNodes = folder.windows
       .filter((window) => projectPathFromRuntimeTags(window.runtime_tags ?? []) === projectPath)
-      .filter((window) => matchesWindow(window, folder.path, normalizedQuery))
+      .filter((window) => matchesSwitcherWindow(window, folder.path, normalizedQuery))
       .map((window): SwitcherWindowNode => ({
         type: "window",
         key: `window:${window.id}`,
@@ -257,7 +257,7 @@ function buildTimeTopicSwitcherTreeForFilter(
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const entries = flattenTreeWindows(folders)
     .filter((entry) => includeWindow(entry.window))
-    .filter((entry) => matchesWindow(entry.window, entry.topicPath, normalizedQuery));
+    .filter((entry) => matchesSwitcherWindow(entry.window, entry.topicPath, normalizedQuery));
   const byMonth = new Map<string, Map<string, TreeWindowEntry[]>>();
 
   for (const entry of entries) {
@@ -345,13 +345,14 @@ function flattenTreeWindows(folders: TreeFolder[]): TreeWindowEntry[] {
   return entries;
 }
 
-function matchesWindow(window: TreeWindow, topicPath: string, normalizedQuery: string): boolean {
+export function matchesSwitcherWindow(window: TreeWindow, topicPath: string, normalizedQuery: string): boolean {
   if (!normalizedQuery) {
     return true;
   }
 
   return [
     window.title,
+    window.todo_title ?? "",
     window.status,
     window.work_status?.label ?? "",
     topicPath,

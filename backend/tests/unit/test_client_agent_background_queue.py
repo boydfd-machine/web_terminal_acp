@@ -8,6 +8,7 @@ from app.routers.client_agent import (
     _WindowFairMessageQueue,
     _enqueue_background_message,
     _terminal_output_recording_worker,
+    _wait_for_background_queues,
 )
 from app.services.runtime.protocol import AgentMessage
 
@@ -130,6 +131,23 @@ async def test_ai_event_enqueue_waits_when_queue_is_full_without_dropping() -> N
     await asyncio.wait_for(enqueue_task, timeout=0.1)
     assert queue.get_nowait() is newest
     queue.task_done()
+
+
+@pytest.mark.asyncio
+async def test_wait_for_background_queues_times_out_when_queue_never_drains() -> None:
+    queue: asyncio.Queue[AgentMessage] = asyncio.Queue()
+    await queue.put(AgentMessage(type="ai_event", client_id=CLIENT_ID, window_id=WINDOW_ID))
+
+    await asyncio.wait_for(
+        _wait_for_background_queues(
+            client_id=CLIENT_ID,
+            queues=[("ai_event", queue)],
+            timeout_seconds=0.01,
+        ),
+        timeout=0.1,
+    )
+
+    assert queue.qsize() == 1
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   findNewUnreadNotifications,
   normalizeTerminalNotifications,
+  terminalNotificationBody,
   type TerminalNotification
 } from "../src/terminalNotifications";
 
@@ -41,6 +42,12 @@ describe("normalizeTerminalNotifications", () => {
         read: false
       }
     ]);
+  });
+});
+
+describe("terminalNotificationBody", () => {
+  it("describes failed agent notifications", () => {
+    expect(terminalNotificationBody("FAILED")).toBe("Agent 运行失败");
   });
 });
 

@@ -1,0 +1,323 @@
+.system-config-item-content {
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.system-config-item-content:hover .system-config-item-main strong,
+.system-config-item-content:focus-visible .system-config-item-main strong {
+  color: var(--skin-text-strong);
+}
+
+.system-config-item-icon {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--skin-accent-strong);
+  border-radius: 8px;
+  background: var(--skin-accent-soft);
+  color: var(--skin-accent);
+}
+
+.system-config-item-icon svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.8;
+}
+
+.system-config-item-main {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.system-config-item-main strong,
+.system-config-item-main small,
+.system-config-item-main em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-config-item-main strong {
+  color: var(--skin-text-strong);
+}
+
+.system-config-item-main small {
+  color: var(--skin-muted);
+  font-size: 12px;
+}
+
+.system-config-item-main em {
+  color: var(--skin-accent);
+  font-size: 11px;
+  font-style: normal;
+  text-transform: uppercase;
+}
+
+.system-config-item-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.system-config-sidebar .system-config-item-actions {
+  justify-content: flex-start;
+}
+
+.system-config-icon-button {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-color: var(--skin-border);
+  background: var(--skin-control);
+  color: var(--skin-text);
+  padding: 0;
+}
+
+.system-config-icon-button:hover:not(:disabled) {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent-soft);
+  color: var(--skin-accent-text);
+}
+
+.system-config-icon-button.danger:hover:not(:disabled) {
+  border-color: var(--skin-danger);
+  background: var(--skin-danger-soft);
+  color: var(--skin-danger-text);
+}
+
+.system-config-row-action-icon {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.9;
+}
+
+.system-config-detail {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: var(--skin-code-bg);
+  padding: 14px;
+}
+
+.system-config-empty-detail {
+  align-items: center;
+  justify-content: center;
+}
+
+.system-config-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--skin-border-soft);
+  padding-bottom: 10px;
+}
+
+.system-config-detail-header > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.system-config-detail-header strong,
+.system-config-detail-header small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-config-detail-header strong {
+  color: var(--skin-text-strong);
+  font-size: 14px;
+}
+
+.system-config-detail-header small {
+  color: var(--skin-muted);
+  font-size: 12px;
+}
+
+.system-config-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.system-config-detail-meta span {
+  border: 1px solid var(--skin-border);
+  border-radius: 999px;
+  background: var(--skin-control);
+  color: var(--skin-text);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 5px 8px;
+}
+
+.system-config-detail-meta .system-config-icon-button {
+  flex: 0 0 auto;
+}
+
+.system-config-detail-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.system-config-detail-grid,
+.system-config-mcp-detail-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 0.62fr) minmax(0, 1.38fr);
+  gap: 0;
+  overflow: hidden;
+}
+
+.system-config-skill-detail-grid {
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  border: 1px solid var(--skin-border-soft);
+  border-radius: 8px;
+  background: var(--skin-code-bg);
+}
+
+.system-config-detail-tree,
+.system-config-file-editor,
+.system-config-json-preview,
+.system-config-mcp-tools {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.system-config-file-editor {
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: stretch;
+  background: var(--skin-code-bg);
+}
+
+.system-config-detail-tree {
+  border-right: 1px solid var(--skin-border-soft);
+  background: var(--skin-panel-soft);
+  padding: 12px;
+}
+
+.system-config-file-search {
+  padding-bottom: 4px;
+}
+
+.system-config-file-editor {
+  padding: 0;
+}
+
+.system-config-detail-section-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.system-config-detail-section-title h4,
+.system-config-json-preview h4,
+.system-config-mcp-tools h4 {
+  margin: 0;
+  color: var(--skin-text);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.system-config-detail-section-title span {
+  flex: 0 0 auto;
+  border: 1px solid var(--skin-border);
+  border-radius: 999px;
+  color: var(--skin-muted);
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.system-config-detail-empty {
+  margin: 0;
+  font-size: 12px;
+}
+
+.system-config-skill-tree > [role="tree"] {
+  min-height: 240px;
+  height: 100% !important;
+  overflow: auto;
+}
+
+.system-config-detail-tree ul,
+.system-config-mcp-tools ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.system-config-detail-tree button {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border-color: var(--skin-border-soft);
+  background: var(--skin-control);
+  color: var(--skin-text);
+  font-size: 12px;
+  text-align: left;
+}
+
+.system-config-detail-tree button.selected {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent-soft);
+  color: var(--skin-text-strong);
+}
+
+.system-config-detail-tree button:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.system-config-detail-tree span,
+.system-config-detail-tree small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-config-detail-tree small {
+  color: var(--skin-muted);
+  font-size: 11px;
+}

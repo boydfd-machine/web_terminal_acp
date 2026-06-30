@@ -3,7 +3,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.repositories.folders import MAX_FOLDER_SEGMENT_LENGTH
+from app.domain.folders import MAX_FOLDER_SEGMENT_LENGTH
 from app.services.folder_splitter import (
     FolderSplitChild,
     FolderSplitResult,

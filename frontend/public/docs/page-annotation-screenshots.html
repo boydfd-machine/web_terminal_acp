@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Enable Page Annotation Screenshots</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f8fafc;
+        color: #111827;
+      }
+      body {
+        margin: 0;
+      }
+      main {
+        box-sizing: border-box;
+        width: min(920px, 100%);
+        margin: 0 auto;
+        padding: 40px 20px 56px;
+      }
+      h1 {
+        margin: 0 0 10px;
+        font-size: 30px;
+        line-height: 1.15;
+        letter-spacing: 0;
+      }
+      h2 {
+        margin: 30px 0 10px;
+        font-size: 19px;
+        line-height: 1.25;
+        letter-spacing: 0;
+      }
+      h3 {
+        margin: 20px 0 8px;
+        font-size: 15px;
+        line-height: 1.3;
+        letter-spacing: 0;
+      }
+      p,
+      li {
+        font-size: 15px;
+        line-height: 1.62;
+      }
+      p {
+        margin: 0 0 14px;
+      }
+      ul,
+      ol {
+        padding-left: 22px;
+      }
+      code {
+        border: 1px solid #dbe3ea;
+        border-radius: 5px;
+        background: #ffffff;
+        padding: 1px 5px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.92em;
+      }
+      a {
+        color: #0f766e;
+      }
+      .summary {
+        margin: 22px 0;
+        border-left: 4px solid #0f766e;
+        background: #ffffff;
+        padding: 14px 16px;
+      }
+      .summary p:last-child {
+        margin-bottom: 0;
+      }
+      .checklist {
+        background: #ffffff;
+        border: 1px solid #dbe3ea;
+        border-radius: 8px;
+        padding: 16px 18px;
+      }
+      .note {
+        color: #475569;
+      }
+      @media (max-width: 640px) {
+        main {
+          padding: 28px 16px 42px;
+        }
+        h1 {
+          font-size: 25px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Enable Page Annotation Screenshots</h1>
+      <p>
+        Debug page annotation can attach a screenshot through the Electron desktop bridge or through the browser
+        <code>navigator.mediaDevices.getDisplayMedia()</code> API. Browsers intentionally require user consent for this API, so Web Terminal ACP cannot silently enable screenshots for every browser.
+      </p>
+
+      <div class="summary">
+        <p><strong>Fast path:</strong> use the Electron desktop client, or open Web Terminal ACP from <code>https://</code>, <code>http://localhost</code>, or <code>http://127.0.0.1</code> in a current desktop browser.</p>
+        <p class="note">Mobile browsers and embedded webviews commonly do not expose display capture.</p>
+      </div>
+
+      <h2>Supported Capture Paths</h2>
+      <ul>
+        <li><strong>Electron desktop client:</strong> uses the app bridge and does not depend on browser <code>getDisplayMedia()</code>.</li>
+        <li><strong>Chrome, Edge, Firefox, or Safari desktop:</strong> uses <code>getDisplayMedia()</code> when the page is in a secure context and the browser or operating system allows screen capture.</li>
+      </ul>
+
+      <h2>Checklist</h2>
+      <ol class="checklist">
+        <li>Prefer Electron if you control the client environment.</li>
+        <li>Use <code>https://</code> for remote Web Terminal ACP URLs. For local development, <code>http://localhost</code> and <code>http://127.0.0.1</code> count as trustworthy origins in modern browsers.</li>
+        <li>If the app is embedded in an iframe, allow the browser display-capture permission for that frame.</li>
+        <li>On macOS, grant Screen Recording permission to the browser or Electron app, then restart it.</li>
+        <li>On managed Chrome or Edge, check enterprise policies that block or allow screen capture.</li>
+        <li>On Linux Wayland, make sure the browser can use the desktop portal or PipeWire screen sharing path.</li>
+      </ol>
+
+      <h2>Browser And OS Settings</h2>
+
+      <h3>Chrome or Edge on HTTP intranet URLs</h3>
+      <p>
+        <code>getDisplayMedia()</code> is available only in secure contexts. If you must test an HTTP intranet origin, Chrome-based browsers can be started with an explicit testing override:
+      </p>
+      <p>
+        <code>--unsafely-treat-insecure-origin-as-secure=http://host:port</code>
+      </p>
+      <p>
+        Managed Chrome or Edge deployments can use the <code>OverrideSecurityRestrictionsOnInsecureOrigin</code> policy for the same kind of trusted internal origin exception.
+      </p>
+      <p class="note">
+        Use this only for local or trusted development machines. The production fix is to serve Web Terminal ACP over HTTPS.
+      </p>
+
+      <h3>Iframe Embeds</h3>
+      <p>
+        If Web Terminal ACP is loaded inside another page, the parent page must allow display capture. Use a Permissions Policy that grants <code>display-capture</code> to the Web Terminal ACP origin, and include <code>allow="display-capture"</code> on the iframe.
+      </p>
+
+      <h3>Managed Chrome or Edge</h3>
+      <p>
+        Organization policy can disable screen capture entirely or restrict it by origin. Check policies such as <code>ScreenCaptureAllowed</code> and <code>ScreenCaptureAllowedByOrigins</code> with your browser administrator.
+      </p>
+
+      <h3>macOS</h3>
+      <p>
+        Open <strong>System Settings -> Privacy &amp; Security -> Screen &amp; System Audio Recording</strong>, enable the browser or Electron app, and restart it. A denied or stale macOS permission can make screenshots fail even when the browser API exists.
+      </p>
+
+      <h3>Linux Wayland</h3>
+      <p>
+        Browser screen capture normally depends on the desktop portal and PipeWire path. If the browser offers no screen or tab picker, update the browser, desktop portal packages, and PipeWire; then restart the browser session.
+      </p>
+
+      <h2>What Cannot Be Changed</h2>
+      <ul>
+        <li>The browser will still ask the user to choose what to share.</li>
+        <li>Web Terminal ACP cannot bypass operating-system privacy prompts.</li>
+        <li>Unsupported mobile browsers or webviews may never expose display capture.</li>
+      </ul>
+
+      <h2>References</h2>
+      <ul>
+        <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getDisplayMedia" target="_blank" rel="noreferrer">MDN: MediaDevices.getDisplayMedia()</a></li>
+        <li><a href="https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts" target="_blank" rel="noreferrer">MDN: Secure contexts</a></li>
+        <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Permissions-Policy/display-capture" target="_blank" rel="noreferrer">MDN: Permissions-Policy display-capture</a></li>
+        <li><a href="https://chromeenterprise.google/policies/" target="_blank" rel="noreferrer">Chrome Enterprise policy list</a></li>
+        <li><a href="https://learn.microsoft.com/en-us/deployedge/microsoft-edge-policies/overridesecurityrestrictionsoninsecureorigin" target="_blank" rel="noreferrer">Microsoft Edge: OverrideSecurityRestrictionsOnInsecureOrigin</a></li>
+        <li><a href="https://support.apple.com/guide/mac-help/control-access-to-screen-and-system-audio-recording-on-mac-mchld6aa7d23/mac" target="_blank" rel="noreferrer">Apple: Control access to screen recording on Mac</a></li>
+      </ul>
+    </main>
+  </body>
+</html>

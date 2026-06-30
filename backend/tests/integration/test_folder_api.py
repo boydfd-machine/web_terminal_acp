@@ -9,9 +9,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.db import get_session
 from app.main import app
 from app.models import ClientRuntime, VirtualWindow, WindowStatus
-from app.routers import folders as folders_router
 from app.repositories.clients import create_client, ensure_local_client
 from app.repositories.folders import get_or_create_folder_by_path
+from app.services import folders_api as folders_api_service
 from app.services import polling_response_cache
 from app.services.polling_response_cache import clear_polling_response_cache
 
@@ -125,14 +125,14 @@ async def test_tree_hot_cache_skips_client_and_tree_queries(sqlite_client, monke
     first_tree = await sqlite_client.get(f"/api/clients/{client_id}/tree")
     assert first_tree.status_code == 200
 
-    async def fail_require_client(_session, _client_id):
+    async def fail_require_client(self, _client_id, *, session=None):
         raise AssertionError("hot tree cache should avoid client lookup")
 
     async def fail_build_tree(_session, _client_id, **_kwargs):
         raise AssertionError("hot tree cache should avoid tree query")
 
-    monkeypatch.setattr(folders_router, "_require_client", fail_require_client)
-    monkeypatch.setattr(folders_router, "build_tree", fail_build_tree)
+    monkeypatch.setattr(folders_api_service.FolderApiService, "_require_client", fail_require_client)
+    monkeypatch.setattr(folders_api_service, "build_tree", fail_build_tree)
 
     second_tree = await sqlite_client.get(f"/api/clients/{client_id}/tree")
 
@@ -155,11 +155,11 @@ async def test_tree_expired_cache_serves_stale_response(sqlite_client, monkeypat
         raise AssertionError("expired tree cache should return stale before refresh")
 
     monkeypatch.setattr(polling_response_cache, "_CACHE_TTL_SECONDS", -1.0)
-    monkeypatch.setattr(folders_router, "build_tree", fail_build_tree)
+    monkeypatch.setattr(folders_api_service, "build_tree", fail_build_tree)
     monkeypatch.setattr(
-        folders_router,
+        folders_api_service.FolderApiService,
         "_refresh_response_cache",
-        lambda cache_key, refresh: refreshes.append(cache_key),
+        lambda self, cache_key, refresh: refreshes.append(cache_key),
     )
 
     second_tree = await sqlite_client.get(f"/api/clients/{client_id}/tree")

@@ -1,11 +1,12 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { fetchAgentRecordChat, fetchAgentRecordDetail } from "../api";
+import { fetchAgentRecordChat, fetchAgentRecordDetail, searchWindowAgentRecord } from "../api";
 import type { AgentChatRoleFilter, AgentRecordDisplayMode } from "../types";
 
 export const AGENT_RECORD_CHAT_PAGE_SIZE = 30;
 export const AGENT_RECORD_DETAIL_PAGE_SIZE = 100;
+export const AGENT_RECORD_SEARCH_PAGE_SIZE = 25;
 type AgentRecordPageOffset = { chatOffset?: number; detailOffset?: number };
 
 type UseAgentRecordDataOptions = {
@@ -13,6 +14,8 @@ type UseAgentRecordDataOptions = {
   windowId: string | null;
   enabled: boolean;
 };
+
+export type AgentRecordDataState = ReturnType<typeof useAgentRecordData>;
 
 export function useAgentRecordData({ clientId, windowId, enabled }: UseAgentRecordDataOptions) {
   const [mode, setMode] = useState<AgentRecordDisplayMode>("chat");
@@ -22,6 +25,9 @@ export function useAgentRecordData({ clientId, windowId, enabled }: UseAgentReco
   const [expanded, setExpanded] = useState(false);
   const [jumpRequest, setJumpRequest] = useState<{ sessionId: string; originMessageId?: string } | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [searchDraft, setSearchDraft] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchPage, setSearchPage] = useState(0);
 
   useEffect(() => {
     setMode("chat");
@@ -31,6 +37,9 @@ export function useAgentRecordData({ clientId, windowId, enabled }: UseAgentReco
     setExpanded(false);
     setJumpRequest(null);
     setSelectedSessionId(null);
+    setSearchDraft("");
+    setSearchQuery("");
+    setSearchPage(0);
   }, [clientId, windowId]);
 
   const chatRecordQuery = useQuery({
@@ -74,6 +83,18 @@ export function useAgentRecordData({ clientId, windowId, enabled }: UseAgentReco
     refetchInterval: 10000
   });
   const activeQuery = mode === "chat" ? chatRecordQuery : detailRecordQuery;
+  const searchRecordQuery = useQuery({
+    queryKey: ["agent-record", "search", clientId, windowId, searchQuery, searchPage, AGENT_RECORD_SEARCH_PAGE_SIZE],
+    queryFn: () => searchWindowAgentRecord(
+      clientId as string,
+      windowId as string,
+      searchQuery,
+      AGENT_RECORD_SEARCH_PAGE_SIZE,
+      searchPage * AGENT_RECORD_SEARCH_PAGE_SIZE
+    ),
+    enabled: enabled && clientId !== null && windowId !== null && searchQuery.length > 0,
+    placeholderData: keepPreviousData
+  });
 
   const changeMode = useCallback((nextMode: AgentRecordDisplayMode) => {
     setMode(nextMode);
@@ -107,6 +128,23 @@ export function useAgentRecordData({ clientId, windowId, enabled }: UseAgentReco
     if (mode === "chat") setChatPage((page) => page + 1);
     else setDetailPage((page) => page + 1);
   }, [mode]);
+  const submitSearch = useCallback((query: string) => {
+    const trimmed = query.trim();
+    setSearchDraft(query);
+    setSearchQuery(trimmed);
+    setSearchPage(0);
+  }, []);
+  const clearSearch = useCallback(() => {
+    setSearchDraft("");
+    setSearchQuery("");
+    setSearchPage(0);
+  }, []);
+  const previousSearchPage = useCallback(() => {
+    setSearchPage((page) => Math.max(0, page - 1));
+  }, []);
+  const nextSearchPage = useCallback(() => {
+    setSearchPage((page) => page + 1);
+  }, []);
 
   return useMemo(() => ({
     mode,
@@ -125,6 +163,17 @@ export function useAgentRecordData({ clientId, windowId, enabled }: UseAgentReco
     setJumpRequest,
     selectedSessionId,
     setSelectedSessionId: changeSelectedSessionId,
+    searchDraft,
+    setSearchDraft,
+    searchQuery,
+    searchRecord: searchRecordQuery.data ?? null,
+    searchIsLoading: searchRecordQuery.isLoading,
+    searchIsError: searchRecordQuery.isError,
+    searchIsFetching: searchRecordQuery.isFetching,
+    submitSearch,
+    clearSearch,
+    previousSearchPage,
+    nextSearchPage,
     resetPages,
     previousPage,
     nextPage
@@ -141,9 +190,19 @@ export function useAgentRecordData({ clientId, windowId, enabled }: UseAgentReco
     jumpRequest,
     mode,
     nextPage,
+    nextSearchPage,
     previousPage,
+    previousSearchPage,
     changeSelectedSessionId,
+    clearSearch,
     resetPages,
-    selectedSessionId
+    searchDraft,
+    searchQuery,
+    searchRecordQuery.data,
+    searchRecordQuery.isError,
+    searchRecordQuery.isFetching,
+    searchRecordQuery.isLoading,
+    selectedSessionId,
+    submitSearch
   ]);
 }

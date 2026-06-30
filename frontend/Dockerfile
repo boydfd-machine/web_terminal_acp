@@ -1,13 +1,14 @@
-# syntax=docker/dockerfile:1.7
 FROM node:20.11.1-bookworm-slim AS build
 
 WORKDIR /app
 ARG VITE_API_BASE=
 ARG VITE_ENABLE_ONBOARDING=
+ARG VITE_ENABLE_PAGE_ANNOTATION=
 ARG VITE_CLIENT_AGENT_SERVER_URL=
 ARG NPM_REGISTRY=https://registry.npmmirror.com
 ENV VITE_API_BASE=${VITE_API_BASE} \
     VITE_ENABLE_ONBOARDING=${VITE_ENABLE_ONBOARDING} \
+    VITE_ENABLE_PAGE_ANNOTATION=${VITE_ENABLE_PAGE_ANNOTATION} \
     VITE_CLIENT_AGENT_SERVER_URL=${VITE_CLIENT_AGENT_SERVER_URL} \
     ELECTRON_SKIP_BINARY_DOWNLOAD=1
 
@@ -16,7 +17,8 @@ RUN --mount=type=cache,id=web-terminal-acp-frontend-npm,target=/root/.npm \
     npm config set registry "${NPM_REGISTRY}" && \
     npm ci
 
-COPY . .
+COPY index.html tsconfig.json vite.config.ts vite-plugin-page-annotation.ts ./
+COPY src ./src
 RUN npm run build
 
 FROM nginx:1.27.0-alpine

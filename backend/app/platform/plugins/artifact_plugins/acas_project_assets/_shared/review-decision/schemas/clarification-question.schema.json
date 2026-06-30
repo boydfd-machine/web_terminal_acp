@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acas.local/artifact-definitions/_shared/review-decision/schemas/clarification-question.schema.json",
+  "title": "ACAS Clarification Question",
+  "type": "object",
+  "$defs": {
+    "clarificationQuestion": {
+      "type": "object",
+      "required": ["questionId", "question", "whyItMatters", "affects", "answerType"],
+      "properties": {
+        "questionId": { "type": "string", "minLength": 1 },
+        "question": {},
+        "whyItMatters": {},
+        "affects": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "answerType": { "enum": ["single_choice", "multi_choice", "free_text", "confirm_edit"] },
+        "options": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/clarificationOption" }
+        },
+        "required": { "type": "boolean" },
+        "defaultRecommendation": {},
+        "recommendedOptionId": { "type": "string" },
+        "recommendationReason": {},
+        "evidenceRefs": { "type": "array" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "answerType": { "enum": ["single_choice", "multi_choice"] } },
+            "required": ["answerType"]
+          },
+          "then": { "required": ["options", "recommendedOptionId"] }
+        }
+      ],
+      "additionalProperties": true
+    },
+    "clarificationOption": {
+      "type": "object",
+      "required": ["optionId", "label"],
+      "properties": {
+        "optionId": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 },
+        "title": {},
+        "value": {},
+        "description": {},
+        "impact": { "$ref": "#/$defs/decisionOptionImpact" },
+        "evidenceRefs": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "decisionOptionImpact": {
+      "type": "object",
+      "properties": {
+        "summary": {},
+        "affectedScopes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "affectedArtifactRefs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "downstreamArtifactTypes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "riskDelta": {},
+        "evidenceRefs": { "type": "array" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "allOf": [{ "$ref": "#/$defs/clarificationQuestion" }]
+}

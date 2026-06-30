@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acas.local/artifact-definitions/flow-model/current.schema.json",
+  "title": "Flow Model Current",
+  "type": "object",
+  "required": ["kind", "layer", "flowSet", "decisionTrace"],
+  "properties": {
+    "kind": { "const": "FlowModelCurrent" },
+    "layer": { "const": "Current" },
+    "explorationArtifactRef": { "type": "string" },
+    "sourceJourneyRef": { "type": "string" },
+    "selectedJourneyOptionId": { "type": "string" },
+    "flowSet": {
+      "type": "object",
+      "required": ["flowSetId", "primaryFlowId", "flows"],
+      "properties": {
+        "flowSetId": { "type": "string" },
+        "primaryFlowId": { "type": "string" },
+        "scope": { "type": "object" },
+        "lanes": { "type": "array" },
+        "flows": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/flow" }
+        },
+        "openQuestions": { "type": "array" },
+        "evidenceRefs": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "decisionTrace": {
+      "$ref": "https://acas.local/artifact-definitions/_shared/review-decision/schemas/decision-trace.schema.json#/$defs/decisionTrace"
+    },
+    "openRisks": { "type": "array" },
+    "assumptions": { "type": "array" },
+    "evidenceRefs": { "type": "array" }
+  },
+  "$defs": {
+    "flow": {
+      "type": "object",
+      "required": ["flowId", "kind", "sourceJourneyRefs", "nodes", "edges"],
+      "properties": {
+        "flowId": { "type": "string" },
+        "kind": { "enum": ["primary", "branch"] },
+        "title": {},
+        "branchType": { "type": "string" },
+        "parentFlowId": { "type": "string" },
+        "sourceJourneyRefs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["journeyRef"],
+            "properties": {
+              "journeyRef": { "type": "string" },
+              "branchRef": { "type": "string" },
+              "phaseRef": { "type": "string" },
+              "note": {}
+            },
+            "additionalProperties": true
+          }
+        },
+        "lanes": { "type": "array" },
+        "nodes": { "type": "array" },
+        "edges": { "type": "array" },
+        "exceptions": { "type": "array" },
+        "openQuestions": { "type": "array" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

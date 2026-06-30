@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useI18n } from "../i18n";
 import type { BootstrapClientInput } from "../types";
 import { BootstrapClientForm } from "./BootstrapClientForm";
 import { ClientRegistrationKeyForm } from "./ClientRegistrationKeyForm";
+import { UiIcon } from "./UiIcon";
 import { useOverlayFocus } from "./useOverlayFocus";
 
 type AddClientMode = "bootstrap" | "registration";
@@ -32,6 +34,7 @@ export function AddClientModal({
   onBootstrapSubmit,
   onGenerateRegistrationKey
 }: AddClientModalProps) {
+  const { t } = useI18n();
   const [mode, setMode] = useState<AddClientMode>(initialMode);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
@@ -66,21 +69,27 @@ export function AddClientModal({
     >
       <div
         ref={panelRef}
-        aria-label="Add client"
+        aria-label={t("addClient.title")}
         aria-modal="true"
         className="add-client-modal"
         role="dialog"
       >
         <div className="add-client-modal-header">
           <div>
-            <h2>Add client</h2>
-            <p className="muted">Choose how this remote client should connect to Web Terminal ACP.</p>
+            <h2>{t("addClient.title")}</h2>
+            <p className="muted">{t("addClient.description")}</p>
           </div>
-          <button type="button" onClick={onClose}>
-            Close
+          <button
+            type="button"
+            className="ui-icon-button"
+            aria-label={t("addClient.close")}
+            title={t("addClient.close")}
+            onClick={onClose}
+          >
+            <UiIcon name="x" />
           </button>
         </div>
-        <div className="add-client-mode-tabs" role="tablist" aria-label="Client add mode">
+        <div className="add-client-mode-tabs" role="tablist" aria-label={t("addClient.mode")}>
           <button
             type="button"
             role="tab"
@@ -89,7 +98,7 @@ export function AddClientModal({
             data-onboarding-id="add-client-bootstrap-tab"
             onClick={() => setMode("bootstrap")}
           >
-            SSH Bootstrap
+            {t("addClient.bootstrap")}
           </button>
           <button
             type="button"
@@ -99,7 +108,7 @@ export function AddClientModal({
             data-onboarding-id="add-client-registration-tab"
             onClick={() => setMode("registration")}
           >
-            Registration Key
+            {t("addClient.registration")}
           </button>
         </div>
         {mode === "bootstrap" ? (
@@ -107,7 +116,7 @@ export function AddClientModal({
             <BootstrapClientForm isSubmitting={bootstrapPending} onSubmit={onBootstrapSubmit} />
             {bootstrapFailed && (
               <p className="error" role="alert">
-                Bootstrap failed. Check host, key, dependencies, and server URL.
+                {t("addClient.bootstrapFailed")}
               </p>
             )}
           </>

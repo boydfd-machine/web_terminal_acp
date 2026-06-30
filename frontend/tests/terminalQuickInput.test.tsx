@@ -264,7 +264,7 @@ describe("TerminalQuickInput", () => {
     });
 
     expect(container?.querySelector(".terminal-quick-key-drawer")).not.toBeNull();
-    expect(container?.textContent).toContain("没有匹配的快捷按键");
+    expect(container?.textContent).toContain("No matching quick keys");
   });
 
   it("keeps quick key search Enter from submitting the freeform input", () => {

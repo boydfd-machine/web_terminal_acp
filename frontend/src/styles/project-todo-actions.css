@@ -1,0 +1,392 @@
+
+.project-todo-execution-terminal-layout {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.38fr) minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.project-todo-child-card-layout {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.38fr) minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.project-todo-child-cards-panel {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--skin-panel-soft);
+  border-radius: 8px;
+  background: var(--skin-panel-soft);
+  padding: 10px;
+}
+
+.project-todo-child-cards-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-todo-child-cards-panel > header strong {
+  color: var(--skin-text);
+  font-size: 12px;
+}
+
+.project-todo-child-cards-panel > header span {
+  border: 1px solid var(--skin-warning);
+  border-radius: 999px;
+  color: var(--skin-warning-text);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+}
+
+.project-todo-execution-terminal-list {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.project-todo-child-card-list {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.project-todo-execution-terminal-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border-color: var(--skin-panel-soft);
+  background: var(--skin-panel-soft);
+  color: var(--skin-text);
+  padding: 8px;
+  text-align: left;
+}
+
+.project-todo-child-card-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border-color: var(--skin-panel-soft);
+  background: var(--skin-panel-soft);
+  color: var(--skin-text);
+  padding: 8px;
+  text-align: left;
+}
+
+.project-todo-execution-terminal-item.selected {
+  border-color: var(--skin-accent-strong);
+  background: rgb(33 150 243 / 14%);
+}
+
+.project-todo-child-card-item.selected {
+  border-color: var(--skin-accent-strong);
+  background: rgb(33 150 243 / 14%);
+}
+
+.project-todo-execution-terminal-index {
+  color: var(--skin-accent);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.project-todo-execution-terminal-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.project-todo-child-card-item-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.project-todo-execution-terminal-main strong,
+.project-todo-execution-terminal-main small,
+.project-todo-child-card-item-main strong,
+.project-todo-child-card-item-main small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-todo-execution-terminal-main strong,
+.project-todo-child-card-item-main strong {
+  color: var(--skin-text);
+  font-size: 12px;
+}
+
+.project-todo-execution-terminal-main small,
+.project-todo-child-card-item-main small {
+  color: var(--skin-muted);
+  font-size: 11px;
+}
+
+.project-todo-execution-terminal-detail,
+.project-todo-child-card-detail {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+}
+
+.project-todo-child-card-detail-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-todo-child-card-detail-heading {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.project-todo-child-card-detail-heading > strong {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-todo-child-card-actions {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.project-todo-execution-agent-preview,
+.project-todo-child-agent-preview,
+.project-todo-child-artifacts {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-todo-child-agent-preview > header,
+.project-todo-child-artifacts > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-todo-child-refreshing {
+  margin: 0;
+  font-size: 11px;
+}
+
+.project-todo-action-rail {
+  align-content: start;
+}
+
+.project-todo-action-group {
+  gap: 7px;
+}
+
+.project-todo-artifact-actions,
+.project-todo-terminal-actions,
+.project-todo-actions {
+  grid-template-columns: 1fr;
+  justify-content: stretch;
+}
+
+.project-todo-action-button,
+.project-todo-action-group .project-todo-actions button {
+  width: 100%;
+  min-height: 30px;
+  justify-content: center;
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.project-todo-generate-artifact-control {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.project-todo-generate-artifact-control label {
+  color: var(--skin-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.project-todo-move-column-control,
+.project-todo-move-project-control {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--skin-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.project-todo-move-column-select,
+.project-todo-move-project-select {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  border: 1px solid var(--skin-panel-soft);
+  border-radius: 6px;
+  background: var(--skin-panel-soft);
+  color: var(--skin-text);
+  padding: 0 9px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.project-todo-move-column-select:focus,
+.project-todo-move-project-select:focus {
+  outline: 2px solid rgb(33 150 243 / 50%);
+  outline-offset: 1px;
+}
+
+.project-todo-generate-artifact-select {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  border: 1px solid var(--skin-panel-soft);
+  border-radius: 6px;
+  background: var(--skin-panel-soft);
+  color: var(--skin-text);
+  padding: 0 9px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.project-todo-generate-artifact-select:focus {
+  outline: 2px solid rgb(33 150 243 / 50%);
+  outline-offset: 1px;
+}
+
+.project-todo-action-primary {
+  border-color: var(--skin-accent-strong);
+  background: var(--skin-accent-strong);
+  color: var(--skin-text-strong);
+}
+
+.project-todo-action-primary:hover:not(:disabled) {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent);
+}
+
+.project-todo-action-approve,
+.project-todo-action-done {
+  border-color: var(--skin-success);
+  background: rgb(76 175 80 / 20%);
+  color: var(--skin-success-text);
+}
+
+.project-todo-action-approve:hover:not(:disabled),
+.project-todo-action-done:hover:not(:disabled) {
+  background: rgb(76 175 80 / 32%);
+}
+
+.project-todo-action-request {
+  border-color: var(--skin-danger);
+  background: rgb(239 83 80 / 18%);
+  color: var(--skin-danger-text);
+}
+
+.project-todo-action-request:hover:not(:disabled) {
+  background: rgb(239 83 80 / 28%);
+}
+
+.project-todo-action-reopen,
+.project-todo-action-human {
+  border-color: var(--skin-warning);
+  background: rgb(255 213 79 / 14%);
+  color: var(--skin-warning-text);
+}
+
+.project-todo-action-reopen:hover:not(:disabled),
+.project-todo-action-human:hover:not(:disabled) {
+  background: rgb(255 213 79 / 24%);
+}
+
+.project-todo-action-secondary,
+.project-todo-terminal-action {
+  border-color: var(--skin-panel-soft);
+  background: var(--skin-panel-soft);
+  color: var(--skin-text);
+}
+
+.project-todo-action-secondary:hover:not(:disabled),
+.project-todo-terminal-action:hover:not(:disabled) {
+  border-color: var(--skin-accent-strong);
+  background: rgb(33 150 243 / 16%);
+}
+
+.project-todo-review-notes {
+  color: var(--skin-warning);
+}
+
+.project-todo-artifacts button {
+  border-color: var(--skin-panel-soft);
+  background: var(--skin-panel-soft);
+}
+
+@media (max-width: 760px) {
+  .project-todo-detail-body {
+    grid-template-columns: 1fr;
+  }
+
+  .project-todo-detail-dialog {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+    padding: 14px;
+  }
+
+  .project-todo-detail-header h2 {
+    font-size: 21px;
+  }
+
+  .project-todo-detail-heading .project-todo-title-edit-form input {
+    font-size: 21px;
+  }
+
+  .project-todo-detail-body {
+    overflow: auto;
+  }
+
+  .project-todo-detail-main,
+  .project-todo-detail-side,
+  .project-todo-action-rail {
+    overflow: visible;
+  }
+
+  .project-todo-detail-main {
+    grid-auto-rows: max-content;
+  }
+
+  .project-todo-detail-description-panel,
+  .project-todo-description-edit-form {
+    min-height: 100px;
+    max-height: none;
+  }
+
+  .project-todo-child-card-layout,
+  .project-todo-execution-terminal-layout {
+    grid-template-columns: 1fr;
+  }
+}

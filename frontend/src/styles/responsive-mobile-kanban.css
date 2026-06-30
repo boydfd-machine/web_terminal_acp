@@ -1,0 +1,65 @@
+@media (max-width: 760px) {
+  .project-kanban-workspace {
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .project-kanban-workspace .project-todos {
+    gap: 10px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 2px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .project-kanban-workspace .project-todo-board {
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    overflow: visible;
+    padding-bottom: 0;
+  }
+
+  .project-kanban-workspace .project-todo-board-groups {
+    overflow: visible;
+  }
+
+  .project-kanban-workspace .project-todo-board-group {
+    grid-template-rows: auto auto;
+  }
+
+  .project-kanban-workspace .project-todo-column {
+    grid-template-rows: auto auto;
+    min-width: 0;
+    min-height: auto;
+    overflow: visible;
+    padding: 10px;
+  }
+
+  .project-kanban-workspace .project-todo-column-cards {
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .project-kanban-workspace .project-todo-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .project-kanban-workspace .project-todo-card-main {
+    min-width: 0;
+  }
+
+  .project-kanban-workspace .project-todo-drag-handle {
+    display: none;
+  }
+
+  .project-kanban-workspace .project-todo-card-title-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .project-kanban-workspace .project-todo-card-actions {
+    justify-content: end;
+  }
+}

@@ -46,7 +46,7 @@ function createContainer(width: number, height: number): HTMLElement {
   return container;
 }
 
-function createTerminal(renderedHeight: number): MockTerminal {
+function createTerminal(renderedHeight: number, { rows = 24 }: { rows?: number } = {}): MockTerminal {
   const element = document.createElement("div");
   const screen = document.createElement("div");
   const canvas = document.createElement("canvas");
@@ -57,7 +57,7 @@ function createTerminal(renderedHeight: number): MockTerminal {
 
   const terminal: MockTerminal = {
     cols: 80,
-    rows: 24,
+    rows,
     options: { scrollback: 1000 },
     element,
     resize: vi.fn((cols: number, rows: number) => {
@@ -98,5 +98,18 @@ describe("terminalFit", () => {
     expect(fitTerminalToContainer(terminal as never, container)).toBe(true);
 
     expect(terminal.resize).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not allocate a terminal row that exceeds the visible container height", () => {
+    const container = createContainer(800, 109);
+    const terminal = createTerminal(110, { rows: 1 });
+
+    expect(fitTerminalToContainer(terminal as never, container)).toBe(true);
+    expect(terminal.resize).toHaveBeenCalledWith(80, 10);
+
+    expect(fitTerminalToContainer(terminal as never, container)).toBe(true);
+
+    expect(terminal.resize).toHaveBeenCalledTimes(1);
+    expect(terminal.rows).toBe(10);
   });
 });

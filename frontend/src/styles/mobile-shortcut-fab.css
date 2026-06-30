@@ -1,0 +1,202 @@
+.mobile-shortcut-fab {
+  position: fixed;
+  z-index: 120;
+  pointer-events: none;
+}
+
+.mobile-shortcut-fab-ball {
+  pointer-events: auto;
+}
+
+.mobile-shortcut-fab-ball {
+  width: 56px;
+  height: 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--skin-accent);
+  border-radius: 999px;
+  background: linear-gradient(145deg, var(--skin-accent-strong), var(--skin-accent-strong));
+  box-shadow: 0 12px 32px rgb(15 23 42 / 65%);
+  color: var(--skin-accent-text);
+  cursor: pointer;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.mobile-shortcut-fab.dragging .mobile-shortcut-fab-ball {
+  border-color: var(--skin-accent);
+  box-shadow: 0 18px 42px rgb(15 23 42 / 75%);
+  transform: scale(1.04);
+}
+
+.mobile-shortcut-fab-ball:hover,
+.mobile-shortcut-fab-ball:focus-visible {
+  border-color: var(--skin-accent);
+  outline: none;
+}
+
+.mobile-shortcut-fab-ball-icon {
+  position: relative;
+  width: 22px;
+  height: 22px;
+}
+
+.mobile-shortcut-fab-ball-icon::before,
+.mobile-shortcut-fab-ball-icon::after {
+  content: "";
+  position: absolute;
+  border: solid currentColor;
+  transform: rotate(45deg);
+}
+
+.mobile-shortcut-fab-ball-icon::before {
+  inset: 3px;
+  border-width: 2px 0 0 2px;
+}
+
+.mobile-shortcut-fab-ball-icon::after {
+  inset: 5px;
+  border-width: 0 2px 2px 0;
+}
+
+.mobile-shortcut-fab-drawer-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 125;
+  pointer-events: auto;
+}
+
+.mobile-shortcut-fab-scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgb(2 6 23 / 32%);
+  padding: 0;
+  touch-action: manipulation;
+}
+
+.mobile-shortcut-fab-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(320px, 82vw);
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--skin-border);
+  background: rgb(15 23 42 / 98%);
+  box-shadow: -18px 0 48px rgb(0 0 0 / 48%);
+  backdrop-filter: blur(10px);
+  animation: mobile-shortcut-drawer-in 160ms ease-out;
+}
+
+.mobile-shortcut-fab-drawer-header {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--skin-control-hover);
+  padding: 0 14px 0 16px;
+  color: var(--skin-text-strong);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.mobile-shortcut-fab-drawer-header button {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--skin-text);
+  font-size: 24px;
+  line-height: 1;
+}
+
+.mobile-shortcut-fab-drawer-header button:hover,
+.mobile-shortcut-fab-drawer-header button:focus-visible {
+  border-color: var(--skin-border);
+  background: var(--skin-control-hover);
+  outline: none;
+}
+
+.mobile-shortcut-fab-drawer-actions {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 10px;
+  min-height: 0;
+  max-height: calc(100dvh - 54px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mobile-shortcut-fab-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--skin-text-strong);
+  padding: 12px;
+  text-align: left;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-shortcut-fab-item:hover:not(:disabled),
+.mobile-shortcut-fab-item:focus-visible:not(:disabled) {
+  border-color: var(--skin-border);
+  background: var(--skin-control-hover);
+  outline: none;
+}
+
+.mobile-shortcut-fab-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.mobile-shortcut-fab-item-label {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.mobile-shortcut-fab-item-hint {
+  color: var(--skin-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.mobile-shortcut-fab-item-badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--skin-danger);
+  color: var(--skin-accent-text);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+}
+
+@keyframes mobile-shortcut-drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+
+  to {
+    transform: translateX(0);
+  }
+}

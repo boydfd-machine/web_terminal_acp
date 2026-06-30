@@ -3,30 +3,29 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
-import re
 import shlex
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
 from app.client_agent.agent_commands import agent_command_for_interactive_shell
 from app.client_agent.config import default_user_shell
+from app.client_agent.runtime_window import (
+    ClientRuntimeWindow,
+    ClientRuntimeWindowCreation,
+    parse_runtime_window_uuid,
+)
 from app.client_agent.shell_hook import build_managed_shell_command
+from app.client_agent.tmux_query import (
+    is_missing_tmux_window_error,
+    tmux_has_window,
+    tmux_window_activity_timestamp,
+)
 
 Runner = Callable[[list[str]], Awaitable[str]]
 
 _WINDOW_ID_OPTION = "@web-terminal-window-id"
 _MANAGED_AGENT_TOOLS_OPTION = "@web-terminal-managed-agent-tools"
-
-@dataclass(frozen=True)
-class ClientRuntimeWindow:
-    remote_session_id: str
-    remote_window_id: str
-    local_window_id: UUID | None = None
-    cwd: str | None = None
-    shell_command: str | None = None
-    managed_agent_tools: bool = False
 
 
 class ClientTmuxRuntime:
@@ -39,6 +38,7 @@ class ClientTmuxRuntime:
         default_shell: str | None = None,
         launcher_dir: Path | None = None,
         runner: Runner | None = None,
+        agent_otel_metrics_endpoint: str | None = None,
     ) -> None:
         self.client_id = str(client_id)
         self.server_url = server_url
@@ -46,9 +46,19 @@ class ClientTmuxRuntime:
         self.default_shell = default_shell or default_user_shell()
         self.launcher_dir = launcher_dir or Path.home() / ".web-terminal-acp" / "launchers"
         self._runner = runner
+        self.agent_otel_metrics_endpoint = agent_otel_metrics_endpoint
         self._clipboard_configured = False
         self._pool_lock = asyncio.Lock()
         self._clipboard_lock = asyncio.Lock()
+        self._window_locks: dict[UUID, asyncio.Lock] = {}
+        self._cancelled_window_ids: set[UUID] = set()
+
+    def _window_lock(self, window_id: UUID) -> asyncio.Lock:
+        lock = self._window_locks.get(window_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._window_locks[window_id] = lock
+        return lock
 
     async def _run(self, args: list[str]) -> str:
         if self._runner is not None:
@@ -112,6 +122,7 @@ class ClientTmuxRuntime:
         window_id: UUID | str,
         shell_command: str | None = None,
         project_path: str | None = None,
+        agent_ops_token: str | None = None,
     ) -> str:
         return build_managed_shell_command(
             shell=shell_command or self.default_shell,
@@ -119,6 +130,8 @@ class ClientTmuxRuntime:
             window_id=window_id,
             server_url=self.server_url,
             project_path=project_path,
+            agent_ops_token=agent_ops_token,
+            agent_otel_metrics_endpoint=self.agent_otel_metrics_endpoint,
         ).command
 
     def managed_shell_launcher_command(
@@ -126,11 +139,13 @@ class ClientTmuxRuntime:
         window_id: UUID | str,
         shell_command: str | None = None,
         project_path: str | None = None,
+        agent_ops_token: str | None = None,
     ) -> str:
         launcher_path = self._write_managed_shell_launcher(
             window_id,
             shell_command=shell_command,
             project_path=project_path,
+            agent_ops_token=agent_ops_token,
         )
         return f"exec {shlex.quote(str(launcher_path))}"
 
@@ -140,6 +155,7 @@ class ClientTmuxRuntime:
         *,
         shell_command: str | None = None,
         project_path: str | None = None,
+        agent_ops_token: str | None = None,
     ) -> Path:
         local_window_id = UUID(str(window_id))
         self.launcher_dir.mkdir(parents=True, exist_ok=True)
@@ -149,6 +165,7 @@ class ClientTmuxRuntime:
             local_window_id,
             shell_command=shell_command,
             project_path=project_path,
+            agent_ops_token=agent_ops_token,
         )
         temp_path.write_text(f"#!/bin/sh\n{managed_command}\n", encoding="utf-8")
         temp_path.chmod(0o700)
@@ -164,21 +181,78 @@ class ClientTmuxRuntime:
         window_id: UUID | str,
         cwd: str | None = None,
         shell_command: str | None = None,
+        agent_ops_token: str | None = None,
     ) -> ClientRuntimeWindow:
+        result = await self._create_window_with_status(
+            window_id,
+            cwd=cwd,
+            shell_command=shell_command,
+            agent_ops_token=agent_ops_token,
+        )
+        return result.window
+
+    async def _create_window_with_status(
+        self,
+        window_id: UUID | str,
+        cwd: str | None = None,
+        shell_command: str | None = None,
+        agent_ops_token: str | None = None,
+    ) -> ClientRuntimeWindowCreation:
         local_window_id = UUID(str(window_id))
         effective_cwd = cwd or os.getcwd()
         effective_shell = shell_command or self.default_shell
+        async with self._window_lock(local_window_id):
+            return await self._create_window_with_status_locked(
+                local_window_id,
+                effective_cwd=effective_cwd,
+                effective_shell=effective_shell,
+                shell_command=shell_command,
+                agent_ops_token=agent_ops_token,
+            )
+
+    async def _create_window_with_status_locked(
+        self,
+        local_window_id: UUID,
+        *,
+        effective_cwd: str,
+        effective_shell: str,
+        shell_command: str | None,
+        agent_ops_token: str | None = None,
+    ) -> ClientRuntimeWindowCreation:
+        if local_window_id in self._cancelled_window_ids:
+            self._cancelled_window_ids.discard(local_window_id)
+            raise RuntimeError(f"window creation was cancelled: {local_window_id}")
+        await self.ensure_pool()
+        existing = await self._runtime_window_for_local_window_id(local_window_id)
+        if existing is not None:
+            await self._ensure_pane_passthrough(
+                f"{existing.remote_session_id}:{existing.remote_window_id}"
+            )
+            with contextlib.suppress(RuntimeError):
+                await self.select_window(existing.remote_window_id)
+            return ClientRuntimeWindowCreation(
+                window=ClientRuntimeWindow(
+                    remote_session_id=existing.remote_session_id,
+                    remote_window_id=existing.remote_window_id,
+                    local_window_id=local_window_id,
+                    cwd=existing.cwd or effective_cwd,
+                    shell_command=effective_shell,
+                    managed_agent_tools=existing.managed_agent_tools,
+                ),
+                created=False,
+            )
+
         interactive_agent_command = (
             agent_command_for_interactive_shell(shell_command)
             if shell_command is not None
             else None
         )
         window_shell = self.default_shell if interactive_agent_command is not None else effective_shell
-        await self.ensure_pool()
         launcher_command = self.managed_shell_launcher_command(
             local_window_id,
             window_shell,
             project_path=effective_cwd,
+            agent_ops_token=agent_ops_token,
         )
         remote_window_id = (
             await self._run(
@@ -200,13 +274,14 @@ class ClientTmuxRuntime:
         try:
             await self.select_window(remote_window_id)
         except RuntimeError as exc:
-            if not _is_missing_tmux_window_error(exc, remote_window_id):
+            if not is_missing_tmux_window_error(exc, remote_window_id):
                 raise
             interactive_agent_command = None
             launcher_command = self.managed_shell_launcher_command(
                 local_window_id,
                 self.default_shell,
                 project_path=effective_cwd,
+                agent_ops_token=agent_ops_token,
             )
             remote_window_id = (
                 await self._run(
@@ -252,13 +327,16 @@ class ClientTmuxRuntime:
                 "1",
             ]
         )
-        return ClientRuntimeWindow(
-            remote_session_id=self.pool_session,
-            remote_window_id=remote_window_id,
-            local_window_id=local_window_id,
-            cwd=effective_cwd,
-            shell_command=effective_shell,
-            managed_agent_tools=True,
+        return ClientRuntimeWindowCreation(
+            window=ClientRuntimeWindow(
+                remote_session_id=self.pool_session,
+                remote_window_id=remote_window_id,
+                local_window_id=local_window_id,
+                cwd=effective_cwd,
+                shell_command=effective_shell,
+                managed_agent_tools=True,
+            ),
+            created=True,
         )
 
     async def _send_literal_command(self, tmux_target: str, command: str) -> None:
@@ -272,7 +350,47 @@ class ClientTmuxRuntime:
         cwd: str | None = None,
         shell_command: str | None = None,
     ) -> ClientRuntimeWindow:
-        return await self.create_window(window_id, cwd=cwd, shell_command=shell_command)
+        result = await self.recreate_window_with_status(window_id, cwd=cwd, shell_command=shell_command)
+        return result.window
+
+    async def recreate_window_with_status(
+        self,
+        window_id: UUID | str,
+        *,
+        cwd: str | None = None,
+        shell_command: str | None = None,
+    ) -> ClientRuntimeWindowCreation:
+        return await self._create_window_with_status(window_id, cwd=cwd, shell_command=shell_command)
+
+    async def recreate_stale_window_with_status(
+        self,
+        window_id: UUID | str,
+        *,
+        remote_session_id: str,
+        remote_window_id: str,
+        cwd: str | None = None,
+        shell_command: str | None = None,
+    ) -> ClientRuntimeWindowCreation:
+        local_window_id = UUID(str(window_id))
+        effective_cwd = cwd or os.getcwd()
+        effective_shell = shell_command or self.default_shell
+        async with self._window_lock(local_window_id):
+            if await self.has_window(remote_window_id, remote_session_id=remote_session_id):
+                await self._run(
+                    [
+                        "tmux",
+                        "kill-window",
+                        "-t",
+                        f"{remote_session_id}:{remote_window_id}",
+                    ]
+                )
+                self._remove_managed_shell_launcher(local_window_id)
+            return await self._create_window_with_status_locked(
+                local_window_id,
+                effective_cwd=effective_cwd,
+                effective_shell=effective_shell,
+                shell_command=shell_command,
+            )
 
     async def select_window(self, remote_window_id: str) -> None:
         await self._run(["tmux", "select-window", "-t", f"{self.pool_session}:{remote_window_id}"])
@@ -284,25 +402,28 @@ class ClientTmuxRuntime:
         remote_session_id: str | None = None,
     ) -> bool:
         session_id = remote_session_id or self.pool_session
-        try:
-            window_id = (
-                await self._run(
-                    [
-                        "tmux",
-                        "display-message",
-                        "-p",
-                        "-t",
-                        f"{session_id}:{remote_window_id}",
-                        "#{window_id}",
-                    ]
-                )
-            ).strip()
-        except RuntimeError:
-            return False
-        return window_id == remote_window_id
+        return await tmux_has_window(self._run, session_id, remote_window_id)
+
+    async def window_activity_timestamp(
+        self,
+        remote_window_id: str,
+        *,
+        remote_session_id: str | None = None,
+    ) -> float | None:
+        session_id = remote_session_id or self.pool_session
+        return await tmux_window_activity_timestamp(self._run, session_id, remote_window_id)
 
     async def kill_window(self, window_id: UUID | str) -> None:
         local_window_id = UUID(str(window_id))
+        async with self._window_lock(local_window_id):
+            await self._kill_window_locked(local_window_id, cancel_future_create=True)
+
+    async def kill_stale_window(self, window_id: UUID | str) -> None:
+        local_window_id = UUID(str(window_id))
+        async with self._window_lock(local_window_id):
+            await self._kill_window_locked(local_window_id, cancel_future_create=False)
+
+    async def _kill_window_locked(self, local_window_id: UUID, *, cancel_future_create: bool) -> None:
         for runtime_window in await self.list_windows():
             if runtime_window.local_window_id != local_window_id:
                 continue
@@ -312,18 +433,34 @@ class ClientTmuxRuntime:
             ):
                 return
             await self._run(
-                [
-                    "tmux",
-                    "kill-window",
-                    "-t",
-                    f"{runtime_window.remote_session_id}:{runtime_window.remote_window_id}",
-                ]
+                ["tmux", "kill-window", "-t", f"{runtime_window.remote_session_id}:{runtime_window.remote_window_id}"]
             )
             self._remove_managed_shell_launcher(local_window_id)
+            if cancel_future_create:
+                self._cancelled_window_ids.add(local_window_id)
             return
+        if cancel_future_create and local_window_id in self._window_locks:
+            self._cancelled_window_ids.add(local_window_id)
 
     async def list_windows(self) -> list[ClientRuntimeWindow]:
         await self.ensure_pool()
+        return await self._list_windows_in_pool()
+
+    async def _runtime_window_for_local_window_id(
+        self,
+        local_window_id: UUID,
+    ) -> ClientRuntimeWindow | None:
+        for runtime_window in await self._list_windows_in_pool():
+            if runtime_window.local_window_id != local_window_id:
+                continue
+            if await self.has_window(
+                runtime_window.remote_window_id,
+                remote_session_id=runtime_window.remote_session_id,
+            ):
+                return runtime_window
+        return None
+
+    async def _list_windows_in_pool(self) -> list[ClientRuntimeWindow]:
         output = await self._run(
             [
                 "tmux",
@@ -341,7 +478,7 @@ class ClientTmuxRuntime:
             remote_window_id, _, remainder = line.partition("\t")
             local_window_id_text, _, remainder = remainder.partition("\t")
             cwd_text, _, managed_agent_tools_text = remainder.partition("\t")
-            local_window_id = _parse_uuid(local_window_id_text.strip())
+            local_window_id = parse_runtime_window_uuid(local_window_id_text.strip())
             cwd = cwd_text or None
             managed_agent_tools = managed_agent_tools_text.strip() == "1"
             windows.append(
@@ -354,20 +491,3 @@ class ClientTmuxRuntime:
                 )
             )
         return windows
-
-
-def _parse_uuid(value: str) -> UUID | None:
-    if not value:
-        return None
-    try:
-        return UUID(value)
-    except ValueError:
-        return None
-
-
-def _is_missing_tmux_window_error(exc: BaseException, remote_window_id: str) -> bool:
-    message = str(exc)
-    return (
-        f"can't find window: {remote_window_id}" in message
-        or re.search(r"can't find window: @\d+", message) is not None
-    )

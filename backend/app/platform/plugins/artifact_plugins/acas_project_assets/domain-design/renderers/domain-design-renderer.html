@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ACAS Domain Design Renderer</title>
+  <style>
+    :root{
+      --bg:#f7f3ec;--paper:#fffdf8;--paper2:#fbf7ef;--glass:rgba(255,253,248,.82);--soft:#efe7da;
+      --ink:#202225;--muted:#68717a;--line:#d9cfc0;--accent:#7b4d1f;--accent2:#1f6d5b;
+      --blue:#2f5f88;--green:#2c6b4f;--amber:#9b6615;--red:#a84230;--violet:#66558a;
+      --shadow:0 18px 46px rgba(55,44,31,.12);--radius:14px;
+      font-family:Inter,"Public Sans",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    }
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top left,#fff8ec 0,#f7f3ec 35%,#f1ece3 100%);color:var(--ink)}
+    main{min-width:380px;padding:18px}button{font:inherit}h1,h2,h3,p{margin:0;overflow-wrap:anywhere}ul{margin:0;padding-left:18px}.shell{width:min(96vw,1660px);margin:0 auto;display:grid;gap:14px}
+    .panel{background:var(--glass);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);backdrop-filter:blur(10px)}
+    .top{padding:18px 20px;display:grid;gap:14px}.bar{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.eyebrow{font-size:11px;font-weight:850;letter-spacing:.09em;text-transform:uppercase;color:var(--accent)}
+    h1{font-size:24px;line-height:1.18;font-weight:830;margin-top:4px}.summary{max-width:920px;color:var(--muted);font-size:13px;line-height:1.46;margin-top:6px}.header-actions,.tabs,.chips{display:flex;flex-wrap:wrap;gap:8px;min-width:0}
+    .tabs button,.header-actions button{border:1px solid var(--line);background:#fffbf4;color:var(--muted);border-radius:999px;padding:7px 11px;cursor:pointer}.tabs button.active,.header-actions button.active{background:var(--ink);border-color:var(--ink);color:#fff}.tabs button:hover,.header-actions button:hover{border-color:#bca891;color:var(--ink)}
+    .chip,.pill{display:inline-flex;align-items:center;gap:5px;max-width:100%;border:1px solid var(--line);background:#fff9ef;color:var(--muted);border-radius:999px;padding:4px 9px;font-size:11px;line-height:1.25;overflow-wrap:anywhere}.pill{font-weight:750;color:#5d5144;background:#f6efe5}.pill.ok{color:var(--green);background:#edf7ef}.pill.warn{color:var(--amber);background:#fff4dc}.pill.risk{color:var(--red);background:#fff0ed}.pill.info{color:var(--blue);background:#edf5fc}
+    .grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:14px}.span-3{grid-column:span 3}.span-4{grid-column:span 4}.span-5{grid-column:span 5}.span-6{grid-column:span 6}.span-7{grid-column:span 7}.span-8{grid-column:span 8}.span-9{grid-column:span 9}.span-12{grid-column:span 12}
+    .card{min-width:0;background:rgba(255,253,248,.94);border:1px solid var(--line);border-radius:12px;padding:13px;display:grid;gap:9px}.card h2{font-size:15px}.card h3{font-size:13px;line-height:1.25}.card p,.card li,.muted{color:var(--muted);font-size:12px;line-height:1.45}.mini{font-size:11px;color:var(--muted);line-height:1.36}.empty{border:1px dashed var(--line);border-radius:10px;padding:14px;color:#9b9288;background:#fffaf2;font-size:12px}
+    .context-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.context-card{position:relative;text-align:left;border:1px solid var(--line);border-left:6px solid var(--accent2);border-radius:12px;background:linear-gradient(180deg,#fffdf8,#fbf6ed);padding:12px;display:grid;gap:8px;cursor:pointer;color:var(--ink);min-width:0;transition:transform .16s,box-shadow .16s,border-color .16s}.context-card:hover,.context-card.active{transform:translateY(-1px);box-shadow:0 12px 28px rgba(55,44,31,.14);border-color:#8f7f6a}.context-card.active{background:#f4fbf6;border-left-color:var(--green)}.context-card .mission{min-height:50px}
+    .relationship-list,.rows{display:grid;gap:8px}.relationship-row,.row{display:grid;grid-template-columns:minmax(110px,.9fr) minmax(120px,1fr) minmax(120px,1fr) minmax(160px,2fr);gap:8px;align-items:start;border:1px solid var(--line);border-radius:10px;background:#fffdf8;padding:9px}.relationship-row.head,.row.head{background:#eee3d4;font-weight:820;color:var(--ink)}.relationship-row>div,.row>div{min-width:0;font-size:12px;line-height:1.38;overflow-wrap:anywhere}.relationship-row .arrow{color:var(--accent);font-weight:850}
+    .inspector{position:sticky;top:12px}.inspector-title{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.stack{display:grid;gap:9px}.two-col{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.three-col{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.list-card{border:1px solid var(--line);border-radius:10px;background:#fffaf2;padding:10px;display:grid;gap:6px;min-width:0}.list-card.blocking{border-left:5px solid var(--red)}.list-card.warn{border-left:5px solid var(--amber)}.list-card.ok{border-left:5px solid var(--green)}.list-card.info{border-left:5px solid var(--blue)}
+    .option-list{display:grid;gap:8px}.option-button{width:100%;text-align:left;border:1px solid var(--line);border-left:6px solid var(--violet);background:#fffdf8;border-radius:12px;padding:11px;cursor:pointer;color:var(--ink);display:grid;gap:5px}.option-button.active{border-left-color:var(--green);background:#f2faf5;box-shadow:0 10px 26px rgba(55,44,31,.12)}
+    .exploration-layout{display:grid;grid-template-columns:minmax(260px,340px) minmax(0,1fr);gap:14px;align-items:start}.exploration-main{display:grid;gap:12px;min-width:0}.option-summary{border:1px solid var(--line);border-radius:12px;background:#fffdf8;padding:12px;display:grid;gap:8px}.tab-panel{min-width:0;background:rgba(255,253,248,.94);border:1px solid var(--line);border-radius:12px;padding:13px;display:grid;gap:12px}
+    .metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px}.metric{border:1px solid var(--line);border-radius:10px;background:#fffaf2;padding:9px;display:grid;gap:4px;min-width:0}.metric strong{font-size:22px;line-height:1;color:var(--ink)}.metric span{font-size:11px;color:var(--muted);font-weight:750}.context-map{overflow:auto;border:1px solid var(--line);border-radius:12px;background:#fffaf2}.context-map svg{display:block;width:100%;min-width:760px;height:auto}.context-map-node rect{stroke:#8f7f6a;stroke-width:1.2;filter:drop-shadow(0 8px 14px rgba(55,44,31,.10))}.context-map-node text{font-size:12px;fill:var(--ink);font-weight:820}.context-map-node .sub{font-size:10px;fill:var(--muted);font-weight:650}.context-map-edge{stroke:#8f7f6a;stroke-width:1.6;fill:none}.context-map-label{font-size:10px;fill:#5d5144;font-weight:800}.recommended-badge{fill:#edf7ef;stroke:#2c6b4f;stroke-width:1}.event-flow{overflow:auto;border:1px solid var(--line);border-radius:12px;background:#fffaf2;padding:10px;display:grid;gap:9px}.flow-row{display:grid;grid-template-columns:38px repeat(4,minmax(138px,1fr));gap:8px;align-items:stretch;min-width:760px}.flow-step{position:relative;border:1px solid var(--line);border-radius:10px;background:#fffdf8;padding:9px;display:grid;gap:4px}.flow-step:after{content:"";position:absolute;right:-8px;top:50%;width:8px;border-top:2px solid #b8a894}.flow-step:last-child:after{display:none}.flow-seq{display:grid;place-items:center;border:1px solid var(--line);border-radius:10px;background:#f4ebdd;color:var(--accent);font-weight:900}.flow-step span{font-size:10px;color:var(--muted);font-weight:850;text-transform:uppercase}.flow-step strong{font-size:12px;line-height:1.25;overflow-wrap:anywhere}.flow-command{border-left:5px solid var(--blue)}.flow-aggregate{border-left:5px solid var(--green)}.flow-event{border-left:5px solid var(--amber)}.flow-hotspot{border-left-color:var(--red);background:#fff4f1}
+    .quality-score{font-size:30px;font-weight:900;color:var(--green);line-height:1}.meter{height:9px;background:#efe5d5;border-radius:999px;overflow:hidden;border:1px solid var(--line)}.meter span{display:block;height:100%;background:linear-gradient(90deg,#b94731,#d8942e,#2f7a55);width:var(--w,0%)}
+    .domain-graph{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:12px;align-items:stretch;min-width:0}.domain-graph>*{min-width:0}.graph-scroll{overflow:auto;max-width:100%;border:1px solid var(--line);border-radius:12px;background:#fffaf2}.domain-graph svg{display:block;width:100%;max-width:100%;min-height:360px;background:#fffaf2}.graph-scroll svg{width:auto;max-width:none;min-height:0;border:0;border-radius:0}.graph-node{cursor:pointer}.graph-node rect,.graph-node ellipse{stroke:#8f7f6a;stroke-width:1.2;filter:drop-shadow(0 8px 14px rgba(55,44,31,.10));transition:stroke .12s,stroke-width .12s,opacity .12s}.graph-node text{font-size:11px;fill:var(--ink);font-weight:780;pointer-events:none}.graph-node .sub{font-size:9px;fill:var(--muted);font-weight:650}.graph-node.active rect,.graph-node.active ellipse,.graph-node.flow-active rect,.graph-node.flow-active ellipse{stroke:#202225;stroke-width:2.4}.graph-edge{stroke:#a99a86;stroke-width:1.6;fill:none;opacity:0.75;transition:stroke .12s,stroke-width .12s}.graph-edge.event{stroke:#e1831d;stroke-width:1.8}.graph-edge.consume{stroke:#3b82f6;stroke-width:1.6;stroke-dasharray:4 3}.graph-edge.flow-active{stroke:#10b981;stroke-width:2.6;stroke-dasharray:8 5;opacity:1;animation:flowDash .75s linear infinite;marker-end:url(#arrowActive) !important}.graph-edge:hover{stroke:#10b981}.graph-node.flow-dim{opacity:.24}.graph-edge.flow-dim{opacity:.08}.graph-context{fill:rgba(255,253,248,.48);stroke:#c7b9a6;stroke-width:1.2;stroke-dasharray:8 6}.graph-context-title{font-size:11px;fill:#6c5f50;font-weight:850}.graph-grid-line{stroke:#e1d4c4;stroke-width:1}.graph-lane{fill:#fffdf8;stroke:#eadcca;stroke-width:1}.graph-marker{font-size:10px;fill:var(--muted);font-weight:800}.graph-detail{align-content:start}.graph-detail,.graph-detail *{overflow-wrap:anywhere;word-break:break-word}@keyframes flowDash{to{stroke-dashoffset:-26}}
+    .code-block{white-space:pre-wrap;word-break:break-word;max-height:190px;overflow:auto;background:#27231d;color:#fbf4e8;border-radius:10px;padding:10px;font-size:11px;line-height:1.45}.trace{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}.trace-item{border:1px solid var(--line);border-radius:12px;background:#fffdf8;padding:12px;display:grid;gap:7px}.readiness{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:9px}.readiness .list-card{align-content:start}
+    .waiting,.error{border:1px dashed var(--line);border-radius:14px;background:var(--paper);padding:18px;color:var(--muted);box-shadow:var(--shadow)}.error{border-color:#e8b6ad;color:#8f2f22;background:#fff4f1}
+    @media(max-width:1080px){.grid{grid-template-columns:1fr}.span-3,.span-4,.span-5,.span-6,.span-7,.span-8,.span-9,.span-12{grid-column:1}.inspector{position:static}.relationship-row,.row{grid-template-columns:1fr}.relationship-row.head,.row.head{display:none}.two-col,.three-col,.domain-graph,.exploration-layout{grid-template-columns:1fr}.bar{display:grid}}
+  </style>
+</head>
+<body>
+  <main id="root"><div class="waiting"></div></main>
+  <script>
+    (function(){
+      const root=document.getElementById('root');
+      const REQUIRED_STRINGS='DomainDesignRaw DomainDesignExploration Global Domain Atlas Drilldown Workbook acas-render-resource';
+      let state={data:null,lang:'zh',selectedContext:null,view:'atlas',selectedOption:null,explorationTab:'context',selectedGraphNode:null};
+      const UI_LABELS={
+        zh:{waiting:'等待 ACAS 领域设计数据...',rendererEyebrow:'ACAS 定义 · 领域设计',sourceTrace:'来源追踪',readiness:'输入就绪度',explorationGate:'探索门禁',preservedSignals:'保留信号',risksAndMissingInputs:'风险与缺失输入',boundaryOptions:'边界方案',methodFrame:'方法框架',pathComparison:'路径比较',selectedOptionAtlas:'已选方案地图',contextPartitioning:'Context 划分逻辑',eventStorming:'事件风暴模拟',commandIdentification:'命令识别',acceptedCommands:'接受的命令',rejectedActions:'排除的动作',validationChecks:'校验结果',identificationSources:'识别来源',aggregateRelationshipConfirmation:'聚合关系确认',partitionLogic:'划分判断',processSteps:'推演过程',eventTimeline:'事件时间线',hotspots:'热点',boundarySignals:'边界信号',decisionRules:'确认规则',relationshipDecisions:'关系决策',rejectedCouplings:'拒绝的耦合',strengths:'优势',weaknesses:'弱点',selectionLogic:'选择逻辑',criterion:'准则',decision:'决策',activity:'活动',output:'输出',sequence:'序号',relationships:'关系',aggregates:'聚合',entities:'实体',valueObjects:'值对象',objectRelationships:'对象-聚合关系',aggregateRelationships:'聚合关系',capabilityMappings:'能力映射',qualityAndQuestions:'质量与问题',globalDomainAtlas:'全局领域地图',drilldownWorkbook:'钻取工作簿',relationshipRows:'关系行',selectedContextInspector:'已选上下文检查器',qualityGate:'质量门',commands:'命令',events:'事件',quality:'质量',risks:'风险',source:'来源',target:'目标',type:'类型',description:'描述',journey:'旅程',flow:'流程',prototype:'原型',capabilityMap:'能力地图',glossary:'术语表',journeyCurrent:'当前用户旅程',flowCurrent:'当前流程模型',prototypeCurrent:'当前原型',capabilityMapCurrent:'当前能力地图',glossaryCurrent:'当前术语表',existingMeafCatalogRead:'已读取现有 MEAF 目录',readyForExploration:'已准备进入探索',rawSourceText:'原始来源文本',explorationAllowed:'允许探索',explorationBlocked:'阻止探索',domainDesignRaw:'领域设计 Raw',domainDesignExploration:'领域设计 Exploration',domainDesignCurrent:'领域设计 Current',domainDesignRawSummary:'探索上下文边界前的来源追踪、就绪度、领域信号和风险。',domainDesignExplorationSummary:'边界方案、方法框架、划分逻辑、事件风暴、聚合关系确认、路径比较和评审问题。',domainDesignCurrentSummary:'已评审限界上下文、关系、能力映射、质量门和上下文钻取工作簿。',recommended:'推荐',candidate:'候选',ubiquitousLanguage:'通用语言',context:'上下文',root:'根',answer:'回答',id:'标识',actor:'角色',owner:'所有者',severity:'严重度',path:'路径',kind:'类型',status:'状态',layer:'层级',scope:'范围',parse:'解析',raw:'Raw',rationale:'理由',exploration:'探索',ready:'就绪',missing:'缺失',relationship:'关系',question:'问题',signal:'信号',risk:'风险',term:'术语',finding:'发现',capabilityMapping:'能力映射',boundaries:'边界',lifecycle:'生命周期',preconditions:'前置条件',businessRules:'业务规则',consistencyBoundary:'一致性边界',auditTrace:'审计追踪',decisionTrace:'决策追踪',evidence:'证据',assumptions:'假设',contracts:'契约',payload:'载荷',cardinality:'基数',consistency:'一致性',identityPolicy:'身份策略',equalityBy:'相等性依据',aggregate:'聚合',relatedAggregates:'相关聚合',unrelatedAggregates:'同上下文未直接关联聚合',domainGraph:'领域对象关系图',graphDetail:'节点详情',attributes:'属性',behaviors:'行为',produces:'产生事件',consumes:'消费事件',viaEvent:'经由',openDrilldown:'打开钻取工作簿',openDrilldownHint:'检查聚合、事件、命令、能力映射、质量和风险。',noItems:'没有记录项',noSignals:'没有保留的领域信号。',noRisks:'没有开放风险。',noMissingInputs:'没有缺失输入',noContexts:'没有记录限界上下文。',noRelationships:'没有记录上下文关系。',noMappings:'没有记录能力映射。',langZh:'中文',langEn:'English',rendererError:'领域设计渲染器错误',emptyResourceContent:'ACAS 渲染资源内容为空',nonJsonResourceContent:'资源内容不是 JSON；已作为原始来源追踪展示。',noDomainDesignResource:'未找到领域设计资源',unknownDemoMode:'未知演示模式',demoLoadFailed:'演示加载失败',unableToLoadDemo:'无法加载演示'},
+        en:{waiting:'Waiting for domain design data...',rendererEyebrow:'ACAS Definition · Domain Design',sourceTrace:'Source Trace',readiness:'Readiness',explorationGate:'Exploration Gate',preservedSignals:'Preserved Signals',risksAndMissingInputs:'Risks and Missing Inputs',boundaryOptions:'Boundary Options',methodFrame:'Method Frame',pathComparison:'Path Comparison',selectedOptionAtlas:'Selected Option Atlas',contextPartitioning:'Context Partitioning',eventStorming:'Event Storming Simulation',commandIdentification:'Command Identification',acceptedCommands:'Accepted Commands',rejectedActions:'Rejected Actions',validationChecks:'Validation Checks',identificationSources:'Identification Sources',aggregateRelationshipConfirmation:'Aggregate Relationship Confirmation',partitionLogic:'Partition Logic',processSteps:'Process Steps',eventTimeline:'Event Timeline',hotspots:'Hotspots',boundarySignals:'Boundary Signals',decisionRules:'Decision Rules',relationshipDecisions:'Relationship Decisions',rejectedCouplings:'Rejected Couplings',strengths:'Strengths',weaknesses:'Weaknesses',selectionLogic:'Selection Logic',criterion:'Criterion',decision:'Decision',activity:'Activity',output:'Output',sequence:'Sequence',relationships:'Relationships',aggregates:'Aggregates',entities:'Entities',valueObjects:'Value Objects',objectRelationships:'Object-Aggregate Relationships',aggregateRelationships:'Aggregate Relationships',capabilityMappings:'Capability Mappings',qualityAndQuestions:'Quality and Questions',globalDomainAtlas:'Global Domain Atlas',drilldownWorkbook:'Drilldown Workbook',relationshipRows:'Relationship Rows',selectedContextInspector:'Selected Context Inspector',qualityGate:'Quality Gate',commands:'Commands',events:'Events',quality:'Quality',risks:'Risks',source:'Source',target:'Target',type:'Type',description:'Description',journey:'Journey',flow:'Flow',prototype:'Prototype',capabilityMap:'Capability Map',glossary:'Glossary',journeyCurrent:'Journey Current',flowCurrent:'Flow Current',prototypeCurrent:'Prototype Current',capabilityMapCurrent:'Capability Map Current',glossaryCurrent:'Glossary Current',existingMeafCatalogRead:'Existing MEAF Catalog Read',readyForExploration:'Ready for Exploration',rawSourceText:'Raw source text',explorationAllowed:'Exploration allowed',explorationBlocked:'Exploration blocked',domainDesignRaw:'Domain Design Raw',domainDesignExploration:'Domain Design Exploration',domainDesignCurrent:'Domain Design Current',domainDesignRawSummary:'Source trace, readiness, domain signals, and risks before context-boundary exploration.',domainDesignExplorationSummary:'Boundary options, method frame, partitioning logic, event-storming simulation, aggregate relationship confirmation, path comparison, and review questions.',domainDesignCurrentSummary:'Reviewed bounded contexts, relationships, capability mappings, quality gates, and context drilldown workbook.',recommended:'Recommended',candidate:'Candidate',ubiquitousLanguage:'Ubiquitous Language',context:'Context',root:'Root',answer:'Answer',id:'ID',actor:'Actor',owner:'Owner',severity:'Severity',path:'Path',kind:'Kind',status:'Status',layer:'Layer',scope:'Scope',parse:'Parse',raw:'Raw',rationale:'Rationale',exploration:'Exploration',ready:'Ready',missing:'Missing',relationship:'Relationship',question:'Question',signal:'Signal',risk:'Risk',term:'Term',finding:'Finding',capabilityMapping:'Capability Mapping',boundaries:'Boundaries',lifecycle:'Lifecycle',preconditions:'Preconditions',businessRules:'Business Rules',consistencyBoundary:'Consistency Boundary',auditTrace:'Audit Trace',decisionTrace:'Decision Trace',evidence:'Evidence',assumptions:'Assumptions',contracts:'Contracts',payload:'Payload',cardinality:'Cardinality',consistency:'Consistency',identityPolicy:'Identity Policy',equalityBy:'Equality By',aggregate:'Aggregate',relatedAggregates:'Related Aggregates',unrelatedAggregates:'Unrelated Aggregates in Context',domainGraph:'Domain Object Graph',graphDetail:'Node Detail',attributes:'Attributes',behaviors:'Behaviors',produces:'Produces Event',consumes:'Consumes Event',viaEvent:'via',openDrilldown:'Open Drilldown Workbook',openDrilldownHint:'Inspect aggregates, events, commands, capability mappings, quality, and risks.',noItems:'No items recorded',noSignals:'No preserved domain signals recorded.',noRisks:'No open risks recorded.',noMissingInputs:'No missing inputs',noContexts:'No bounded contexts recorded.',noRelationships:'No context relationships recorded.',noMappings:'No capability mappings recorded.',langZh:'中文',langEn:'English',rendererError:'Domain Design renderer error',emptyResourceContent:'Empty ACAS render resource content',nonJsonResourceContent:'Resource content was not JSON; showing it as a raw source trace.',noDomainDesignResource:'No Domain Design resource found',unknownDemoMode:'Unknown demo mode',demoLoadFailed:'Demo load failed',unableToLoadDemo:'Unable to load demo'}
+      };
+      function t(key){return (UI_LABELS[state.lang]&&UI_LABELS[state.lang][key])||UI_LABELS.en[key]||key}
+      function tx(zh,en){return state.lang==='zh'?zh:en}
+      function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
+      root.innerHTML='<div class="waiting">'+esc(t('waiting'))+'</div>';
+      function arr(v){return Array.isArray(v)?v.filter(x=>x!=null):(v==null||v===''?[]:[v])}
+      function loc(v){if(v&&typeof v==='object'&&!Array.isArray(v)){return v[state.lang]||v.en||v.zh||Object.values(v).find(x=>typeof x==='string')||''}return v==null?'':v}
+      function label(v){return esc(loc(v)||'—')}
+      function idOf(v){return String(v==null?'':v)}
+      function lower(v){return String(v||'').toLowerCase()}
+      function parse(input){
+        const envelope=input&&input.resource?input.resource:input;
+        let raw=envelope&&Object.prototype.hasOwnProperty.call(envelope,'content')?envelope.content:envelope;
+        if(typeof raw==='string'){
+          const trimmed=raw.trim();
+          if(!trimmed)throw new Error(t('emptyResourceContent'));
+          try{return JSON.parse(trimmed)}catch(err){return {kind:'DomainDesignRaw',layer:'Raw',sourceText:trimmed,parseWarningKey:'nonJsonResourceContent'}}
+        }
+        if(raw&&typeof raw==='object')return raw;
+        throw new Error(t('noDomainDesignResource'));
+      }
+      function detect(d){if(d.kind==='DomainDesignRaw'||d.layer==='Raw')return'raw';if(d.kind==='DomainDesignExploration'||d.layer==='Exploration')return'exploration';return'current'}
+      function shell(title,summary,body,meta){return '<div class="shell"><section class="panel top"><div class="bar"><div><div class="eyebrow">'+esc(t('rendererEyebrow'))+'</div><h1>'+esc(title)+'</h1><p class="summary">'+esc(summary||'')+'</p></div><div class="header-actions"><button data-lang="zh" class="'+(state.lang==='zh'?'active':'')+'">'+esc(t('langZh'))+'</button><button data-lang="en" class="'+(state.lang==='en'?'active':'')+'">'+esc(t('langEn'))+'</button></div></div>'+(meta||'')+'</section>'+body+'</div>'}
+      function chip(k,v,cls){const x=loc(v);return x?'<span class="chip '+(cls||'')+'"><strong>'+esc(k)+'</strong> '+esc(x)+'</span>':''}
+      function pill(v,cls){const x=loc(v);return x?'<span class="pill '+(cls||'')+'">'+esc(x)+'</span>':''}
+      function para(v,cls){const x=loc(v);return x?'<p class="'+(cls||'')+'">'+esc(x)+'</p>':''}
+      function list(items,empty){const xs=arr(items).map(loc).filter(Boolean);return xs.length?'<ul>'+xs.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>':'<div class="empty">'+esc(empty||t('noItems'))+'</div>'}
+      function card(title,body,extra){return '<section class="card '+(extra||'')+'"><h2>'+esc(title)+'</h2>'+body+'</section>'}
+      function smallCard(title,body,cls){return '<article class="list-card '+(cls||'')+'"><h3>'+esc(title)+'</h3>'+body+'</article>'}
+      function scopeSummary(scope){return [scope&&loc(scope.application),scope&&loc(scope.scenario),scope&&loc(scope.actor),scope&&loc(scope.outcome)].filter(Boolean).join(' · ')}
+      function render(data){state.data=data;const mode=detect(data);if(mode==='raw')root.innerHTML=rawView(data);else if(mode==='exploration')root.innerHTML=explorationView(data);else root.innerHTML=currentView(data);wire()}
+      function rawView(d){
+        const readiness=d.inputReadiness||{};const gate=d.explorationGate||{};const sourceTrace=[[t('journey'),d.sourceJourneyRef],[t('flow'),d.sourceFlowRef],[t('prototype'),d.sourcePrototypeRef],[t('capabilityMap'),d.sourceCapabilityMapRef],[t('glossary'),d.sourceGlossaryRef]];
+        const sourceBody='<div class="trace">'+sourceTrace.map(([k,v])=>'<article class="trace-item"><h3>'+esc(k)+'</h3>'+para(v,'mini')+'</article>').join('')+(d.sourceText?'<article class="trace-item"><h3>'+esc(t('rawSourceText'))+'</h3><div class="code-block">'+esc(d.sourceText)+'</div></article>':'')+'</div>';
+        const readyKeys=Object.keys(readiness).filter(k=>typeof readiness[k]==='boolean');
+        const readyBody='<div class="readiness">'+readyKeys.map(k=>smallCard(t(k),pill(readiness[k]?t('ready'):t('missing'),readiness[k]?'ok':'risk'),readiness[k]?'ok':'blocking')).join('')+'</div>'+para(readiness.readinessSummary);
+        const signals=arr(d.preservedSignals).map(s=>smallCard(s.signalId||t('signal'),chip(t('type'),s.signalType)+chip(t('source'),s.sourceRef)+para(s.summary)+para(s.domainDesignImpact),'info')).join('')||'<div class="empty">'+esc(t('noSignals'))+'</div>';
+        const risks=arr(d.openRisks).map((r,i)=>smallCard(r.findingId||(t('risk')+' '+(i+1)),para(r.summary||r)+para(r.impact)+para(r.mitigation),'warn')).join('')||'<div class="empty">'+esc(t('noRisks'))+'</div>';
+        const gateBody=pill(gate.allowed?t('explorationAllowed'):t('explorationBlocked'),gate.allowed?'ok':'risk')+para(gate.reason)+list(gate.requiredRepairs,t('noItems'));
+        const meta='<div class="chips">'+chip(t('kind'),d.kind)+chip(t('layer'),d.layer)+chip(t('scope'),scopeSummary(d.scope))+chip(t('parse'),d.parseWarningKey?t(d.parseWarningKey):d.parseWarning,'warn')+'</div>';
+        return shell(t('domainDesignRaw'),t('domainDesignRawSummary'), '<section class="grid"><div class="span-8">'+card(t('sourceTrace'),sourceBody)+ '</div><div class="span-4">'+card(t('readiness'),readyBody)+card(t('explorationGate'),gateBody)+'</div><div class="span-8">'+card(t('preservedSignals'),'<div class="stack">'+signals+'</div>')+'</div><div class="span-4">'+card(t('risksAndMissingInputs'),'<div class="stack">'+risks+list(d.missingInputs,t('noMissingInputs'))+'</div>')+'</div></section>', meta);
+      }
+      function explorationView(d){
+        const opts=arr(d.boundaryOptions);const active=opts.find(o=>o.optionId===state.selectedOption)||opts.find(o=>o.optionId===d.recommendedOptionId)||opts[0]||{};state.selectedOption=active.optionId||state.selectedOption;
+        const optionList='<div class="option-list">'+opts.map(o=>'<button class="option-button '+(o.optionId===active.optionId?'active':'')+'" data-option="'+esc(o.optionId)+'"><strong>'+esc(loc(o.title)||o.optionId)+'</strong>'+para(o.strategy,'mini')+'<span>'+pill(o.optionId===d.recommendedOptionId?t('recommended'):t('candidate'),o.optionId===d.recommendedOptionId?'ok':'info')+'</span></button>').join('')+'</div>';
+        const contextItems=arr(active.contexts).map(c=>contextButton(c,false)).join('');
+        const contexts=contextItems?'<div class="context-grid">'+contextItems+'</div>':'<div class="empty">'+esc(t('noContexts'))+'</div>';
+        const aggregates=arr(active.aggregates).map(a=>smallCard(loc(a.name)||a.aggregateId,chip(t('context'),a.contextId)+chip(t('root'),a.root||a.aggregateRoot)+list(arr(a.domainObjects).map(o=>loc(o.name)||o.objectId),t('noItems'))+list(arr(a.invariants).map(i=>loc(i.statement)||i.invariantId),t('noItems')),'info')).join('')||'<div class="empty">'+esc(t('noItems'))+'</div>';
+        const quality=arr(active.tradeoffs).concat(arr(active.antiPatternFindings),arr(active.openRisks),arr(d.openRisks)).map(q=>finding(q)).join('')||'<div class="empty">'+esc(t('noItems'))+'</div>';
+        const questions=arr(d.clarificationQuestions).map(q=>smallCard(q.questionId||t('question'),para(q.question||q.summary)+para(q.whyItMatters||q.impact)+chip(t('answer'),q.answerType)+list(q.affects,t('noItems')),'warn')).join('')||'<div class="empty">'+esc(t('noItems'))+'</div>';
+        const relationships=relationshipRows(active.contextRelationships||[]);const capabilityMappings=capabilityMappingCards(active.capabilityMappings||[]);
+        const meta='<div class="chips">'+chip(t('kind'),d.kind)+chip(t('layer'),d.layer)+chip(t('raw'),d.rawArtifactRef)+chip(t('recommended'),d.recommendedOptionId)+chip(t('rationale'),d.recommendationRationale)+'</div>';
+        const allowedTabs=['overview','event','aggregates','relationships','quality'];const tab=allowedTabs.includes(state.explorationTab)?state.explorationTab:'overview';state.explorationTab=tab;
+        const optionSummary='<div class="option-summary"><div class="chips">'+pill(active.optionId,'ok')+pill(active.optionId===d.recommendedOptionId?t('recommended'):t('candidate'),active.optionId===d.recommendedOptionId?'ok':'info')+'</div><h2>'+esc(loc(active.title)||active.optionId||t('boundaryOptions'))+'</h2>'+para(active.strategy)+chip(t('rationale'),d.recommendationRationale)+optionDashboard(d,active)+'</div>';
+        const tabs=explorationTabs(tab);
+        const tabBody=explorationTabContent(tab,d,active,{contexts,aggregates,quality,questions,relationships,capabilityMappings});
+        const body='<section class="exploration-layout"><aside>'+card(t('boundaryOptions'),optionList)+card(t('pathComparison'),pathComparison(d.pathComparison))+card(t('methodFrame'),methodFrame(d.explorationMethod))+'</aside><div class="exploration-main">'+optionSummary+tabs+'<div class="tab-panel">'+tabBody+'</div></div></section>';
+        return shell(t('domainDesignExploration'),t('domainDesignExplorationSummary'),body,meta);
+      }
+      function explorationTabs(active){const tabs=[['overview',tx('方案总览','Option Overview')],['event',tx('事件与命令','Events and Commands')],['aggregates',t('aggregates')],['relationships',t('relationships')],['quality',t('qualityAndQuestions')]];return '<div class="tabs">'+tabs.map(([id,label])=>'<button data-exp-tab="'+esc(id)+'" class="'+(active===id?'active':'')+'">'+esc(label)+'</button>').join('')+'</div>'}
+      function explorationTabContent(tab,d,active,parts){
+        if(tab==='event')return '<section class="grid"><div class="span-12">'+card(tx('事件风暴流程','Event Storming Flow'),eventStormingFlow(active))+'</div><div class="span-8">'+card(t('commandIdentification'),commandIdentificationView(active.commandIdentification))+card(t('eventStorming'),eventStormingView(active.eventStormingSimulation))+'</div><div class="span-4">'+card(t('commands'),commandCards(active.commands))+card(t('events'),eventCards(active.events))+'</div></section>';
+        if(tab==='aggregates')return '<section class="grid"><div class="span-5">'+card(t('aggregates'),parts.aggregates)+'</div><div class="span-7">'+card(t('aggregateRelationshipConfirmation'),aggregateConfirmationView(active.aggregateRelationshipConfirmation))+'</div></section>';
+        if(tab==='relationships')return '<section class="grid"><div class="span-7">'+card(t('relationships'),parts.relationships)+'</div><div class="span-5">'+card(t('capabilityMappings'),parts.capabilityMappings)+'</div></section>';
+        if(tab==='quality')return '<section class="grid"><div class="span-7">'+card(t('qualityAndQuestions'),'<div class="stack">'+parts.quality+parts.questions+'</div>')+'</div><div class="span-5">'+card(t('risks'),arr(d.openRisks).map(finding).join('')||'<div class="empty">'+esc(t('noRisks'))+'</div>')+'</div></section>';
+        return '<section class="grid"><div class="span-12">'+card(tx('Context Map','Context Map'),explorationContextMap(active,d))+'</div><div class="span-5">'+card(t('contextPartitioning'),contextPartitioningView(active.contextPartitioning))+'</div><div class="span-7">'+card(t('selectedOptionAtlas'),parts.contexts)+'</div></section>';
+      }
+      function optionDashboard(d,o){const metrics=[[tx('上下文','Contexts'),arr(o.contexts).length],[t('aggregates'),arr(o.aggregates).length],[t('commands'),arr(o.commands).length],[t('events'),arr(o.events).length],[tx('反模式','Anti-patterns'),arr(o.antiPatternFindings).length],[tx('开放风险','Open Risks'),arr(o.openRisks).concat(arr(d.openRisks)).length],[t('status'),o.optionId===d.recommendedOptionId?t('recommended'):t('candidate')]];return '<div class="metric-grid">'+metrics.map(([label,value])=>'<article class="metric"><strong>'+esc(value)+'</strong><span>'+esc(label)+'</span></article>').join('')+'</div>'}
+      function explorationContextMap(o,d){const contexts=arr(o.contexts);if(!contexts.length)return '<div class="empty">'+esc(t('noContexts'))+'</div>';const rels=arr(o.contextRelationships);const ctxById=Object.fromEntries(contexts.map(c=>[c.contextId,c]));const cols=Math.min(3,Math.max(1,contexts.length));const nodeW=240,nodeH=92,gapX=74,gapY=86,left=48,top=58;const width=Math.max(760,left*2+cols*nodeW+(cols-1)*gapX);const rows=Math.ceil(contexts.length/cols);const height=Math.max(280,top*2+rows*nodeH+(rows-1)*gapY+36);const pos={};contexts.forEach((c,i)=>{const col=i%cols,row=Math.floor(i/cols);pos[c.contextId]={x:left+col*(nodeW+gapX),y:top+row*(nodeH+gapY)}});function short(v,n){const s=String(loc(v)||'');return s.length>n?s.slice(0,n-1)+'…':s}function fill(c){const cl=String(c.classification||'');return cl==='core'?'#edf7ef':cl==='supporting'?'#edf5fc':cl==='generic'?'#fff4dc':'#fffdf8'}const pieces=['<defs><marker id="ctxArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 1.5 L 8.5 5 L 0 8.5 z" fill="#8f7f6a"/></marker></defs>'];rels.forEach((r,i)=>{const a=pos[r.sourceContextId||r.fromContextId],b=pos[r.targetContextId||r.toContextId];if(!a||!b)return;const sx=a.x+nodeW,sy=a.y+nodeH/2,tx2=b.x,ty=b.y+nodeH/2;const midX=(sx+tx2)/2,midY=(sy+ty)/2-24-((i%2)*16);pieces.push('<path class="context-map-edge" marker-end="url(#ctxArrow)" d="M'+sx+' '+sy+' Q '+midX+' '+midY+' '+tx2+' '+ty+'"/>');pieces.push('<text class="context-map-label" text-anchor="middle" x="'+midX+'" y="'+(midY-6)+'">'+esc(short(r.relationshipType||r.relationshipId,28))+'</text>')});contexts.forEach(c=>{const p=pos[c.contextId];const isRecommended=o.optionId===d.recommendedOptionId;pieces.push('<g class="context-map-node"><rect x="'+p.x+'" y="'+p.y+'" width="'+nodeW+'" height="'+nodeH+'" rx="10" fill="'+fill(c)+'"></rect><text x="'+(p.x+14)+'" y="'+(p.y+25)+'">'+esc(short(loc(c.name)||c.contextId,24))+'</text><text class="sub" x="'+(p.x+14)+'" y="'+(p.y+45)+'">'+esc(c.contextId)+'</text><text class="sub" x="'+(p.x+14)+'" y="'+(p.y+65)+'">'+esc(c.classification||tx('未分类','unclassified'))+'</text>'+(isRecommended?'<rect class="recommended-badge" x="'+(p.x+nodeW-76)+'" y="'+(p.y+10)+'" width="62" height="22" rx="11"></rect><text class="sub" x="'+(p.x+nodeW-45)+'" y="'+(p.y+25)+'" text-anchor="middle">'+esc(t('recommended'))+'</text>':'')+'</g>')});return '<div class="context-map"><svg viewBox="0 0 '+width+' '+height+'" role="img" aria-label="Context Map">'+pieces.join('')+'</svg></div>'}
+      function eventStormingFlow(o){const timeline=arr(o.eventStormingSimulation&&o.eventStormingSimulation.eventTimeline);if(!timeline.length)return '<div class="empty">'+esc(t('noItems'))+'</div>';const commands=Object.fromEntries(arr(o.commands).map(c=>[c.commandId,c]));const events=Object.fromEntries(arr(o.events).map(e=>[e.eventId,e]));return '<div class="event-flow">'+timeline.map((e,i)=>{const cmd=commands[e.commandId]||{};const ev=events[e.eventId]||{};const hot=arr(e.hotspotIds).length>0;return '<div class="flow-row"><div class="flow-seq">'+esc(e.sequence||i+1)+'</div><div class="flow-step"><span>'+esc(t('actor'))+'</span><strong>'+esc(e.actor||cmd.actor||'—')+'</strong></div><div class="flow-step flow-command"><span>'+esc(t('commands'))+'</span><strong>'+esc(e.commandId||'—')+'</strong></div><div class="flow-step flow-aggregate"><span>'+esc(t('aggregate'))+'</span><strong>'+esc(e.aggregateId||cmd.targetAggregateId||'—')+'</strong></div><div class="flow-step flow-event '+(hot?'flow-hotspot':'')+'"><span>'+esc(hot?t('hotspots'):t('events'))+'</span><strong>'+esc(e.eventId||arr(cmd.emits)[0]||'—')+'</strong>'+para(hot?arr(e.hotspotIds).join(', '):(loc(ev.name)||''),'mini')+'</div></div>'}).join('')+'</div>'}
+      function methodFrame(m){m=m||{};const workstreams=arr(m.workstreams).map(w=>smallCard(w.workstreamId||t('path'),para(w.purpose)+list(w.outputs,t('noItems'))+list(w.decisionChecks,t('noItems')),'info')).join('')||'<div class="empty">'+esc(t('noItems'))+'</div>';return chip(t('id'),m.methodId)+para(m.summary)+list(m.researchRefs,t('noItems'))+'<div class="stack">'+workstreams+'</div>'}
+      function pathComparison(pc){pc=pc||{};const assessments=arr(pc.optionAssessments).map(a=>smallCard(a.optionId||t('path'),para(a.pathSummary)+'<h3>'+esc(t('strengths'))+'</h3>'+list(a.strengths,t('noItems'))+'<h3>'+esc(t('weaknesses'))+'</h3>'+list(a.weaknesses,t('noItems'))+para(a.recommendationFit),'info')).join('')||'<div class="empty">'+esc(t('noItems'))+'</div>';return '<h3>'+esc(t('selectionLogic'))+'</h3>'+para(pc.selectionLogic)+'<h3>'+esc(t('quality'))+'</h3>'+list(pc.comparisonDimensions,t('noItems'))+'<div class="stack">'+assessments+'</div>'}
+      function contextPartitioningView(cp){cp=cp||{};const logic=arr(cp.partitionLogic).map(x=>smallCard(x.criterion||t('criterion'),para(x.signal)+para(x.decision)+list(x.evidenceRefs,t('noItems')),'ok')).join('')||'<div class="empty">'+esc(t('noItems'))+'</div>';const rejected=arr(cp.rejectedCuts).map(finding).join('');return chip(t('path'),cp.direction)+para(cp.rationale)+'<h3>'+esc(t('partitionLogic'))+'</h3><div class="stack">'+logic+'</div><h3>'+esc(tx('上下文','Contexts'))+'</h3>'+list(cp.resultingContextIds,t('noItems'))+(rejected?'<h3>'+esc(t('risk'))+'</h3><div class="stack">'+rejected+'</div>':'')}
+      function commandIdentificationView(ci){ci=ci||{};const sources=arr(ci.identificationSources).map(s=>smallCard(s.sourceType||t('source'),para(s.signal)+para(s.commandInference),'info')).join('')||'<div class="empty">'+esc(t('noItems'))+'</div>';const accepted=arr(ci.acceptedCommands).map(c=>smallCard(c.commandId||t('commands'),chip(t('actor'),c.actor)+chip(t('aggregate'),c.targetAggregateId)+list(c.emittedEventIds,t('noItems'))+para(c.stateChangeIntent)+para(c.acceptanceRationale),'ok')).join('')||'<div class="empty">'+esc(t('noItems'))+'</div>';const rejected=arr(ci.rejectedActions).map(a=>smallCard(loc(a.actionLabel)||t('rejectedActions'),chip(t('source'),a.sourceType)+para(a.rejectionReason),'warn')).join('')||'<div class="empty">'+esc(t('noItems'))+'</div>';const checks=arr(ci.validationChecks).map(c=>smallCard(c.checkId||t('validationChecks'),chip(t('status'),c.result)+para(c.evidence),String(c.result||'').includes('pass')?'ok':'warn')).join('')||'<div class="empty">'+esc(t('noItems'))+'</div>';return para(ci.recognitionRule)+'<div class="two-col"><div><h3>'+esc(t('identificationSources'))+'</h3><div class="stack">'+sources+'</div></div><div><h3>'+esc(t('acceptedCommands'))+'</h3><div class="stack">'+accepted+'</div></div></div><div class="two-col"><div><h3>'+esc(t('rejectedActions'))+'</h3><div class="stack">'+rejected+'</div></div><div><h3>'+esc(t('validationChecks'))+'</h3><div class="stack">'+checks+'</div></div></div>'}
+      function eventStormingView(es){es=es||{};const frame=es.workshopFrame||{};const steps=arr(es.processSteps).map(s=>smallCard(s.stepId||t('activity'),chip(t('activity'),s.activity)+para(s.output),'info')).join('')||'<div class="empty">'+esc(t('noItems'))+'</div>';const timeline=arr(es.eventTimeline).map(e=>smallCard((e.sequence?e.sequence+'. ':'')+(e.eventId||t('events')),chip(t('actor'),e.actor)+chip(t('commands'),e.commandId)+chip(t('aggregate'),e.aggregateId)+para(e.notes)+list(e.hotspotIds,t('noItems')),'ok')).join('')||'<div class="empty">'+esc(t('noItems'))+'</div>';const hotspots=arr(es.hotspots).map(h=>smallCard(h.hotspotId||t('hotspots'),para(h.summary)+para(h.resolution),'warn')).join('');return para(frame.scope)+list(frame.participants,t('noItems'))+list(frame.facilitationRules,t('noItems'))+'<h3>'+esc(t('processSteps'))+'</h3><div class="stack">'+steps+'</div><h3>'+esc(t('eventTimeline'))+'</h3><div class="stack">'+timeline+'</div>'+(hotspots?'<h3>'+esc(t('hotspots'))+'</h3><div class="stack">'+hotspots+'</div>':'')+'<h3>'+esc(t('boundarySignals'))+'</h3>'+list(es.boundarySignals,t('noItems'))}
+      function aggregateConfirmationView(ac){ac=ac||{};const rules=arr(ac.decisionRules).map(r=>smallCard(r.ruleId||t('decisionRules'),para(r.question)+para(r.decisionPolicy),'info')).join('')||'<div class="empty">'+esc(t('noItems'))+'</div>';const decisions=arr(ac.relationshipDecisions).map(d=>smallCard(d.decisionId||t('relationship'),chip(t('source'),d.sourceAggregateId)+chip(t('target'),d.targetAggregateId)+chip(t('type'),d.relationshipKind)+chip(t('consistency'),d.consistencyModel)+list(d.viaEvents,t('noItems'))+para(d.rationale),'ok')).join('')||'<div class="empty">'+esc(t('noItems'))+'</div>';const rejected=arr(ac.rejectedCouplings).map(finding).join('');return '<h3>'+esc(t('decisionRules'))+'</h3><div class="stack">'+rules+'</div><h3>'+esc(t('relationshipDecisions'))+'</h3><div class="stack">'+decisions+'</div>'+(rejected?'<h3>'+esc(t('rejectedCouplings'))+'</h3><div class="stack">'+rejected+'</div>':'')}
+      function currentView(d){
+        const dm=d.domainModel||d;const contexts=arr(dm.boundedContexts);const multi=contexts.find(c=>arr(dm.aggregates).filter(a=>a.contextId===c.contextId).length>1);const selected=contexts.find(c=>c.contextId===state.selectedContext)||multi||contexts[0]||{};if(!state.selectedContext&&selected.contextId)state.selectedContext=selected.contextId;
+        const meta='<div class="tabs"><button data-view="atlas" class="'+(state.view==='atlas'?'active':'')+'">'+esc(t('globalDomainAtlas'))+'</button><button data-view="workbook" class="'+(state.view==='workbook'?'active':'')+'">'+esc(t('drilldownWorkbook'))+'</button></div><div class="chips">'+chip(t('kind'),d.kind)+chip(t('layer'),d.layer)+chip(t('exploration'),d.explorationArtifactRef)+chip(t('scope'),scopeSummary(dm.scope))+'</div>';
+        const body=state.view==='workbook'?workbookView(d,dm,selected):atlasView(d,dm,selected);
+        return shell(t('domainDesignCurrent'),t('domainDesignCurrentSummary'),body,meta);
+      }
+      function atlasView(d,dm,selected){
+        const quality=qualityGate(d.qualityGate);const relationships=relationshipRows(dm.contextRelationships||[]);
+        return '<section class="grid"><div class="span-12">'+card(t('globalDomainAtlas'),globalAtlasGraph(dm,selected))+'</div><div class="span-8">'+card(t('aggregateRelationships'),aggregateRelationshipRows(dm.aggregateRelationships||[]))+card(t('relationshipRows'),relationships)+card(t('auditTrace'),auditTrace(d))+'</div><aside class="span-4 inspector">'+card(t('qualityGate'),quality)+'</aside></section>';
+      }
+      function workbookView(d,dm,ctx){
+        const id=ctx.contextId;const aggs=arr(dm.aggregates).filter(a=>a.contextId===id);const events=arr(dm.domainEvents||dm.events).filter(e=>(e.contextId||e.owningContextId)===id||arr(e.consumers||e.consumedByContextIds).includes(id));const commands=arr(dm.commands).filter(c=>c.contextId===id);const capabilityMappings=arr(dm.capabilityMappings).filter(m=>m.contextId===id);const entities=arr(dm.entities).filter(o=>o.contextId===id);const valueObjects=arr(dm.valueObjects).filter(o=>o.contextId===id);const objectRelationships=arr(dm.objectRelationships).filter(r=>r.contextId===id);const aggregateRelationships=arr(dm.aggregateRelationships).filter(r=>r.sourceContextId===id||r.targetContextId===id);const quality=qualityGate(d.qualityGate)+arr(d.openRisks).map(finding).join('');
+        const risks=arr(d.openRisks).map(finding).join('')||'<div class="empty">'+esc(t('noRisks'))+'</div>';
+        return '<section class="grid"><div class="span-12">'+card(t('domainGraph'),domainGraph(dm,ctx))+'</div><div class="span-12">'+card(t('drilldownWorkbook'),contextInspector(dm,ctx,false))+'</div><div class="span-6">'+card(t('aggregates'),aggregateCards(aggs))+card(t('entities'),domainObjectCards(entities))+card(t('valueObjects'),domainObjectCards(valueObjects))+card(t('commands'),commandCards(commands))+'</div><div class="span-6">'+card(t('objectRelationships'),objectRelationshipCards(objectRelationships))+card(t('aggregateRelationships'),aggregateRelationshipRows(aggregateRelationships))+card(t('events'),eventCards(events))+card(t('capabilityMappings'),capabilityMappingCards(capabilityMappings))+card(t('quality'),quality||'<div class="empty">'+esc(t('noItems'))+'</div>')+'</div><div class="span-8">'+card(t('auditTrace'),auditTrace(d))+'</div><div class="span-4">'+card(t('risks'),risks)+'</div></section>';
+      }
+      function contextButton(c,active){return '<button class="context-card '+(active?'active':'')+'" data-context="'+esc(c.contextId||'')+'"><h3>'+esc(loc(c.name)||c.contextId||t('context'))+'</h3><p class="mission">'+esc(loc(c.mission)||t('noItems'))+'</p><div class="chips">'+pill(c.modelRole,'ok')+pill(c.classification,'info')+arr(c.ownedObjects).slice(0,5).map(x=>pill(x,'info')).join('')+'</div><p class="mini">'+esc(t('openDrilldown'))+'</p></button>'}
+      function contextInspector(dm,ctx,compact){
+        if(!ctx||!ctx.contextId)return '<div class="empty">'+esc(t('noContexts'))+'</div>';
+        const terms=arr(ctx.ubiquitousLanguage).map(term=>smallCard(loc(term.term)||t('term'),para(term.meaning),'info')).join('')||'<div class="empty">'+esc(t('noItems'))+'</div>';
+        const boundaries=list(ctx.boundaries,t('noItems'));const readModels=list(ctx.readModels,t('noItems'));
+        const mappings=capabilityMappingCards(arr(dm.capabilityMappings).filter(m=>m.contextId===ctx.contextId));
+        const eventCount=arr(dm.domainEvents||dm.events).filter(e=>(e.contextId||e.owningContextId)===ctx.contextId||arr(e.consumers||e.consumedByContextIds).includes(ctx.contextId)).length;
+        const counts=[['aggregates',arr(dm.aggregates).filter(a=>a.contextId===ctx.contextId).length],['commands',arr(dm.commands).filter(c=>c.contextId===ctx.contextId).length],['events',eventCount]];
+        return '<div class="stack"><div class="inspector-title"><div><h3>'+esc(loc(ctx.name)||ctx.contextId)+'</h3>'+para(ctx.mission)+'</div>'+pill(ctx.contextId,'ok')+'</div><div class="chips">'+pill(ctx.modelRole,'ok')+pill(ctx.classification,'info')+arr(ctx.ownedObjects).map(x=>pill(x,'info')).join('')+'</div><div class="three-col">'+counts.map(([k,v])=>smallCard(t(k),'<div class="quality-score">'+esc(v)+'</div>')).join('')+'</div><h3>'+esc(t('boundaries'))+'</h3>'+boundaries+(arr(ctx.readModels).length?'<h3>'+esc(t('type'))+'</h3>'+readModels:'')+'<h3>'+esc(t('capabilityMappings'))+'</h3><div class="stack">'+mappings+'</div>'+(compact?'<button class="option-button" data-open-context="'+esc(ctx.contextId)+'"><strong>'+esc(t('openDrilldown'))+'</strong><p class="mini">'+esc(t('openDrilldownHint'))+'</p></button>':'<h3>'+esc(t('ubiquitousLanguage'))+'</h3><div class="stack">'+terms+'</div>')+'</div>';
+      }
+      function aggregateCards(items){return arr(items).map(a=>smallCard(loc(a.name)||a.aggregateId,chip(t('context'),a.contextId)+chip(t('root'),a.aggregateRoot||a.root)+'<h3>'+esc(t('consistencyBoundary'))+'</h3>'+para(a.consistencyBoundary)+'<h3>'+esc(t('lifecycle'))+'</h3>'+list(arr(a.lifecycle),t('noItems'))+list(arr(a.domainObjects).map(o=>loc(o.name)||o.objectId),t('noItems'))+list(arr(a.invariants).map(i=>loc(i.statement)||i.invariantId),t('noItems')),'info')).join('')||'<div class="empty">'+esc(t('noItems'))+'</div>'}
+      function nodeKey(type,id){return type+':'+id}
+      function findGraphNode(dm,key){
+        const parts=String(key||'').split(':');const type=parts[0],id=parts.slice(1).join(':');
+        if(type==='context')return {type,item:arr(dm.boundedContexts).find(c=>c.contextId===id)};
+        if(type==='aggregate')return {type,item:arr(dm.aggregates).find(a=>a.aggregateId===id)};
+        if(type==='entity')return {type,item:arr(dm.entities).find(o=>o.objectId===id)};
+        if(type==='value')return {type,item:arr(dm.valueObjects).find(o=>o.objectId===id)};
+        if(type==='event')return {type,item:arr(dm.domainEvents||dm.events).find(e=>e.eventId===id)};
+        if(type==='readmodel'){const bits=id.split('|');const contextId=bits[0],name=bits.slice(1).join('|');return {type,item:{objectId:name,name,contextId,description:'Read model / projection consumer'}}}
+        if(type==='external')return {type,item:{objectId:id,name:id,description:'External event consumer'}};
+        return {type:null,item:null}
+      }
+      function graphDetail(dm,fallbackKey){
+        const found=findGraphNode(dm,state.selectedGraphNode||fallbackKey);const item=found.item||{};const displayId=found.type==='aggregate'?item.aggregateId:(found.type==='event'?item.eventId:item.objectId);const title=loc(item.name)||displayId||t('graphDetail');let relHtml='';
+        if(found.type==='aggregate'){const same=arr(dm.aggregates).filter(a=>a.contextId===item.contextId&&a.aggregateId!==item.aggregateId);const rels=arr(dm.aggregateRelationships).filter(r=>r.sourceAggregateId===item.aggregateId||r.targetAggregateId===item.aggregateId);const produced=arr(dm.domainEvents||dm.events).filter(e=>e.producerAggregateId===item.aggregateId).map(e=>(loc(e.name)||e.eventId)+' · '+e.eventId);const consumed=arr(dm.domainEvents||dm.events).filter(e=>consumersForEvent(dm,e).has(item.aggregateId)).map(e=>(loc(e.name)||e.eventId)+' · '+e.eventId);const relatedIds=new Set(rels.flatMap(r=>[r.sourceAggregateId,r.targetAggregateId]).filter(x=>x&&x!==item.aggregateId));const related=same.filter(a=>relatedIds.has(a.aggregateId)).map(a=>(loc(a.name)||a.aggregateId)+' · '+a.aggregateId);const unrelated=same.filter(a=>!relatedIds.has(a.aggregateId)).map(a=>(loc(a.name)||a.aggregateId)+' · '+a.aggregateId);relHtml='<h3>'+esc(t('produces'))+'</h3>'+list(produced,t('noItems'))+'<h3>'+esc(t('consumes'))+'</h3>'+list(consumed,t('noItems'))+'<h3>'+esc(t('relatedAggregates'))+'</h3>'+list(related,t('noItems'))+'<h3>'+esc(t('unrelatedAggregates'))+'</h3>'+list(unrelated,t('noItems'));}
+        if(found.type==='event'){const producer=arr(dm.aggregates).find(a=>a.aggregateId===item.producerAggregateId);const targets=eventTargets(dm,item).map(x=>x.label+' · '+x.id);relHtml='<h3>'+esc(producerAggregateLabel())+'</h3>'+list([producer?(loc(producer.name)||producer.aggregateRoot||producer.aggregateId)+' · '+producer.aggregateId:item.producerAggregateId],t('noItems'))+'<h3>'+esc(t('target'))+'</h3>'+list(targets,t('noItems'));}
+        return smallCard(title,chip(t('type'),found.type||item.objectType)+chip(t('id'),displayId)+chip(t('aggregate'),found.type==='aggregate'?'':item.aggregateId||item.producerAggregateId)+chip(t('context'),item.contextId||item.owningContextId)+para(item.description||item.meaning||item.consistencyBoundary)+'<h3>'+esc(t('attributes'))+'</h3>'+list(item.attributes,t('noItems'))+'<h3>'+esc(t('behaviors'))+'</h3>'+list(item.behaviors,t('noItems'))+relHtml,'ok')
+      }
+      function producerAggregateLabel(){return state.lang==='zh'?'产出聚合根':'Producing Aggregate'}
+      function consumersForEvent(dm,e){
+        const ids=new Set(arr(e.consumedByAggregateIds));const aggs=arr(dm.aggregates);const byContext={};aggs.forEach(a=>{(byContext[a.contextId]||(byContext[a.contextId]=[])).push(a.aggregateId)});
+        arr(dm.aggregateRelationships).forEach(r=>{let mediated=false;arr(r.eventMediations).forEach(m=>{if(m.eventId===e.eventId){mediated=true;if((!m.sourceAggregateId||m.sourceAggregateId===e.producerAggregateId)&&m.targetAggregateId)ids.add(m.targetAggregateId)}});if(!mediated&&arr(r.viaEvents).includes(e.eventId)&&(!r.sourceAggregateId||r.sourceAggregateId===e.producerAggregateId)&&r.targetAggregateId)ids.add(r.targetAggregateId)});
+        arr(e.consumers).concat(arr(e.consumedByContextIds)).forEach(contextId=>{const contextAggregates=arr(byContext[contextId]);if(contextAggregates.length===1&&contextAggregates[0]!==e.producerAggregateId)ids.add(contextAggregates[0])});
+        return ids
+      }
+      function contextsForEvent(dm,e){const ids=new Set(arr(e.consumers).concat(arr(e.consumedByContextIds)));arr(dm.aggregateRelationships).forEach(r=>{if(arr(r.viaEvents).includes(e.eventId)&&r.targetContextId)ids.add(r.targetContextId);arr(r.eventMediations).forEach(m=>{if(m.eventId===e.eventId&&r.targetContextId)ids.add(r.targetContextId)})});return ids}
+      function eventTargets(dm,e){
+        const aggs=arr(dm.aggregates);const aggById=Object.fromEntries(aggs.map(a=>[a.aggregateId,a]));const ctxById=Object.fromEntries(arr(dm.boundedContexts).map(c=>[c.contextId,c]));const targets=[];const seen=new Set();
+        function add(target){if(!target||seen.has(target.key))return;seen.add(target.key);targets.push(target)}
+        consumersForEvent(dm,e).forEach(id=>{const a=aggById[id];if(a)add({type:'aggregate',id:a.aggregateId,key:nodeKey('aggregate',a.aggregateId),label:loc(a.name)||a.aggregateRoot||a.aggregateId,sub:a.contextId})});
+        const representedContexts=new Set(targets.filter(x=>x.type==='aggregate').map(x=>aggById[x.id]&&aggById[x.id].contextId).filter(Boolean));
+        contextsForEvent(dm,e).forEach(contextId=>{if(aggById[contextId]||representedContexts.has(contextId))return;const ctx=ctxById[contextId];if(ctx&&arr(ctx.readModels).length){arr(ctx.readModels).forEach(readModel=>add({type:'readmodel',id:readModel,key:nodeKey('readmodel',contextId+'|'+readModel),label:readModel,sub:ctx.contextId}))}else if(ctx){add({type:'context',id:ctx.contextId,key:nodeKey('context',ctx.contextId),label:loc(ctx.name)||ctx.contextId,sub:ctx.modelRole||ctx.classification})}else if(contextId){add({type:'external',id:contextId,key:nodeKey('external',contextId),label:contextId,sub:'external'})}});
+        return targets
+      }
+      function globalAtlasGraph(dm,selected){
+        const aggs=arr(dm.aggregates);const events=arr(dm.domainEvents||dm.events);const aggById=Object.fromEntries(aggs.map(a=>[a.aggregateId,a]));const eventById=Object.fromEntries(events.map(e=>[e.eventId,e]));if(!aggs.length&&!events.length)return '<div class="empty">'+esc(t('noRelationships'))+'</div>';
+        const contexts=arr(dm.boundedContexts);const ctxById=Object.fromEntries(contexts.map(c=>[c.contextId,c]));const nodes={},edges=[];function addNode(node){if(!node||nodes[node.key])return nodes[node.key];nodes[node.key]=node;return node}function addEdge(source,target,kind,eventId){if(source&&target)edges.push({source,target,kind,eventId,key:source+'|'+eventId+'|'+target})}
+        aggs.forEach(a=>addNode({key:nodeKey('aggregate',a.aggregateId),type:'aggregate',id:a.aggregateId,label:loc(a.name)||a.aggregateRoot||a.aggregateId,sub:a.aggregateRoot||a.aggregateId,contextId:a.contextId}));
+        contexts.forEach(c=>arr(c.readModels).forEach(r=>addNode({key:nodeKey('readmodel',c.contextId+'|'+r),type:'readmodel',id:r,label:r,sub:c.contextId,contextId:c.contextId})));
+        events.forEach(e=>{const producer=aggById[e.producerAggregateId];if(!producer)return;const eventKey=nodeKey('event',e.eventId);addNode({key:eventKey,type:'event',id:e.eventId,label:loc(e.name)||e.eventId,producerId:e.producerAggregateId,producerLabel:loc(producer.name)||producer.aggregateRoot||e.producerAggregateId,contextId:producer.contextId});addEdge(nodeKey('aggregate',e.producerAggregateId),eventKey,'produce',e.eventId);eventTargets(dm,e).forEach(target=>{if(!nodes[target.key])addNode({key:target.key,type:target.type,id:target.id,label:target.label,sub:target.sub,contextId:target.type==='aggregate'&&aggById[target.id]?aggById[target.id].contextId:(target.key.startsWith('readmodel:')?target.key.split(':')[1].split('|')[0]:target.id)});addEdge(eventKey,target.key,'consume',e.eventId)})});
+        
+        function getNodeWidth(n) {
+          const textLen = (str) => {
+            if (!str) return 0;
+            let len = 0;
+            for (let i = 0; i < str.length; i++) {
+              len += str.charCodeAt(i) > 255 ? 11 : 6.0;
+            }
+            return len;
+          };
+          const labelLen = textLen(loc(n.label));
+          if (n.type === 'event') {
+            const prodLabel = loc(n.producerLabel) || '';
+            const prodText = state.lang === 'zh' ? '产自: ' + prodLabel : 'From: ' + prodLabel;
+            const prodTextLen = textLen(prodText) * 0.82;
+            const maxEventLen = Math.max(labelLen, prodTextLen);
+            return Math.max(90, Math.min(260, maxEventLen + 28));
+          } else {
+            const subLen = textLen(loc(n.sub || n.id || '')) * 0.82;
+            const maxLen = Math.max(labelLen, subLen);
+            return Math.max(100, Math.min(260, maxLen + 28));
+          }
+        }
+
+        const eventH = 46, nodeH = 58;
+        Object.values(nodes).forEach(n=>{
+          n.w = getNodeWidth(n);
+          n.h = n.type==='event' ? eventH : nodeH;
+        });
+
+        let ctxIds=[...new Set(contexts.map(c=>c.contextId).concat(Object.values(nodes).map(n=>n.contextId).filter(Boolean)))];const rowH=146,top=48,left=34,ctxX=28;
+        const isAcasCaseSupport=!!nodes[nodeKey('aggregate','support_issue')];
+        if(isAcasCaseSupport){
+          const customCtxOrder=['issue_intake','support_case','status_timeline','policy_sla','notification'];
+          ctxIds=customCtxOrder.filter(id=>ctxIds.includes(id)).concat(ctxIds.filter(id=>!customCtxOrder.includes(id)));
+        }
+        const ctxOrder=Object.fromEntries(ctxIds.map((id,i)=>[id,i]));const positions={},pieces=[];
+        
+        pieces.push('<defs>' +
+          '<marker id="arrowProduce" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 1.5 L 8.5 5 L 0 8.5 z" fill="#e1831d"/></marker>' +
+          '<marker id="arrowConsume" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 1.5 L 8.5 5 L 0 8.5 z" fill="#3b82f6"/></marker>' +
+          '<marker id="arrowActive" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 1.5 L 8.5 5 L 0 8.5 z" fill="#10b981"/></marker>' +
+          '</defs>');
+
+        function short(v,n){const s=String(loc(v)||'');return s.length>n?s.slice(0,n-1)+'…':s}
+
+        if(isAcasCaseSupport){
+          const colMap = {
+            'aggregate:support_issue': 0,
+            'event:IssueSubmitted': 1,
+            'event:IssueReopenRequested': 1,
+            'aggregate:case_routing_policy': 2,
+            'event:CaseRoutingPolicyActivated': 3,
+            'aggregate:support_case': 4,
+            'aggregate:sla_policy': 4,
+            'event:SupportCaseCreated': 5,
+            'event:SupportCaseAssigned': 5,
+            'event:EvidenceRequested': 5,
+            'event:ResolutionProposed': 5,
+            'event:SupportCaseReopened': 5,
+            'event:SlaVisibilityEvaluated': 5,
+            'aggregate:resolution_feedback': 6,
+            'readmodel:status_timeline|StatusTimeline': 6,
+            'aggregate:notification_request': 6,
+            'event:ResolutionFeedbackSubmitted': 7,
+            'event:NotificationDelivered': 7,
+            'external:event_ledger': 7
+          };
+
+          const setPos = (key, colVal, y) => {
+            const n = nodes[key];
+            if (n) {
+              n.col = colVal;
+              positions[key] = { x: 0, y, w: n.w, h: n.h };
+            }
+          };
+
+          setPos(nodeKey('aggregate','support_issue'), 0, top+0*rowH+28);
+          setPos(nodeKey('aggregate','case_routing_policy'), 2, top+1*rowH+28);
+          setPos(nodeKey('aggregate','support_case'), 4, top+1*rowH+28);
+          setPos(nodeKey('aggregate','resolution_feedback'), 6, top+1*rowH+28);
+          setPos(nodeKey('readmodel','status_timeline|StatusTimeline'), 6, top+2*rowH+28);
+          setPos(nodeKey('aggregate','sla_policy'), 4, top+3*rowH+28);
+          setPos(nodeKey('aggregate','notification_request'), 6, top+4*rowH+28);
+
+          setPos(nodeKey('event','IssueSubmitted'), 1, top+0*rowH+34);
+          setPos(nodeKey('event','IssueReopenRequested'), 1, top+0*rowH-20);
+          setPos(nodeKey('event','CaseRoutingPolicyActivated'), 3, top+1*rowH+85);
+
+          setPos(nodeKey('event','SupportCaseCreated'), 5, top+1*rowH-60);
+          setPos(nodeKey('event','SupportCaseAssigned'), 5, top+1*rowH-10);
+          setPos(nodeKey('event','EvidenceRequested'), 5, top+1*rowH+40);
+          setPos(nodeKey('event','ResolutionProposed'), 5, top+1*rowH+90);
+          setPos(nodeKey('event','SupportCaseReopened'), 5, top+1*rowH+140);
+
+          setPos(nodeKey('event','ResolutionFeedbackSubmitted'), 7, top+1*rowH-20);
+          setPos(nodeKey('event','SlaVisibilityEvaluated'), 5, top+3*rowH+28);
+          setPos(nodeKey('event','NotificationDelivered'), 7, top+4*rowH+80);
+
+          setPos(nodeKey('external','event_ledger'), 7, top+1*rowH+110);
+
+          Object.values(nodes).forEach(n => {
+            if (n.col === undefined) n.col = 6;
+          });
+
+          const colWidths = {};
+          for (let c = 0; c <= 7; c++) {
+            const nodesInCol = Object.values(nodes).filter(n => n.col === c);
+            colWidths[c] = nodesInCol.length ? Math.max(...nodesInCol.map(n => n.w)) : 0;
+          }
+
+          const colXCoords = {};
+          const horizontalGap = 45;
+          let currentX = 46;
+          for (let c = 0; c <= 7; c++) {
+            colXCoords[c] = currentX;
+            if (colWidths[c] > 0) {
+              currentX += colWidths[c] + horizontalGap;
+            }
+          }
+
+          Object.keys(nodes).forEach(key => {
+            const n = nodes[key];
+            if (positions[key]) {
+              positions[key].x = colXCoords[n.col];
+            } else {
+              positions[key] = { x: colXCoords[6], y: top+2*rowH+28, w: n.w, h: n.h };
+            }
+          });
+
+          var dynamicWidth = Math.max(1240, currentX - horizontalGap + 46);
+          var ctxW = dynamicWidth - ctxX - 46;
+        }else{
+          var dynamicWidth = 1240;
+          var ctxW = 1120;
+          const byCtx={};Object.values(nodes).filter(n=>n.type!=='event').forEach(n=>{(byCtx[n.contextId||'external']||(byCtx[n.contextId||'external']=[])).push(n)});
+          Object.entries(byCtx).forEach(([ctxId,items]) => {
+            const row=ctxOrder[ctxId]??ctxIds.length;
+            items.sort((a,b)=>(a.type==='aggregate'?0:1)-(b.type==='aggregate'?0:1)||a.label.localeCompare(b.label));
+            let currX = left + 42;
+            items.forEach((n)=>{
+              positions[n.key]={x:currX,y:top+row*rowH+28,w:n.w,h:n.h};
+              currX += n.w + 35;
+            });
+            if (currX + 80 > dynamicWidth) {
+              dynamicWidth = currX + 80;
+              ctxW = dynamicWidth - ctxX - 46;
+            }
+          });
+          const eventSlots={};
+          events.forEach(e=>{
+            const source=positions[nodeKey('aggregate',e.producerAggregateId)];
+            if(!source)return;
+            const targets=eventTargets(dm,e).map(t=>positions[t.key]).filter(Boolean);
+            const avgTargetY=targets.length?targets.reduce((sum,p)=>sum+p.y+p.h/2,0)/targets.length:source.y+source.h/2;
+            const avgTargetX=targets.length?targets.reduce((sum,p)=>sum+p.x,0)/targets.length:source.x+260;
+            const rowKey=Math.round((source.y+avgTargetY)/80);
+            eventSlots[rowKey]=(eventSlots[rowKey]||0)+1;
+            const slot=eventSlots[rowKey]-1;
+            const evNode = nodes[nodeKey('event',e.eventId)];
+            const evW = evNode ? evNode.w : 120;
+            const evH = evNode ? evNode.h : eventH;
+            positions[nodeKey('event',e.eventId)]={
+              x:Math.min(dynamicWidth-evW-80,Math.max(source.x+source.w+40,avgTargetX-evW/2+slot*18)),
+              y:Math.max(38,(source.y+source.h/2+avgTargetY)/2-evH/2+slot*28),
+              w:evW,
+              h:evH
+            };
+          });
+        }
+
+        ctxIds.forEach((id,i)=>{
+          const y=top+i*rowH;
+          pieces.push('<rect class="graph-context" x="'+ctxX+'" y="'+(y-22)+'" width="'+ctxW+'" height="'+(rowH-20)+'" rx="14"/>');
+          pieces.push('<text class="graph-context-title" x="'+(ctxX+14)+'" y="'+(y-4)+'">'+esc(loc(ctxById[id]&&ctxById[id].name)||id)+'</text>')
+        });
+
+        function fillFor(n){return n.type==='aggregate'?'#edf7ef':n.type==='event'?'#fff4dc':n.type==='readmodel'?'#edf5fc':n.type==='context'?'#f4fbf6':'#fff9ef'}
+        function hoverData(key){const n=nodes[key];const activeNodes=new Set([key]),activeEdges=new Set();if(n&&n.type==='event'){const e=eventById[n.id];activeNodes.add(nodeKey('aggregate',e.producerAggregateId));eventTargets(dm,e).forEach(t=>activeNodes.add(t.key));edges.filter(edge=>edge.eventId===e.eventId).forEach(edge=>activeEdges.add(edge.key))}else if(n&&n.type==='aggregate'){events.forEach(e=>{const produced=e.producerAggregateId===n.id;const consumed=consumersForEvent(dm,e).has(n.id);if(produced||consumed){activeNodes.add(nodeKey('event',e.eventId));edges.filter(edge=>edge.eventId===e.eventId&&(produced||edge.target===key||edge.source===key)).forEach(edge=>activeEdges.add(edge.key));if(produced)eventTargets(dm,e).forEach(t=>activeNodes.add(t.key))}})}return {nodes:[...activeNodes],edges:[...activeEdges]}}
+        function dataList(xs){return esc(xs.join(' '))}
+        
+        function nodeBox(n,x,y){
+          const hover=hoverData(n.key);
+          const active=state.selectedGraphNode===n.key;
+          const w=positions[n.key]?.w||n.w||160;
+          const h=positions[n.key]?.h||n.h||58;
+          if(n.type==='event'){
+            const prodText=state.lang==='zh'?'产自: '+short(n.producerLabel||'',14):'From: '+short(n.producerLabel||'',14);
+            return '<g class="graph-node '+(active?'active':'')+'" data-node-id="'+esc(n.key)+'" data-hover-nodes="'+dataList(hover.nodes)+'" data-hover-edges="'+dataList(hover.edges)+'" tabindex="0"><ellipse cx="'+(x+w/2)+'" cy="'+(y+h/2)+'" rx="'+(w/2)+'" ry="'+(h/2)+'" fill="'+fillFor(n)+'"></ellipse><text text-anchor="middle" x="'+(x+w/2)+'" y="'+(y+h/2-3)+'">'+esc(short(n.label,22))+'</text><text class="sub" text-anchor="middle" x="'+(x+w/2)+'" y="'+(y+h/2+12)+'">'+esc(prodText)+'</text></g>'
+          }
+          return '<g class="graph-node '+(active?'active':'')+'" data-node-id="'+esc(n.key)+'" data-hover-nodes="'+dataList(hover.nodes)+'" data-hover-edges="'+dataList(hover.edges)+'" tabindex="0"><rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="10" fill="'+fillFor(n)+'"></rect><text x="'+(x+12)+'" y="'+(y+23)+'">'+esc(short(n.label,26))+'</text><text class="sub" x="'+(x+12)+'" y="'+(y+43)+'">'+esc(short(n.sub||n.id,32))+'</text></g>'
+        }
+        
+        function anchor(p,target,isEvent,isTarget){
+          const cx=p.x+p.w/2,cy=p.y+p.h/2;
+          const tx=target.x+target.w/2,ty=target.y+target.h/2;
+          const dx=tx-cx,dy=ty-cy;
+          const dist=Math.hypot(dx,dy)||1;
+          const gap = isTarget ? (isEvent ? 9 : 12) : 4;
+          if(isEvent){
+            const rx=p.w/2,ry=p.h/2;
+            const costheta = dx/dist, sintheta = dy/dist;
+            const denom = Math.hypot(ry*costheta, rx*sintheta)||1;
+            const r = (rx*ry)/denom;
+            const factor = (r+gap)/dist;
+            return {x:cx+dx*factor,y:cy+dy*factor};
+          } else {
+            const halfW=p.w/2,halfH=p.h/2;
+            let t=1;
+            const absDx=Math.abs(dx),absDy=Math.abs(dy);
+            if(absDx*halfH>absDy*halfW){
+              t=halfW/absDx;
+            }else{
+              t=halfH/absDy;
+            }
+            const boundaryDist=dist*t;
+            const effDist=boundaryDist+gap;
+            const factor=effDist/dist;
+            return {x:cx+dx*factor,y:cy+dy*factor};
+          }
+        }
+
+        edges.forEach(edge=>{
+          const a=positions[edge.source],b=positions[edge.target];
+          if(!a||!b)return;
+          const s=anchor(a,b,nodes[edge.source].type==='event',false),
+                tgt=anchor(b,a,nodes[edge.target].type==='event',true);
+          const midX=(s.x+tgt.x)/2;
+          const path='M'+s.x+' '+s.y+' C '+midX+' '+s.y+' '+midX+' '+tgt.y+' '+tgt.x+' '+tgt.y;
+          const markerId=edge.kind==='produce'?'arrowProduce':'arrowConsume';
+          pieces.push('<path class="graph-edge '+(edge.kind==='produce'?'event':'consume')+'" data-edge-id="'+esc(edge.key)+'" marker-end="url(#'+markerId+')" d="'+path+'"/>')
+        });
+
+        Object.keys(nodes).forEach(key=>{const p=positions[key];if(p)pieces.push(nodeBox(nodes[key],p.x,p.y))});
+        
+        const fallback=state.selectedGraphNode||nodeKey('aggregate',aggs[0]?.aggregateId||'');
+        const height=Math.max(560,top+ctxIds.length*rowH+60);
+        return '<div class="domain-graph"><div class="graph-scroll"><svg viewBox="0 0 '+dynamicWidth+' '+height+'" width="'+dynamicWidth+'" height="'+height+'" preserveAspectRatio="xMinYMin meet" role="img" aria-label="'+esc(t('globalDomainAtlas'))+'">'+pieces.join('')+'</svg></div><div class="graph-detail stack"><h3>'+esc(t('graphDetail'))+'</h3>'+atlasDetail(dm,fallback)+'</div></div>'
+      }
+      function atlasDetail(dm,fallbackKey){const found=findGraphNode(dm,state.selectedGraphNode||fallbackKey);if(found.type==='context'&&found.item)return contextInspector(dm,found.item,true);if(found.type==='aggregate'&&found.item)return graphDetail(dm,nodeKey('aggregate',found.item.aggregateId))+'<button class="option-button" data-open-context="'+esc(found.item.contextId)+'"><strong>'+esc(t('openDrilldown'))+'</strong><p class="mini">'+esc(t('openDrilldownHint'))+'</p></button>';return graphDetail(dm,fallbackKey)}
+      function domainGraph(dm,ctx){
+        const id=ctx.contextId;const aggs=arr(dm.aggregates).filter(a=>a.contextId===id);const aggregateIds=new Set(aggs.map(a=>a.aggregateId));
+        const allEvents=arr(dm.domainEvents).filter(e=>aggregateIds.has(e.producerAggregateId)||[...consumersForEvent(dm,e)].some(x=>aggregateIds.has(x)));
+        const colW=250, left=34, top=26, aggW=210, objectH=23, rowH=54;
+        const maxObjects=Math.max(1,...aggs.map(a=>arr(a.domainObjects).length));
+        const aggH=82+maxObjects*objectH;const routeTop=top+aggH+46;
+        const routeEvents=allEvents.length?allEvents:[{eventId:'no_events',name:t('events'),producerAggregateId:null,consumedByAggregateIds:[]}];
+        const width=Math.max(820,left*2+aggs.length*colW);const height=Math.max(390,routeTop+routeEvents.length*rowH+34);
+        const nodeMap={};const pieces=[];const lanes=[];const colLines=[];
+        aggs.forEach((a,i)=>{const x=left+i*colW;colLines.push('<line class="graph-grid-line" x1="'+(x+aggW/2)+'" y1="'+(top+aggH+12)+'" x2="'+(x+aggW/2)+'" y2="'+(height-18)+'"/>')});
+        aggs.forEach((a,i)=>{const x=left+i*colW,y=top;const key=nodeKey('aggregate',a.aggregateId);nodeMap[key]={x,y,w:aggW,h:aggH};
+          let inner='';arr(a.domainObjects).forEach((o,j)=>{const kind=o.objectType==='value_object'?'value':'entity';const oy=y+58+j*objectH;const ok=nodeKey(kind,o.objectId);nodeMap[ok]={x:x+14,y:oy,w:aggW-28,h:18};inner+='<g class="graph-node '+(state.selectedGraphNode===ok?'active':'')+'" data-node-id="'+esc(ok)+'" tabindex="0"><rect x="'+(x+14)+'" y="'+oy+'" width="'+(aggW-28)+'" height="18" rx="6" fill="'+(kind==='value'?'#fff4dc':'#edf5fc')+'"></rect><text class="sub" x="'+(x+23)+'" y="'+(oy+13)+'">'+esc(loc(o.name)||o.objectId)+' · '+esc(o.objectType)+'</text></g>'});
+          pieces.push('<g class="graph-node '+(state.selectedGraphNode===key?'active':'')+'" data-node-id="'+esc(key)+'" tabindex="0"><rect x="'+x+'" y="'+y+'" width="'+aggW+'" height="'+aggH+'" rx="12" fill="#edf7ef"></rect><text x="'+(x+14)+'" y="'+(y+24)+'">'+esc(loc(a.name)||a.aggregateId)+'</text><text class="sub" x="'+(x+14)+'" y="'+(y+42)+'">'+esc(a.aggregateRoot||a.aggregateId)+'</text></g>'+inner);
+        });
+        routeEvents.forEach((e,j)=>{const y=routeTop+j*rowH;const consumers=consumersForEvent(dm,e);lanes.push('<rect class="graph-lane" x="'+(left-10)+'" y="'+(y-20)+'" width="'+(width-left*2+20)+'" height="'+(rowH-10)+'" rx="9"/>');aggs.forEach((a,i)=>{const x=left+i*colW;const isSource=e.producerAggregateId===a.aggregateId;const isTarget=consumers.has(a.aggregateId);if(!isSource&&!isTarget)return;const ek=nodeKey('event',e.eventId);const fill=isSource?'#fff0ed':'#edf5fc';const label=isSource?(loc(e.name)||e.eventId):t('consumes');pieces.push('<g class="graph-node '+(state.selectedGraphNode===ek?'active':'')+'" data-node-id="'+esc(ek)+'" tabindex="0"><rect x="'+(x+8)+'" y="'+(y-10)+'" width="'+(aggW-16)+'" height="26" rx="9" fill="'+fill+'"></rect><text x="'+(x+17)+'" y="'+(y+2)+'">'+esc(label)+'</text><text class="sub" x="'+(x+17)+'" y="'+(y+14)+'">'+esc(isSource?e.eventId:t('viaEvent')+' '+e.eventId)+'</text></g>')})});
+        const first=aggs[0]&&nodeKey('aggregate',aggs[0].aggregateId);return '<div class="domain-graph"><svg viewBox="0 0 '+width+' '+height+'" role="img" aria-label="'+esc(t('domainGraph'))+'">'+colLines.join('')+lanes.join('')+pieces.join('')+'</svg><div class="graph-detail stack"><h3>'+esc(t('graphDetail'))+'</h3>'+graphDetail(dm,state.selectedGraphNode||first)+'</div></div>'
+      }
+      function domainObjectCards(items){return arr(items).map(o=>{const rel=o.aggregateRelationship||{};return smallCard(loc(o.name)||o.objectId,chip(t('id'),o.objectId)+chip(t('type'),o.objectType)+chip(t('aggregate'),o.aggregateId)+chip(t('identityPolicy'),o.identityPolicy)+para(o.description)+(arr(o.equalityBy).length?'<h3>'+esc(t('equalityBy'))+'</h3>'+list(o.equalityBy,t('noItems')):'')+'<h3>'+esc(t('relationship'))+'</h3>'+chip(t('type'),rel.relationshipType)+chip(t('cardinality'),rel.cardinality)+chip(t('consistency'),rel.consistency)+para(rel.rationale),'info')}).join('')||'<div class="empty">'+esc(t('noItems'))+'</div>'}
+      function objectRelationshipCards(items){return arr(items).map(r=>smallCard(r.relationshipId||r.objectId,chip(t('aggregate'),r.aggregateId)+chip(t('root'),r.aggregateRoot)+chip(t('id'),r.objectId)+chip(t('type'),r.objectType||r.relationshipType)+chip(t('cardinality'),r.cardinality)+chip(t('consistency'),r.consistency)+para(r.rationale),'info')).join('')||'<div class="empty">'+esc(t('noRelationships'))+'</div>'}
+      function aggregateRelationshipRows(items){const rows=arr(items).map(r=>'<div class="relationship-row"><div>'+esc(r.relationshipType||r.relationshipId||'')+'<br>'+esc(r.relationshipScope||'')+'</div><div>'+esc(r.sourceAggregateRoot||r.sourceAggregateId||'')+'<br>'+esc(r.sourceContextId||'')+'</div><div class="arrow">via events<br>'+esc(arr(r.viaEvents).join(', '))+'<br>to '+esc(r.targetAggregateRoot||r.targetAggregateId||r.targetReadModel||'')+' · '+esc(r.targetContextId||'')+'</div><div>'+esc(loc(r.description)||'')+'<br>'+esc(r.consistency||'')+'</div></div>').join('');return '<div class="relationship-list"><div class="relationship-row head"><div>'+esc(t('type'))+'</div><div>'+esc(t('source'))+'</div><div>'+esc(t('target'))+'</div><div>'+esc(t('description'))+'</div></div>'+(rows||'<div class="empty">'+esc(t('noRelationships'))+'</div>')+'</div>'}
+      function commandCards(items){return arr(items).map(c=>smallCard(loc(c.name)||c.commandId,chip(t('id'),c.commandId)+chip(t('actor'),c.actor)+chip(t('target'),c.targetAggregateId)+para(c.intent)+'<h3>'+esc(t('preconditions'))+'</h3>'+list(c.preconditions,t('noItems'))+'<h3>'+esc(t('businessRules'))+'</h3>'+list(c.businessRules,t('noItems'))+list(c.emits||c.triggeredEventIds,t('noItems')),'ok')).join('')||'<div class="empty">'+esc(t('noItems'))+'</div>'}
+      function eventCards(items){return arr(items).map(e=>smallCard(loc(e.name)||e.eventId,chip(t('id'),e.eventId)+chip(t('owner'),e.owningContextId||e.contextId)+chip(t('aggregate'),e.producerAggregateId)+chip(t('payload'),e.payloadSummary)+para(e.meaning)+'<h3>'+esc(t('consumes'))+'</h3>'+list([...consumersForEvent((state.data&&state.data.domainModel)||state.data||{},e)],t('noItems'))+list(e.consumers||e.consumedByContextIds,t('noItems'))+list(e.sourceRefs,t('noItems')),'warn')).join('')||'<div class="empty">'+esc(t('noItems'))+'</div>'}
+      function capabilityMappingCards(items){return arr(items).map(m=>{const modules=arr(m.moduleRefs);const sources=arr(m.sourceRefs);return smallCard(m.capabilityRef||m.capabilityId||t('capabilityMapping'),chip(t('context'),m.contextId)+chip(t('status'),m.mappingStatus)+chip(t('type'),m.mappingType)+para(m.rationale)+(modules.length?list(modules,t('noItems')):'')+(sources.length?list(sources,t('noItems')):''),'info')}).join('')||'<div class="empty">'+esc(t('noMappings'))+'</div>'}
+      function relationshipRows(items){const rows=arr(items).map(r=>'<div class="relationship-row"><div>'+esc(loc(r.relationshipType)||r.relationshipId||t('relationship'))+'</div><div>'+esc(r.sourceContextId||r.fromContextId||'')+'</div><div class="arrow">→ '+esc(r.targetContextId||r.toContextId||'')+'</div><div>'+esc(loc(r.description)||arr(r.candidateContractRefs).concat(arr(r.eventRefs)).join(', '))+'</div></div>').join('');return '<div class="relationship-list"><div class="relationship-row head"><div>'+esc(t('type'))+'</div><div>'+esc(t('source'))+'</div><div>'+esc(t('target'))+'</div><div>'+esc(t('description'))+'</div></div>'+(rows||'<div class="empty">'+esc(t('noRelationships'))+'</div>')+'</div>'}
+      function qualityGate(q){if(!q)return '<div class="empty">'+esc(t('noItems'))+'</div>';const score=Number(q.score||q.readinessScore||0);const status=q.status||q.result||(score>=80?'pass':score?'review':'unknown');const findings=arr(q.findings||q.checks||q.openFindings).map(finding).join('');return '<div class="stack"><div>'+pill(status,status==='pass'||status==='passed'?'ok':status==='fail'||status==='failed'?'risk':'warn')+'</div>'+(score?'<div class="quality-score">'+esc(score)+'</div><div class="meter" style="--w:'+Math.max(0,Math.min(100,score))+'%"><span></span></div>':'')+para(q.summary||q.rationale)+findings+'</div>'}
+      function auditTrace(d){const decision=d.decisionTrace||{};const answers=arr(decision.clarificationAnswers).map(a=>smallCard(a.questionId||t('answer'),chip(t('answer'),a.answer)+chip(t('id'),a.selectedOptionId)+para(a.rationale)+para(a.resultingChange),'ok')).join('');return '<div class="trace"><article class="trace-item"><h3>'+esc(t('decisionTrace'))+'</h3>'+chip(t('id'),decision.selectedOptionId)+chip(t('owner'),decision.reviewer)+chip(t('status'),decision.reviewedAt)+para(decision.rationale)+para(decision.synthesisNarrative)+'</article><article class="trace-item"><h3>'+esc(t('evidence'))+'</h3>'+list(d.evidenceRefs,t('noItems'))+'</article><article class="trace-item"><h3>'+esc(t('assumptions'))+'</h3>'+list(d.assumptions,t('noItems'))+'</article></div>'+(answers?'<div class="stack">'+answers+'</div>':'')}
+      function finding(f){if(!f)return'';const sev=lower(f.severity||f.status);const cls=sev.includes('block')||sev.includes('high')||sev.includes('fail')?'blocking':sev.includes('warn')||sev.includes('medium')?'warn':'info';return smallCard(f.findingId||f.checkId||f.status||t('finding'),chip(t('severity'),f.severity||f.status)+para(f.summary||f.statement||f.message||f)+para(f.impact)+para(f.mitigation),cls)}      function wire(){
+        root.querySelectorAll('[data-lang]').forEach(b=>b.onclick=()=>{state.lang=b.dataset.lang;render(state.data)});
+        root.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{state.view=b.dataset.view;if(state.view==='workbook'&&String(state.selectedGraphNode||'').startsWith('context:'))state.selectedGraphNode=null;render(state.data)});
+        root.querySelectorAll('[data-context]').forEach(b=>b.onclick=()=>{state.selectedContext=b.dataset.context;state.selectedGraphNode=nodeKey('context',b.dataset.context);render(state.data)});
+        root.querySelectorAll('[data-open-context]').forEach(b=>b.onclick=()=>{state.selectedContext=b.dataset.openContext;state.selectedGraphNode=null;state.view='workbook';render(state.data)});
+        root.querySelectorAll('[data-option]').forEach(b=>b.onclick=()=>{state.selectedOption=b.dataset.option;state.selectedGraphNode=null;render(state.data)});
+        root.querySelectorAll('[data-exp-tab]').forEach(b=>b.onclick=()=>{state.explorationTab=b.dataset.expTab;render(state.data)});
+        root.querySelectorAll('.graph-node[data-hover-nodes]').forEach(node=>{
+          node.onmouseenter=()=>setGraphHover(node.dataset.hoverNodes,node.dataset.hoverEdges);
+          node.onmouseleave=clearGraphHover;
+        });
+        root.querySelectorAll('[data-node-id]').forEach(b=>b.onclick=()=>{state.selectedGraphNode=b.dataset.nodeId;const found=findGraphNode((state.data&&state.data.domainModel)||state.data||{},state.selectedGraphNode);if(found.item&&found.type==='context')state.selectedContext=found.item.contextId;if(found.item&&found.type==='aggregate')state.selectedContext=found.item.contextId;if(found.item&&found.type==='event')state.selectedContext=found.item.owningContextId||found.item.contextId||state.selectedContext;render(state.data)});
+      }
+      function setGraphHover(nodeList,edgeList){
+        const nodes=new Set(String(nodeList||'').split(/\s+/).filter(Boolean));const edges=new Set(String(edgeList||'').split(/\s+/).filter(Boolean));
+        root.querySelectorAll('.graph-node[data-node-id]').forEach(n=>{const on=nodes.has(n.dataset.nodeId);n.classList.toggle('flow-active',on);n.classList.toggle('flow-dim',nodes.size>0&&!on)});
+        root.querySelectorAll('.graph-edge[data-edge-id]').forEach(e=>{const on=edges.has(e.dataset.edgeId);e.classList.toggle('flow-active',on);e.classList.toggle('flow-dim',edges.size>0&&!on)});
+      }
+      function clearGraphHover(){
+        root.querySelectorAll('.flow-active,.flow-dim').forEach(el=>el.classList.remove('flow-active','flow-dim'));
+      }
+      function showError(err){root.innerHTML='<div class="error"><strong>'+esc(t('rendererError'))+'</strong><br>'+esc(err&&err.message?err.message:err)+'</div>'}
+      const demoFiles={raw:['demo-domain-design-raw.json','../demo-domain-design-raw.json'],exploration:['demo-domain-design-exploration.json','../demo-domain-design-exploration.json'],current:['demo-domain-design-current.json','demo-domain-design.json','../demo-domain-design-current.json','../demo-domain-design.json']};
+      async function loadDemoFromQuery(){const params=new URLSearchParams(window.location&&window.location.search||'');const mode=params.get('demo');if(!mode)return false;const paths=demoFiles[mode];if(!paths)throw new Error(t('unknownDemoMode')+': '+mode);let lastError=null;for(const path of paths){try{const response=await fetch(path);if(!response.ok){lastError=new Error(t('demoLoadFailed')+': '+path+' · '+response.status);continue}render(parse(await response.text()));return true}catch(err){lastError=err}}throw lastError||new Error(t('unableToLoadDemo')+': '+mode)}
+      window.addEventListener('message',ev=>{if(!ev.data||ev.data.type!=='acas-render-resource')return;try{render(parse(ev.data))}catch(err){showError(err)}});
+      async function init(){try{if(window.__ACAS_RENDER_RESOURCE__){render(parse(window.__ACAS_RENDER_RESOURCE__));return}await loadDemoFromQuery()}catch(err){showError(err)}}
+      init()
+    })();
+  </script>
+</body>
+</html>

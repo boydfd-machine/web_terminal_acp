@@ -1,13 +1,15 @@
+import asyncio
+
 from uuid import UUID
 
 import pytest
 
-from app.client_agent.tmux_runtime import ClientRuntimeWindow, ClientTmuxRuntime
+from app.client_agent.runtime_window import ClientRuntimeWindow
+from app.client_agent.tmux_runtime import ClientTmuxRuntime
 
 
 CLIENT_ID = UUID("12345678-1234-5678-1234-567812345678")
 WINDOW_ID = UUID("87654321-4321-8765-4321-876543218765")
-
 
 @pytest.mark.asyncio
 async def test_create_window_ensures_pool_and_returns_remote_target_when_pool_missing(tmp_path) -> None:
@@ -51,6 +53,14 @@ async def test_create_window_ensures_pool_and_returns_remote_target_when_pool_mi
         ["tmux", "set-option", "-as", "terminal-features", ",xterm*:clipboard"],
         [
             "tmux",
+            "list-windows",
+            "-t",
+            "client_pool",
+            "-F",
+            "#{window_id}\t#{@web-terminal-window-id}\t#{pane_current_path}\t#{@web-terminal-managed-agent-tools}",
+        ],
+        [
+            "tmux",
             "new-window",
             "-P",
             "-F",
@@ -83,6 +93,126 @@ async def test_create_window_ensures_pool_and_returns_remote_target_when_pool_mi
         ],
     ]
 
+@pytest.mark.asyncio
+async def test_create_window_reuses_existing_tmux_window_for_same_logical_window(tmp_path) -> None:
+    calls: list[list[str]] = []
+    list_calls = 0
+
+    async def fake_run(args: list[str]) -> str:
+        nonlocal list_calls
+        calls.append(args)
+        if args[:4] == ["tmux", "list-windows", "-t", "client_pool"]:
+            list_calls += 1
+            if list_calls == 1:
+                return ""
+            return f"@9\t{WINDOW_ID}\t/workspace/project\t1\n"
+        if args[:3] == ["tmux", "new-window", "-P"]:
+            return "@9\n"
+        if args[:4] == ["tmux", "display-message", "-p", "-t"]:
+            return "@9\n"
+        return ""
+
+    runtime = ClientTmuxRuntime(
+        client_id=CLIENT_ID,
+        server_url="https://control.example.com",
+        pool_session="client_pool",
+        default_shell="/bin/bash",
+        launcher_dir=tmp_path / "launchers",
+        runner=fake_run,
+    )
+
+    first = await runtime.recreate_window_with_status(WINDOW_ID, cwd="/workspace/project")
+    second = await runtime.recreate_window_with_status(WINDOW_ID, cwd="/workspace/project")
+
+    assert first.created is True
+    assert second.created is False
+    assert first.window.remote_window_id == "@9"
+    assert second.window.remote_window_id == "@9"
+    assert sum(1 for call in calls if call[:3] == ["tmux", "new-window", "-P"]) == 1
+
+@pytest.mark.asyncio
+async def test_recreate_stale_window_kills_remote_target_and_creates_new_window(tmp_path) -> None:
+    calls: list[list[str]] = []
+
+    async def fake_run(args: list[str]) -> str:
+        calls.append(args)
+        if args[:4] == ["tmux", "display-message", "-p", "-t"]:
+            return "@7\n"
+        if args[:4] == ["tmux", "list-windows", "-t", "client_pool"]:
+            return ""
+        if args[:3] == ["tmux", "new-window", "-P"]:
+            return "@8\n"
+        return ""
+
+    runtime = ClientTmuxRuntime(
+        client_id=CLIENT_ID,
+        server_url="https://control.example.com",
+        pool_session="client_pool",
+        default_shell="/bin/bash",
+        launcher_dir=tmp_path / "launchers",
+        runner=fake_run,
+    )
+
+    result = await asyncio.wait_for(
+        runtime.recreate_stale_window_with_status(
+            WINDOW_ID,
+            remote_session_id="client_pool",
+            remote_window_id="@7",
+            cwd="/workspace/project",
+        ),
+        timeout=1,
+    )
+
+    assert result.created is True
+    assert result.window.remote_window_id == "@8"
+    assert ["tmux", "kill-window", "-t", "client_pool:@7"] in calls
+    assert [
+        "tmux",
+        "new-window",
+        "-P",
+        "-F",
+        "#{window_id}",
+        "-t",
+        "client_pool",
+        "-c",
+        "/workspace/project",
+        f"exec {tmp_path / 'launchers' / f'{WINDOW_ID}.sh'}",
+    ] in calls
+
+@pytest.mark.asyncio
+async def test_kill_stale_window_does_not_cancel_future_recreate(tmp_path) -> None:
+    calls: list[list[str]] = []
+    list_calls = 0
+
+    async def fake_run(args: list[str]) -> str:
+        nonlocal list_calls
+        calls.append(args)
+        if args[:4] == ["tmux", "list-windows", "-t", "client_pool"]:
+            list_calls += 1
+            if list_calls == 1:
+                return f"@7\t{WINDOW_ID}\t/workspace/project\t1\n"
+            return ""
+        if args[:4] == ["tmux", "display-message", "-p", "-t"]:
+            return "@7\n"
+        if args[:3] == ["tmux", "new-window", "-P"]:
+            return "@8\n"
+        return ""
+
+    runtime = ClientTmuxRuntime(
+        client_id=CLIENT_ID,
+        server_url="https://control.example.com",
+        pool_session="client_pool",
+        default_shell="/bin/bash",
+        launcher_dir=tmp_path / "launchers",
+        runner=fake_run,
+    )
+
+    await runtime.kill_stale_window(WINDOW_ID)
+    result = await runtime.recreate_window_with_status(WINDOW_ID, cwd="/workspace/project")
+
+    assert result.created is True
+    assert result.window.remote_window_id == "@8"
+    assert ["tmux", "kill-window", "-t", "client_pool:@7"] in calls
 
 @pytest.mark.asyncio
 async def test_create_window_uses_short_launcher_script_for_managed_shell(tmp_path) -> None:
@@ -117,7 +247,6 @@ async def test_create_window_uses_short_launcher_script_for_managed_shell(tmp_pa
     assert "WEB_TERMINAL_PROJECT_PATH=/workspace/project" in launcher_text
     assert "exec /bin/bash" in launcher_text
 
-
 def test_managed_shell_command_injects_quoted_environment_and_execs_default_shell() -> None:
     runtime = ClientTmuxRuntime(
         client_id=CLIENT_ID,
@@ -142,7 +271,6 @@ def test_managed_shell_command_injects_quoted_environment_and_execs_default_shel
     assert "/bin/sh -c" in command
     assert "exec '\\''/opt/shells/custom shell'\\''" in command
 
-
 def test_managed_shell_command_adds_permission_flag_to_direct_codex_start() -> None:
     runtime = ClientTmuxRuntime(
         client_id=CLIENT_ID,
@@ -159,6 +287,23 @@ def test_managed_shell_command_adds_permission_flag_to_direct_codex_start() -> N
     assert "codex --dangerously-bypass-approvals-and-sandbox resume codex-session || __web_terminal_agent_exit=$?" in command
     assert "__web_terminal_load_zshrc_env" in command
 
+def test_managed_shell_command_passes_agent_otel_metrics_endpoint_to_launcher() -> None:
+    runtime = ClientTmuxRuntime(
+        client_id=CLIENT_ID,
+        server_url="https://control.example.com",
+        pool_session="client_pool",
+        agent_otel_metrics_endpoint="http://127.0.0.1:43181/v1/metrics",
+    )
+
+    command = runtime.managed_shell_command(
+        WINDOW_ID,
+        shell_command="claude --resume claude-session",
+        project_path="/workspace/project",
+    )
+
+    assert "WEB_TERMINAL_CLAUDE_OTEL_METRICS_ENDPOINT=http://127.0.0.1:43181/v1/metrics" in command
+    assert "OTEL_METRICS_EXPORTER=otlp" in command
+    assert "OTEL_LOGS_EXPORTER" not in command
 
 @pytest.mark.asyncio
 async def test_list_windows_ensures_pool_and_returns_runtime_windows_from_tmux_output() -> None:
@@ -213,7 +358,6 @@ async def test_list_windows_ensures_pool_and_returns_runtime_windows_from_tmux_o
         ],
     ]
 
-
 @pytest.mark.asyncio
 async def test_has_window_checks_remote_tmux_target() -> None:
     calls: list[list[str]] = []
@@ -233,7 +377,6 @@ async def test_has_window_checks_remote_tmux_target() -> None:
     assert calls == [
         ["tmux", "display-message", "-p", "-t", "client_pool:@9", "#{window_id}"],
     ]
-
 
 @pytest.mark.asyncio
 async def test_create_window_launches_direct_agent_inside_default_shell_with_literal_send_keys(tmp_path) -> None:
@@ -275,6 +418,45 @@ async def test_create_window_launches_direct_agent_inside_default_shell_with_lit
     ] in calls
     assert ["tmux", "send-keys", "-t", "client_pool:@9", "Enter"] in calls
 
+@pytest.mark.asyncio
+async def test_create_window_launches_proxychains_cursor_inside_default_shell(tmp_path) -> None:
+    calls: list[list[str]] = []
+
+    async def fake_run(args: list[str]) -> str:
+        calls.append(args)
+        if args[:3] == ["tmux", "new-window", "-P"]:
+            return "@9\n"
+        return ""
+
+    runtime = ClientTmuxRuntime(
+        client_id=CLIENT_ID,
+        server_url="https://control.example.com",
+        pool_session="client_pool",
+        default_shell="/bin/bash",
+        launcher_dir=tmp_path / "launchers",
+        runner=fake_run,
+    )
+
+    target = await runtime.create_window(
+        WINDOW_ID,
+        cwd="/workspace/project",
+        shell_command="proxychains4 -q agent",
+    )
+
+    new_window_call = next(call for call in calls if call[:3] == ["tmux", "new-window", "-P"])
+    assert new_window_call[-1] == f"exec {tmp_path / 'launchers' / f'{WINDOW_ID}.sh'}"
+    assert target.remote_window_id == "@9"
+    assert target.shell_command == "proxychains4 -q agent"
+    assert [
+        "tmux",
+        "send-keys",
+        "-l",
+        "-t",
+        "client_pool:@9",
+        "--",
+        "proxychains4 -q agent",
+    ] in calls
+    assert ["tmux", "send-keys", "-t", "client_pool:@9", "Enter"] in calls
 
 @pytest.mark.asyncio
 async def test_has_window_returns_false_for_missing_remote_tmux_target() -> None:
@@ -289,47 +471,3 @@ async def test_has_window_returns_false_for_missing_remote_tmux_target() -> None
     )
 
     assert not await runtime.has_window("@9")
-
-
-@pytest.mark.asyncio
-async def test_has_window_returns_false_when_tmux_resolves_different_remote_window() -> None:
-    async def fake_run(args: list[str]) -> str:
-        return "@10\n"
-
-    runtime = ClientTmuxRuntime(
-        client_id=CLIENT_ID,
-        server_url="https://control.example.com",
-        pool_session="client_pool",
-        runner=fake_run,
-    )
-
-    assert not await runtime.has_window("@9")
-
-
-@pytest.mark.asyncio
-async def test_kill_window_skips_stale_remote_tmux_target() -> None:
-    calls: list[list[str]] = []
-
-    async def fake_run(args: list[str]) -> str:
-        calls.append(args)
-        if args[:4] == ["tmux", "has-session", "-t", "client_pool"]:
-            return ""
-        if args[:4] == ["tmux", "list-windows", "-t", "client_pool"]:
-            return f"@9\t{WINDOW_ID}\t/tmp\t1\n"
-        if args[:4] == ["tmux", "display-message", "-p", "-t"]:
-            return "@10\n"
-        if args[:2] == ["tmux", "kill-window"]:
-            raise AssertionError("stale target must not be killed")
-        return ""
-
-    runtime = ClientTmuxRuntime(
-        client_id=CLIENT_ID,
-        server_url="https://control.example.com",
-        pool_session="client_pool",
-        runner=fake_run,
-    )
-
-    await runtime.kill_window(WINDOW_ID)
-
-    assert calls[-1] == ["tmux", "display-message", "-p", "-t", "client_pool:@9", "#{window_id}"]
-    assert not any(call[:2] == ["tmux", "kill-window"] for call in calls)

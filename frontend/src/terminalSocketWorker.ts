@@ -2,7 +2,7 @@ import { createTerminalSocketOutputQueue } from "./terminalSocketOutputQueue";
 import { parseTerminalSocketControlMessage } from "./terminalSocketProtocol";
 
 type WorkerCommand =
-  | { type: "connect"; url: string }
+  | { type: "connect"; url: string; protocols?: string[] }
   | { type: "input"; data: Uint8Array }
   | { type: "json"; data: string }
   | { type: "close" }
@@ -40,10 +40,12 @@ function closeSocket(): void {
   }
 }
 
-function connect(url: string): void {
+function connect(url: string, protocols: string[] = []): void {
   closeSocket();
   closedByCommand = false;
-  const nextSocket = new WebSocket(url);
+  const nextSocket = protocols.length > 0
+    ? new WebSocket(url, protocols)
+    : new WebSocket(url);
   nextSocket.binaryType = "arraybuffer";
   socket = nextSocket;
 
@@ -85,7 +87,7 @@ function connect(url: string): void {
 onmessage = (event: MessageEvent<WorkerCommand>) => {
   const command = event.data;
   if (command.type === "connect") {
-    connect(command.url);
+    connect(command.url, command.protocols);
     return;
   }
   if (command.type === "close") {

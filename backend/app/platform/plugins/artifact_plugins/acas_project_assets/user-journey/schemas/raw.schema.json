@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acas.local/artifact-definitions/user-journey/raw.schema.json",
+  "title": "User Journey Raw",
+  "type": "object",
+  "required": ["kind", "layer", "rawInputs", "researchGate"],
+  "properties": {
+    "kind": { "const": "UserJourneyRaw" },
+    "layer": { "const": "Raw" },
+    "rawInputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["inputId", "sourceType", "content"],
+        "properties": {
+          "inputId": { "type": "string" },
+          "sourceType": {
+            "enum": ["user_text", "interview", "ticket", "log", "document", "mixed"]
+          },
+          "content": { "type": "string" },
+          "sourceRef": { "type": "string" },
+          "capturedAt": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "preservedSignals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["text", "sourceInputId", "noteType"],
+        "properties": {
+          "text": { "type": "string" },
+          "sourceInputId": { "type": "string" },
+          "noteType": { "enum": ["explicit", "inferred", "unclear"] }
+        },
+        "additionalProperties": true
+      }
+    },
+    "researchGate": {
+      "type": "object",
+      "required": ["competitorResearchNeeded", "urgency", "reason"],
+      "properties": {
+        "competitorResearchNeeded": { "type": ["boolean", "string"], "enum": [true, false, "unknown"] },
+        "urgency": { "enum": ["none", "optional", "recommended", "required"] },
+        "reason": { "type": "string" },
+        "researchScopeHint": {
+          "type": "object",
+          "properties": {
+            "productCategory": { "type": "string" },
+            "competitorTypes": { "type": "array", "items": { "type": "string" } },
+            "questionsToAnswer": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "attachments": { "type": "array" },
+    "contextNotes": { "type": "array" }
+  },
+  "additionalProperties": true
+}

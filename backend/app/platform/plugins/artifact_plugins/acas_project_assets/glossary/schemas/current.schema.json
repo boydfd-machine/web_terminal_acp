@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acas.local/artifact-definitions/glossary/current.schema.json",
+  "title": "Glossary Current",
+  "type": "object",
+  "required": ["kind", "layer", "explorationArtifactRef", "glossary", "decisionTrace", "qualityGate"],
+  "properties": {
+    "kind": { "const": "GlossaryCurrent" },
+    "layer": { "const": "Current" },
+    "explorationArtifactRef": { "type": "string", "minLength": 1 },
+    "glossary": { "$ref": "#/$defs/glossary" },
+    "alignmentMatrix": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/alignmentRow" }
+    },
+    "decisionTrace": {
+      "$ref": "https://acas.local/artifact-definitions/_shared/review-decision/schemas/decision-trace.schema.json#/$defs/decisionTrace"
+    },
+    "qualityGate": { "$ref": "#/$defs/qualityGate" },
+    "openRisks": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+    "evidenceRefs": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "text": { "type": "string" },
+    "glossary": {
+      "type": "object",
+      "required": ["glossaryId", "scope", "terms"],
+      "properties": {
+        "glossaryId": { "type": "string", "minLength": 1 },
+        "scope": { "$ref": "#/$defs/scope" },
+        "terms": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/term" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "scope": {
+      "type": "object",
+      "required": ["productArea", "scenario", "languagePolicy", "sourceRefs"],
+      "properties": {
+        "productArea": { "$ref": "#/$defs/text" },
+        "scenario": { "$ref": "#/$defs/text" },
+        "languagePolicy": { "$ref": "#/$defs/text" },
+        "sourceRefs": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    "term": {
+      "type": "object",
+      "required": ["termId", "canonicalTerm", "definition", "contextMeanings", "aliases", "status", "sourceRefs"],
+      "properties": {
+        "termId": { "type": "string", "minLength": 1 },
+        "canonicalTerm": { "$ref": "#/$defs/text" },
+        "userFacingTerm": { "$ref": "#/$defs/text" },
+        "domainTerm": { "$ref": "#/$defs/text" },
+        "contractTerm": { "$ref": "#/$defs/text" },
+        "codeTerm": { "$ref": "#/$defs/text" },
+        "definition": { "$ref": "#/$defs/text" },
+        "contextMeanings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/contextMeaning" }
+        },
+        "aliases": { "$ref": "#/$defs/aliases" },
+        "relatedTerms": { "$ref": "#/$defs/relatedTerms" },
+        "ownerArtifact": { "type": "string" },
+        "status": { "enum": ["approved", "candidate", "deprecated", "forbidden"] },
+        "confidence": { "enum": ["low", "medium", "high"] },
+        "sourceRefs": { "type": "array", "items": { "type": "string" } },
+        "reviewTrace": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": true
+    },
+    "contextMeaning": {
+      "type": "object",
+      "required": ["contextId", "meaning"],
+      "properties": {
+        "contextId": { "type": "string" },
+        "meaning": { "$ref": "#/$defs/text" },
+        "artifactRefs": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    "aliases": {
+      "type": "object",
+      "properties": {
+        "accepted": { "type": "array", "items": { "$ref": "#/$defs/text" } },
+        "discouraged": { "type": "array", "items": { "$ref": "#/$defs/text" } },
+        "forbidden": { "type": "array", "items": { "$ref": "#/$defs/text" } }
+      },
+      "additionalProperties": true
+    },
+    "relatedTerms": {
+      "type": "object",
+      "properties": {
+        "broader": { "type": "array", "items": { "type": "string" } },
+        "narrower": { "type": "array", "items": { "type": "string" } },
+        "related": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    "alignmentRow": {
+      "type": "object",
+      "required": ["termId", "journey", "flow", "domain", "ui", "contract"],
+      "properties": {
+        "termId": { "type": "string" },
+        "journey": { "$ref": "#/$defs/text" },
+        "flow": { "$ref": "#/$defs/text" },
+        "prototype": { "$ref": "#/$defs/text" },
+        "capability": { "$ref": "#/$defs/text" },
+        "domain": { "$ref": "#/$defs/text" },
+        "ui": { "$ref": "#/$defs/text" },
+        "contract": { "$ref": "#/$defs/text" },
+        "agentPrompt": { "$ref": "#/$defs/text" }
+      },
+      "additionalProperties": true
+    },
+    "qualityGate": {
+      "type": "object",
+      "required": ["status", "checks"],
+      "properties": {
+        "status": { "enum": ["pass", "warning", "fail"] },
+        "checks": { "type": "array", "items": { "$ref": "#/$defs/finding" } }
+      },
+      "additionalProperties": true
+    },
+    "finding": {
+      "type": "object",
+      "required": ["findingId", "severity", "message"],
+      "properties": {
+        "findingId": { "type": "string" },
+        "severity": { "enum": ["info", "warning", "error", "blocking"] },
+        "message": { "$ref": "#/$defs/text" },
+        "termIds": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

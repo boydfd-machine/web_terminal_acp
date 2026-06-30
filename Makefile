@@ -1,9 +1,9 @@
-.PHONY: preflight/init preflight/check-vm-max-map-count build-images services-up deploy-up deploy-recreate app-recreate services-down postgres-vacuum backend-test backend-smoke backend-dev frontend-install frontend-build frontend-dev android-debug android-local-release android-release android-unsigned-release android-release-verify smoke
+.PHONY: preflight/init preflight/check-vm-max-map-count build-images services-up deploy-up deploy-recreate app-recreate services-down postgres-vacuum backend-test backend-smoke backend-dev frontend-install frontend-build frontend-dev android-debug android-local-release android-release android-unsigned-release android-release-verify android-pad-debug android-pad-local-release android-pad-release android-pad-unsigned-release android-pad-release-verify smoke
 
 DATA_ROOT ?= ./data
 ES_VM_MAX_MAP_COUNT_MIN ?= 262144
 COMPOSE ?= docker compose --env-file .env
-APP_SERVICES ?= backend frontend
+APP_SERVICES ?= backend agent-event-worker frontend
 POSTGRES_SERVICE ?= postgres
 POSTGRES_DB ?= web_terminal_acp
 POSTGRES_USER ?= web_terminal
@@ -81,6 +81,21 @@ android-unsigned-release:
 
 android-release-verify:
 	.cursor/skills/android-app-release/scripts/build-android.sh release
+
+android-pad-debug:
+	.cursor/skills/android-app-release/scripts/build-android.sh debug pad
+
+android-pad-local-release:
+	.cursor/skills/android-app-release/scripts/build-android.sh local-release pad
+
+android-pad-release:
+	.cursor/skills/android-app-release/scripts/build-android.sh release pad
+
+android-pad-unsigned-release:
+	.cursor/skills/android-app-release/scripts/build-android.sh unsigned-release pad
+
+android-pad-release-verify:
+	.cursor/skills/android-app-release/scripts/build-android.sh release pad
 
 smoke:
 	$(MAKE) services-up

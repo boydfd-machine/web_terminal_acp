@@ -1,0 +1,7 @@
+interface:
+  display_name: "Artifact Plugin Creator"
+  short_description: "Design template artifact plugins with schema, demo data, and previews"
+  default_prompt: "Use $artifact-plugin-creator to draft the artifact schema, prompt, renderer template, demo JSON, and preview updates."
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ACAS Low-fi Prototype Renderer</title>
+  <style>
+    :root{--ink:#1A1C1E;--slate:#6C7278;--clay:#B8422E;--limestone:#F7F5F2;--panel:#FFFDFA;--line:#DDD6CC;--line-strong:#BFB6AA;--soft:#EEE8DF;--focus:#7F2E21;font-family:"Public Sans",Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--ink);background:var(--limestone)}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;padding:24px;background:linear-gradient(180deg,#fffaf2 0%,var(--limestone) 42%,#eee7dc 100%)}.shell{width:min(1680px,94vw);margin:0 auto;display:grid;gap:16px}
+    .top,.card,.edge,.preview{border:1px solid var(--line);border-radius:8px;background:rgba(255,253,250,.94);box-shadow:0 16px 40px rgba(26,28,30,.07)}
+    .top{padding:18px 20px;border-top:4px solid var(--clay);background:linear-gradient(135deg,#fffdfa 0%,#f3ece2 100%)}.bar{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
+    h1,h2,h3,h4,p{margin:0}h1{font-size:22px;line-height:1.2;font-weight:720}h2{font-size:15px;line-height:1.3;font-weight:720}h3,h4{font-size:13px;line-height:1.35;font-weight:720}p,li,td,th{font-size:12px;line-height:1.55;color:#34383C}
+    #root>h2{margin:8px 0 -4px;font-size:12px;color:var(--slate);text-transform:uppercase}.muted{color:var(--slate)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+    .card{padding:14px;display:grid;gap:10px;align-content:start}.recommended{border-color:var(--clay);box-shadow:inset 0 0 0 1px var(--clay),0 18px 42px rgba(184,66,46,.12)}
+    .chips,.actions{display:flex;gap:7px;flex-wrap:wrap}.chip{border:1px solid var(--line);border-radius:6px;padding:4px 7px;background:#F7F2EA;color:#42474C;font-size:11px;font-weight:700}
+    button,a.btn{border:1px solid var(--line-strong);background:var(--panel);border-radius:6px;padding:7px 10px;color:var(--ink);text-decoration:none;cursor:pointer;font:inherit;font-size:12px;font-weight:700;transition:background .15s ease,border-color .15s ease,color .15s ease,transform .15s ease}
+    button:hover,a.btn:hover{border-color:var(--clay);color:var(--clay);transform:translateY(-1px)}button.active,a.btn.active{background:var(--ink);color:#fff;border-color:var(--ink)}
+    .edge{padding:10px 12px;display:grid;gap:4px;background:#FBF8F3}.edge strong{font-size:12px;color:var(--ink)}iframe{width:100%;height:560px;border:1px solid var(--line-strong);border-radius:8px;background:#fff}
+    .preview{padding:14px;display:grid;gap:12px}table{width:100%;border-collapse:collapse}td,th{border-top:1px solid var(--soft);text-align:left;padding:7px 6px;vertical-align:top}th{width:34%;color:var(--slate);font-weight:700}.empty{border:1px dashed var(--line-strong);border-radius:8px;padding:14px;color:var(--slate);background:#FBF8F3}
+    .current-shell{display:grid;grid-template-columns:minmax(0,1fr) minmax(340px,430px);gap:16px;align-items:start}.prototype-stage{min-height:0}.preview.primary{padding:16px}.page-tabs,.proposal-tabs{display:flex;gap:8px;flex-wrap:wrap}.page-tabs button{padding:8px 11px}.proposal-tabs button{min-width:190px;text-align:left}.proposal-tabs small{display:block;color:var(--slate);font-size:10px;margin-top:3px}.preview.primary iframe{height:min(72vh,760px);min-height:560px}.route-panel{position:sticky;top:16px}.route-panel h2{font-size:15px}.route-dag{border:1px solid var(--line);border-radius:8px;background:linear-gradient(180deg,#fffdfa,#fbf7ef);overflow:hidden}.route-dag.compact{max-width:260px}.route-dag svg{display:block;width:100%;height:auto}.dag-hit{fill:none;stroke:transparent;stroke-width:18;pointer-events:stroke;cursor:pointer}.dag-edge{fill:none;stroke:#5a626a;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:10 8;animation:routeFlow 1.5s linear infinite;cursor:pointer;transition:stroke .15s,stroke-width .15s,opacity .15s,filter .15s;pointer-events:stroke}.dag-edge.back{stroke:var(--clay);stroke-dasharray:6 7}.dag-edge:hover,.dag-edge.hover{stroke:var(--clay);stroke-width:4;filter:drop-shadow(0 0 5px rgba(184,66,46,.25))}.dag-edge.dim{opacity:.18}.dag-edge.change-add{stroke:#23714d}.dag-edge.change-modify{stroke:#a66a00}.dag-edge.change-delete{stroke:#8f1f14}.dag-node{cursor:pointer}.dag-node rect{fill:#fff;stroke:var(--line-strong);stroke-width:1.2;rx:8;transition:stroke .15s,fill .15s,filter .15s}.dag-node text{fill:var(--ink);font-size:12px;font-weight:800}.dag-node .dag-sub{fill:var(--slate);font-size:10px;font-weight:700}.dag-status{font-size:10px;font-weight:900;fill:#fff}.dag-status-bg.add{fill:#23714d}.dag-status-bg.modify{fill:#a66a00}.dag-status-bg.delete{fill:#8f1f14}.dag-node.active rect{stroke:var(--ink);fill:#f7f2ea;filter:drop-shadow(0 8px 12px rgba(26,28,30,.12))}.dag-node.hover rect{stroke:var(--clay);fill:#fff7f1}.dag-node.dim{opacity:.38}.dag-node.change-add rect{stroke:#23714d;background:#edf6ef}.dag-node.change-modify rect{stroke:#a66a00;fill:#fff8df}.dag-node.change-delete rect{stroke:#8f1f14;fill:#fff1ea}.dag-label{pointer-events:auto;cursor:pointer;transition:opacity .15s}.dag-label.dim{opacity:.18}.dag-label rect{fill:#fffdfa;stroke:var(--line);rx:6}.dag-label text{fill:#4a5158;font-size:10px;font-weight:700}.dag-marker{fill:#5a626a}.dag-marker.back{fill:var(--clay)}.exp-workbench{display:grid;grid-template-columns:270px minmax(0,1fr) 380px;gap:16px;align-items:start}.change-panel{position:sticky;top:16px}.change-panel h2+section{margin-top:8px}.question-list{display:grid;gap:10px}.question-card{border:1px solid var(--line);border-radius:8px;background:#fffdfa;padding:10px}.question-card h3{font-size:12px;margin-bottom:5px}.change-list{display:grid;gap:8px}.change-card{border:1px solid var(--line);border-radius:8px;background:#fff;padding:10px;display:grid;gap:6px}.change-card h3{font-size:13px}.change-card p{margin:0}.change-card.add{border-left:5px solid #23714d}.change-card.modify{border-left:5px solid #a66a00}.change-card.delete{border-left:5px solid #8f1f14}.badge{display:inline-flex;width:max-content;border-radius:6px;padding:3px 7px;font-size:10px;font-weight:800;text-transform:uppercase}.badge.add{background:#e8f2ed;color:#23714d}.badge.modify{background:#fff4cf;color:#8a5c00}.badge.delete{background:#ffe5df;color:#8f1f14}.diff{display:grid;grid-template-columns:1fr 1fr;gap:8px}.diff>div{border:1px solid var(--line);border-radius:8px;background:#fbf8f3;padding:7px}.diff b{display:block;font-size:10px;text-transform:uppercase;color:var(--slate);margin-bottom:3px}.html-compare{display:grid;gap:10px}.html-compare .preview{padding:12px}.html-compare iframe{height:clamp(160px,23vh,320px);min-height:0}.compare-label{display:flex;align-items:center;justify-content:space-between;gap:8px}@keyframes routeFlow{to{stroke-dashoffset:-36}}
+    body.is-preview{padding:16px;background:#f4f0e8}.is-preview .shell{width:min(1900px,98vw)}.preview-mode{height:calc(100vh - 32px);display:grid;grid-template-rows:auto 1fr;gap:12px}.preview-toolbar{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:16px;border:1px solid var(--line);border-radius:8px;background:rgba(255,253,250,.96);padding:10px 12px}.preview-toolbar h1{font-size:16px}.preview-toolbar .page-tabs{justify-content:center}.preview-pair{min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:12px}.preview-pane{min-height:0;display:grid;grid-template-rows:auto 1fr;border:1px solid var(--line);border-radius:8px;background:#fffdfa;box-shadow:0 18px 40px rgba(26,28,30,.08);overflow:hidden}.preview-pane h2{padding:10px 12px;border-bottom:1px solid var(--line);background:#fbf7ef}.preview-pane iframe{height:100%;min-height:0;border:0;border-radius:0}
+    ul{margin:0;padding-left:17px}section.grid+section.grid{margin-top:2px}@media(max-width:720px){body{padding:14px}.shell{width:100%}.bar{display:grid}.grid{grid-template-columns:1fr}iframe{height:520px}}
+    @media(max-width:1100px){.exp-workbench{grid-template-columns:1fr}.route-dag.compact{max-width:none}.mini-preview iframe{height:620px}.current-shell{grid-template-columns:1fr}.route-panel{position:static}.preview.primary iframe{height:620px}}
+  </style>
+</head>
+<body>
+  <main id="root" class="shell"></main>
+  <script>
+    const qs=new URLSearchParams(location.search);
+    const I18N={
+      zh:{raw:'低保真原型 Raw',exploration:'低保真原型 Exploration',current:'低保真原型 Current',constraints:'约束',signals:'原型信号',questions:'问题',options:'页面集方案',recommended:'推荐',routeMap:'路由图',smoke:'冒烟路径',pages:'页面',preview:'HTML 页面预览',previewMode:'预览模式',exitPreview:'退出预览',open:'打开页面',tokens:'Token 预算',data:'内容数据',jump:'跳转',waiting:'等待 ACAS 低保真原型数据',baseline:'现有路径',local:'本轮局部原型',changes:'本轮改动',before:'已有 HTML 预览',after:'调整后 HTML 预览',notes:'对比说明',proposals:'本轮 Proposals',impact:'路径影响'},
+      en:{raw:'Low-fi Prototype Raw',exploration:'Low-fi Prototype Exploration',current:'Low-fi Prototype Current',constraints:'Constraints',signals:'Prototype signals',questions:'Questions',options:'Page-set options',recommended:'recommended',routeMap:'Route map',smoke:'Smoke path',pages:'Pages',preview:'HTML page preview',previewMode:'Preview mode',exitPreview:'Exit preview',open:'Open page',tokens:'Token budget',data:'Content data',jump:'Jump',waiting:'Waiting for ACAS low-fi prototype data',baseline:'Existing path',local:'Iteration prototype',changes:'Iteration changes',before:'Existing HTML preview',after:'Adjusted HTML preview',notes:'Comparison notes',proposals:'Proposals',impact:'Path impact'}
+    };
+    const state={lang:qs.get('lang')||'zh',data:null,pageId:qs.get('page')||null,proposalId:qs.get('proposal')||null,dataId:qs.get('data')||null,preview:qs.get('view')==='preview'||qs.get('mode')==='preview'||qs.get('preview')==='1',params:{}};
+    function tr(k){return (I18N[state.lang]&&I18N[state.lang][k])||k}
+    function loc(v){return v&&typeof v==='object'&&!Array.isArray(v)?(v[state.lang]||v.zh||v.en||''):v}
+    function esc(v){return String(loc(v)??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
+    function arr(v){return Array.isArray(v)?v:[]}
+    function ul(items){const xs=arr(items).map(loc).filter(Boolean);return xs.length?`<ul>${xs.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:''}
+    function chips(items){return `<div class="chips">${arr(items).map(x=>`<span class="chip">${esc(x)}</span>`).join('')}</div>`}
+    function assetPath(path){return (location.pathname.includes('/renderers/')?'../':'')+path}
+    function paramString(page){
+      const params={...(page.defaultParams||{}),...state.params,lang:state.lang,page:page.pageId};
+      if(state.dataId)params.data=state.dataId;
+      return new URLSearchParams(Object.entries(params).filter(([,v])=>v!==undefined&&v!==null).map(([k,v])=>[k,String(v)])).toString();
+    }
+    function pageSrc(page){const sep=page.htmlFile.includes('?')?'&':'?';return assetPath(page.htmlFile)+sep+paramString(page)}
+    function parseResource(r){if(!r)return null;if(typeof r.content==='string'){try{return JSON.parse(r.content)}catch{return {kind:'LowFiPrototypeCurrent',pageSet:{testQuestion:r.content,pages:[],routeMap:[],smokePath:[]}}}}return r.content||r}
+    function mode(d){if(d.kind==='LowFiPrototypeRaw'||d.layer==='Raw'||d.prototypeSignals)return'raw';if(d.kind==='LowFiPrototypeExploration'||d.layer==='Exploration'||d.pageSetOptions)return'exploration';return'current'}
+    function header(title,refs,extra=''){
+      return `<section class="top"><div class="bar"><div><h1>${esc(title)}</h1><p class="muted">${esc(refs||'')}</p></div><div class="actions"><button data-lang="zh" class="${state.lang==='zh'?'active':''}">中文</button><button data-lang="en" class="${state.lang==='en'?'active':''}">English</button></div></div>${extra}</section>`;
+    }
+    function bindLang(){document.querySelectorAll('[data-lang]').forEach(b=>b.onclick=()=>{state.lang=b.dataset.lang;render(state.data)})}
+    function bindPages(){document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{state.pageId=b.dataset.page;render(state.data)})}
+    function bindPreview(){document.querySelectorAll('[data-preview-mode]').forEach(b=>b.onclick=()=>{state.preview=b.dataset.previewMode==='on';const u=new URL(location.href);if(state.preview)u.searchParams.set('view','preview');else{u.searchParams.delete('view');u.searchParams.delete('mode');u.searchParams.delete('preview')}history.replaceState(null,'',u);render(state.data)})}
+    function row(k,v){return `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`}
+    function short(v,n=30){const s=String(loc(v)??'');return s.length>n?s.slice(0,n-1)+'...':s}
+    function pageTitle(p){return loc(p&&p.title)||p?.pageId||''}
+    function routeEdges(edges, clickable=false){
+      return arr(edges).map((e,i)=>`<div class="edge"><strong>${esc(e.fromPageId||e.from)} -> ${esc(e.toPageId||e.to)}</strong><p>${esc([loc(e.trigger),e.guard].filter(Boolean).join(' · '))}</p>${clickable?`<button data-route="${i}">${tr('jump')}</button>`:''}</div>`).join('')||`<div class="empty">${tr('routeMap')}</div>`;
+    }
+    function routeKey(from,to){return `${from}->${to}`}
+    function routeDag(ps,pages,selected,meta={}){
+      const pageStatus=meta.pageStatus||{},routeStatus=meta.routeStatus||{},isStatic=!!meta.static;
+      const ids=[...new Set(arr(ps.smokePath).concat(arr(pages).map(p=>p.pageId),Object.keys(pageStatus)).filter(Boolean))];
+      const byId=Object.fromEntries(arr(meta.extraPages).concat(arr(pages)).map(p=>[p.pageId,p]));
+      if(!ids.length)return `<div class="empty">${tr('routeMap')}</div>`;
+      const compact=!!meta.compact, x=compact?28:58,nodeW=compact?150:236,nodeH=compact?44:60,gap=compact?64:104,w=compact?240:420,h=(compact?26:36)+ids.length*gap;
+      const pos=Object.fromEntries(ids.map((id,i)=>[id,{x,y:24+i*gap,i}]));
+      const defs=`<defs><marker id="routeArrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path class="dag-marker" d="M0,0 L8,3 L0,6 Z"/></marker><marker id="routeArrowBack" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path class="dag-marker back" d="M0,0 L8,3 L0,6 Z"/></marker></defs>`;
+      const edges=arr(ps.routeMap).map((e,i)=>{
+        const from=e.fromPageId||e.from,to=e.toPageId||e.to,a=pos[from],b=pos[to];if(!a||!b)return'';
+        const back=b.i<=a.i,marker=back?'routeArrowBack':'routeArrow',status=routeStatus[routeKey(from,to)]||'';
+        let d,lx,ly;
+        if(back){const rx=compact?w-24:370,sx=a.x+nodeW,sy=a.y+nodeH/2,tx=b.x+nodeW,ty=b.y+nodeH/2;d=`M ${sx} ${sy} C ${rx} ${sy}, ${rx} ${ty}, ${tx} ${ty}`;lx=rx-66;ly=(sy+ty)/2-12}
+        else{const sx=a.x+nodeW/2,sy=a.y+nodeH,tx=b.x+nodeW/2,ty=b.y;const mid=(sy+ty)/2;d=`M ${sx} ${sy} C ${sx} ${mid}, ${tx} ${mid}, ${tx} ${ty}`;lx=tx+22;ly=mid-12}
+        const label=short(e.trigger||e.guard||'',18);
+        const action=isStatic?'':`data-dag-route="${i}"`;
+        return `<path class="dag-hit" ${action} data-from="${esc(from)}" data-to="${esc(to)}" d="${d}"></path><path class="dag-edge ${back?'back':''} ${status?`change-${status}`:''}" ${action} data-from="${esc(from)}" data-to="${esc(to)}" d="${d}" marker-end="url(#${marker})"><title>${esc(label||`${from} -> ${to}`)}</title></path>${label?`<g class="dag-label" ${action} data-from="${esc(from)}" data-to="${esc(to)}" transform="translate(${Math.max(8,lx)} ${Math.max(8,ly)})"><rect width="112" height="22"></rect><text x="56" y="15" text-anchor="middle">${esc(label)}</text></g>`:''}`;
+      }).join('');
+      const nodes=ids.map((id,i)=>{const p=byId[id]||{pageId:id},active=selected&&selected.pageId===id,status=pageStatus[id]||'',mark=status==='add'?'C':status==='modify'?'U':status==='delete'?'D':'';return `<g class="dag-node ${active?'active':''} ${status?`change-${status}`:''}" ${isStatic?'':`data-dag-page="${esc(id)}"`} transform="translate(${x} ${pos[id].y})"><title>${esc(id)}</title><rect width="${nodeW}" height="${nodeH}"></rect><text x="12" y="${compact?20:25}">${esc(short(pageTitle(p),compact?15:24))}</text><text class="dag-sub" x="12" y="${compact?35:44}">${String(i+1).padStart(2,'0')}</text>${mark?`<circle class="dag-status-bg ${esc(status)}" cx="${nodeW-16}" cy="16" r="11"></circle><text class="dag-status" x="${nodeW-16}" y="20" text-anchor="middle">${mark}</text>`:''}</g>`}).join('');
+      return `<div class="route-dag ${compact?'compact':''}"><svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(tr('routeMap'))}">${defs}${edges}${nodes}</svg></div>`;
+    }
+    function renderRaw(d){
+      const s=d.prototypeSlice||{}, c=d.prototypeConstraints||{};
+      root.innerHTML=`
+        ${header(tr('raw'),[d.sourceJourneyRef,d.sourceFlowRef].filter(Boolean).join(' · '),chips(s.coveredFlowNodes))}
+        <section class="grid">
+          <article class="card"><h2>Slice</h2><table>${row('actor',s.actor)}${row('scenario',s.scenario)}${row('trigger',s.trigger)}${row('outcome',s.outcome)}</table></article>
+          <article class="card"><h2>${tr('constraints')}</h2><table>${row('oneHtmlFilePerPage',c.oneHtmlFilePerPage)}${row('routingStyle',c.routingStyle)}${row('maxPageCount',c.maxPageCount)}${row('maxHtmlTokensPerPage',c.maxHtmlTokensPerPage)}${row('styleFidelity',c.styleFidelity)}</table></article>
+        </section>
+        <h2>${tr('signals')}</h2><section class="grid">${arr(d.prototypeSignals).map(s=>`<article class="card"><h3>${esc(s.signalId)}</h3><p class="muted">${esc(s.signalType)}</p><p>${esc(s.implication)}</p>${chips(s.sourceRefs)}${ul(s.contentNeeds)}${chips(s.contentSlots)}${ul(s.constraints)}${ul(s.unknowns)}</article>`).join('')}</section>
+        <h2>${tr('data')}</h2><section class="grid">${arr(d.contentDataNeeds).map(x=>`<article class="card"><h3>${esc(x.dataId)}</h3><p>${esc(x.purpose)}</p>${chips(x.consumerSignalIds)}${chips(x.exampleFields)}<p class="muted">${esc(x.sourceRef||'')}</p></article>`).join('')}</section>
+        <h2>${tr('questions')}</h2><section class="grid">${arr(d.designQuestions).map(q=>`<article class="card"><h3>${esc(q.questionId)}</h3><p>${esc(q.question)}</p><p class="muted">${esc(q.whyItMatters)}</p>${chips(q.sourceRefs)}</article>`).join('')}</section>`;
+    }
+    function changeMaps(changes){
+      const pageStatus={},routeStatus={};
+      arr(changes).forEach(c=>{
+        const t=c.changeType;
+        if(c.targetType==='route'&&String(c.targetId||'').includes('->')){
+          routeStatus[c.targetId]=t;
+          const [from,to]=String(c.targetId).split('->');
+          if(from&&!pageStatus[from])pageStatus[from]='modify';
+          if(to&&!pageStatus[to])pageStatus[to]='modify';
+        }
+        if(c.targetType==='page'&&c.targetId)pageStatus[c.targetId]=t;
+        if((c.targetType==='content'||c.targetType==='element'||c.targetType==='state'||c.targetType==='data_slot')&&c.pageId)pageStatus[c.pageId]=t;
+      });
+      return{pageStatus,routeStatus};
+    }
+    function changeCard(c){
+      return `<article class="change-card ${esc(c.changeType)}"><span class="badge ${esc(c.changeType)}">${esc(c.changeType)}</span><h3>${esc(c.targetId)}</h3><p>${esc(c.summary)}</p>${(c.before||c.after)?`<div class="diff"><div><b>${tr('before')}</b><p>${esc(c.before||'-')}</p></div><div><b>${tr('after')}</b><p>${esc(c.after||'-')}</p></div></div>`:''}${chips(c.diffHighlights)}${chips(c.sourceRefs)}</article>`;
+    }
+    function proposalSetOf(d){
+      if(d.proposalSet)return d.proposalSet;
+      const it=d.iterationProposal||{}, p={proposalId:it.iterationId||'proposal_1',title:it.title||it.iterationId,goal:it.goal,recommendation:'recommended',localPrototype:it.localPrototype||{},changes:it.changes||[],comparisonNotes:it.comparisonNotes||[],validationTasks:it.validationTasks||[]};
+      return{proposalSetId:it.iterationId||'proposal_set',title:it.title,goal:it.goal,baseCurrentRef:it.baseCurrentRef,recommendedProposalId:p.proposalId,baseline:it.baseline||{},proposals:[p]};
+    }
+    function proposalTitle(p){return loc(p&&p.title)||p?.proposalId||''}
+    function selectedProposal(set){return arr(set.proposals).find(p=>p.proposalId===state.proposalId)||arr(set.proposals).find(p=>p.proposalId===set.recommendedProposalId)||arr(set.proposals)[0]||{}}
+    function bindProposals(set){document.querySelectorAll('[data-proposal]').forEach(b=>b.onclick=()=>{state.proposalId=b.dataset.proposal;state.pageId=null;state.params={};render(state.data)})}
+    function pageWithVariant(page,variant){
+      if(!page)return null;
+      const p={...page,defaultParams:{...(page.defaultParams||{})}};
+      if(variant)p.defaultParams.variant=variant;
+      return p;
+    }
+    function htmlCompare(beforePage,afterPage,pages=[]){
+      const before=pageWithVariant(beforePage||afterPage,'before'),after=pageWithVariant(afterPage,'after');
+      return `<section class="html-compare">
+        <section class="preview"><div class="compare-label"><div><h2>${tr('preview')}: ${esc(pageTitle(after)||pageTitle(before)||'')}</h2><p class="muted">${esc(after?.purpose||before?.purpose||'')}</p></div><button data-preview-mode="on">${tr('previewMode')}</button></div><div class="page-tabs">${arr(pages).map(p=>`<button data-page="${esc(p.pageId)}" class="${after&&p.pageId===after.pageId?'active':''}">${esc(pageTitle(p))}</button>`).join('')}</div><h3>${tr('before')}: ${esc(pageTitle(before)||'')}</h3>${before&&before.htmlFile?`<iframe src="${esc(pageSrc(before))}" title="${esc(tr('before'))}"></iframe>`:`<div class="empty">${tr('waiting')}</div>`}</section>
+        <section class="preview"><div class="compare-label"><h3>${tr('after')}: ${esc(pageTitle(after)||'')}</h3>${after&&after.htmlFile?`<a class="btn" target="_blank" href="${esc(pageSrc(after))}">${tr('open')}</a>`:''}</div>${after&&after.htmlFile?`<iframe src="${esc(pageSrc(after))}" title="${esc(tr('after'))}"></iframe>`:`<div class="empty">${tr('waiting')}</div>`}</section>
+      </section>`;
+    }
+    function renderPreviewMode(beforePage,afterPage,pages=[]){
+      const before=pageWithVariant(beforePage||afterPage,'before'),after=pageWithVariant(afterPage,'after');
+      root.innerHTML=`<section class="preview-mode">
+        <div class="preview-toolbar"><h1>${esc(pageTitle(after)||pageTitle(before)||tr('preview'))}</h1><div class="page-tabs">${arr(pages).map(p=>`<button data-page="${esc(p.pageId)}" class="${after&&p.pageId===after.pageId?'active':''}">${esc(pageTitle(p))}</button>`).join('')}</div><button data-preview-mode="off">${tr('exitPreview')}</button></div>
+        <section class="preview-pair">
+          <article class="preview-pane"><h2>${tr('before')}</h2>${before&&before.htmlFile?`<iframe src="${esc(pageSrc(before))}" title="${esc(tr('before'))}"></iframe>`:`<div class="empty">${tr('waiting')}</div>`}</article>
+          <article class="preview-pane"><h2>${tr('after')}</h2>${after&&after.htmlFile?`<iframe src="${esc(pageSrc(after))}" title="${esc(tr('after'))}"></iframe>`:`<div class="empty">${tr('waiting')}</div>`}</article>
+        </section>
+      </section>`;
+      bindPreview();bindPages();
+    }
+    function renderExploration(d){
+      const set=proposalSetOf(d), proposal=selectedProposal(set);
+      if(!arr(set.proposals).length){
+        root.innerHTML=`
+          ${header(tr('exploration'),[d.sourceJourneyRef,d.sourceFlowRef].filter(Boolean).join(' · '),`<p class="muted">${tr('recommended')}: ${esc(d.recommendedOptionId||'-')} · ${esc(d.recommendationRationale||'')}</p>`)}
+          <section class="grid">${arr(d.pageSetOptions).map(o=>`<article class="card ${o.optionId===d.recommendedOptionId?'recommended':''}"><h2>${esc(o.title||o.optionId)}</h2><p>${esc(o.strategy)}</p>${chips([`${arr(o.pages).length} pages`,`${arr(o.routeMap).length} routes`,`${tr('tokens')}: ${o.tokenBudget?.estimatedTotalHtmlTokens||'-'}`])}<h3>${tr('pages')}</h3>${ul(arr(o.pages).map(p=>`${p.pageId} · ${p.route}`))}<h3>${tr('routeMap')}</h3>${routeEdges(o.routeMap)}<h3>${tr('smoke')}</h3>${chips(o.smokePath)}${ul(o.tradeoffs)}</article>`).join('')}</section>
+          <h2>${tr('questions')}</h2><section class="grid">${arr(d.reviewQuestions).map(q=>`<article class="card"><h3>${esc(q.questionId)}</h3><p>${esc(q.question)}</p><p class="muted">${esc(q.whyItMatters)}</p>${chips(q.options)}</article>`).join('')}</section>`;
+        return;
+      }
+      const base=set.baseline||{}, lp=proposal.localPrototype||{}, pages=arr(lp.pages), maps=changeMaps(proposal.changes);
+      const selected=pages.find(p=>p.pageId===state.pageId)||pages.find(p=>p.pageId===lp.previewPageId)||pages.find(p=>p.pageId===lp.startPageId)||pages[0];
+      const basePage=arr(base.pages).find(p=>p.pageId===(selected&&selected.pageId))||arr(base.pages).find(p=>p.pageId===lp.startPageId)||arr(base.pages)[0]||selected;
+      if(state.preview){renderPreviewMode(basePage,selected,pages);return}
+      root.innerHTML=`
+        ${header(tr('exploration'),[d.sourceJourneyRef,d.sourceFlowRef].filter(Boolean).join(' · '),`<p class="muted">${esc(set.goal||proposal.goal)}</p>${chips([set.proposalSetId,set.baseCurrentRef])}`)}
+        <nav class="proposal-tabs">${arr(set.proposals).map(p=>`<button data-proposal="${esc(p.proposalId)}" class="${p.proposalId===proposal.proposalId?'active':''}">${esc(proposalTitle(p))}<small>${esc(p.recommendation||'proposal')} · ${arr(p.changes).length} changes</small></button>`).join('')}</nav>
+        <section class="exp-workbench">
+          <aside class="card"><h2>${tr('impact')}</h2><p class="muted">${esc(proposal.goal)}</p>${routeDag(lp,pages,selected,{pageStatus:maps.pageStatus,routeStatus:maps.routeStatus,compact:true,extraPages:arr(base.pages)})}<h3>${tr('baseline')}</h3>${routeDag(base,arr(base.pages),null,{static:true,compact:true})}</aside>
+          ${htmlCompare(basePage,selected,pages)}
+          <aside class="card change-panel"><h2>${tr('questions')}</h2><section class="question-list">${arr(d.reviewQuestions).map(q=>`<article class="question-card"><h3>${esc(q.questionId)}</h3><p>${esc(q.question)}</p><p class="muted">${esc(q.whyItMatters)}</p>${chips(q.options)}</article>`).join('')}</section><h2>${tr('changes')}</h2><section class="change-list">${arr(proposal.changes).map(changeCard).join('')}</section></aside>
+        </section>
+        `;
+      bindProposals(set);bindPages();bindPreview();bindRouteDag(arr(lp.routeMap));
+    }
+    function bindRoutes(edges){document.querySelectorAll('[data-route]').forEach(b=>b.onclick=()=>{const e=edges[Number(b.dataset.route)];state.pageId=e.toPageId;state.params={...state.params,...(e.queryParams||{})};render(state.data)})}
+    function setDagRouteHover(from,to,on){
+      document.querySelectorAll('.dag-edge,.dag-label').forEach(el=>{const hit=el.dataset.from===from&&el.dataset.to===to;el.classList.toggle('hover',on&&hit);el.classList.toggle('dim',on&&!hit)});
+      document.querySelectorAll('.dag-node').forEach(el=>{const hit=el.dataset.dagPage===from||el.dataset.dagPage===to;el.classList.toggle('hover',on&&hit);el.classList.toggle('dim',on&&!hit)});
+    }
+    function setDagNodeHover(id,on){
+      document.querySelectorAll('.dag-edge,.dag-label').forEach(el=>{const hit=el.dataset.from===id||el.dataset.to===id;el.classList.toggle('hover',on&&hit);el.classList.toggle('dim',on&&!hit)});
+      document.querySelectorAll('.dag-node').forEach(el=>{const hit=el.dataset.dagPage===id;el.classList.toggle('hover',on&&hit);el.classList.toggle('dim',on&&!hit)});
+    }
+    function bindRouteDag(edges){
+      document.querySelectorAll('[data-dag-route]').forEach(el=>{el.onclick=()=>{const e=edges[Number(el.dataset.dagRoute)];if(!e)return;state.pageId=e.toPageId||e.to;state.params={...state.params,...(e.queryParams||{})};render(state.data)};el.onmouseenter=()=>setDagRouteHover(el.dataset.from,el.dataset.to,true);el.onmouseleave=()=>setDagRouteHover(el.dataset.from,el.dataset.to,false)});
+      document.querySelectorAll('[data-dag-page]').forEach(el=>{el.onclick=()=>{state.pageId=el.dataset.dagPage;render(state.data)};el.onmouseenter=()=>setDagNodeHover(el.dataset.dagPage,true);el.onmouseleave=()=>setDagNodeHover(el.dataset.dagPage,false)});
+    }
+    function renderCurrent(d){
+      const ps=d.pageSet||d.prototype||d, pages=arr(ps.pages);
+      state.dataId=state.dataId||ps.contentData?.defaultDatasetId||null;
+      const selected=pages.find(p=>p.pageId===state.pageId)||pages.find(p=>p.pageId===ps.startPageId)||pages[0];
+      root.innerHTML=`
+        ${header(tr('current'),[d.sourceJourneyRef,d.sourceFlowRef].filter(Boolean).join(' · '),`<p class="muted">${esc(ps.testQuestion||'')}</p>`)}
+        <section class="current-shell">
+          <section class="preview primary prototype-stage"><div class="bar"><div><h2>${tr('preview')}: ${esc(selected?pageTitle(selected):'')}</h2><p class="muted">${esc(selected?.purpose||'')}</p></div>${selected?`<a class="btn" target="_blank" href="${esc(pageSrc(selected))}">${tr('open')}</a>`:''}</div><div class="page-tabs">${pages.map(p=>`<button data-page="${esc(p.pageId)}" class="${selected&&p.pageId===selected.pageId?'active':''}">${esc(pageTitle(p))}</button>`).join('')}</div>${selected?`<iframe src="${esc(pageSrc(selected))}" title="${esc(pageTitle(selected))}"></iframe>`:`<div class="empty">${tr('waiting')}</div>`}</section>
+          <aside class="card route-panel"><h2>${tr('routeMap')}</h2>${routeDag(ps,pages,selected)}<h3>${tr('smoke')}</h3>${chips(arr(ps.smokePath).map(id=>pageTitle(pages.find(p=>p.pageId===id)||{pageId:id})))}</aside>
+        </section>`;
+      bindPages();bindRouteDag(arr(ps.routeMap));
+    }
+    function render(d){
+      state.data=d||{};
+      const m=mode(state.data);
+      document.body.classList.toggle('is-preview',state.preview&&m==='exploration');
+      if(m==='raw')renderRaw(state.data);else if(m==='exploration')renderExploration(state.data);else renderCurrent(state.data);
+      document.documentElement.lang=state.lang;bindLang();bindPreview();
+    }
+    function demoData(name){
+      const key=(name||'current').toLowerCase();
+      if(key==='raw')return{kind:'LowFiPrototypeRaw',layer:'Raw',sourceJourneyRef:'artifact:user_journey_001_current#journey_map',sourceFlowRef:'artifact:flow_model_001_current#flow_model',prototypeSlice:{actor:{zh:'客户门户用户',en:'Customer portal user'},scenario:{zh:'提交并追踪支持问题',en:'Submit and track a support issue'},trigger:{zh:'客户无法通过自助帮助解决问题。',en:'A customer cannot resolve an issue with self-service help.'},outcome:{zh:'问题带着足够证据提交，并可被追踪。',en:'The issue is submitted with enough evidence and can be tracked.'},coveredFlowNodes:['Find help','Describe issue','Attach evidence','Submit issue','Track status']},prototypeConstraints:{oneHtmlFilePerPage:true,routingStyle:'relative_links',maxPageCount:4,maxHtmlTokensPerPage:900,styleFidelity:{zh:'纯 HTML 方框，少量本地 CSS，不追求视觉精修。',en:'Plain HTML boxes, minimal local CSS, no design polish.'}},contentDataNeeds:[{dataId:'support_issue_seed',purpose:{zh:'提供问题摘要、客户、证据和状态时间线内容。',en:'Provide issue summary, customer, evidence, and status timeline content.'},consumerSignalIds:['sig_evidence_readiness','sig_review_before_submit','sig_status_tracking'],exampleFields:['ticket.id','issue.category','issue.summary','evidence.items','status.timeline'],sourceRef:'demo-data/support-issue-demo.yaml'}],prototypeSignals:[{signalId:'sig_help_entry_need',signalType:'page_need',sourceRefs:['flow:Find help','journey:Find help'],implication:{zh:'原型必须包含一个入口，让客户选择自助解决、提交问题或追踪状态。',en:'The prototype needs an entry point where the customer can choose self-service, submission, or tracking.'},contentSlots:['issue.searchQuery','knownIncidents'],unknowns:[{zh:'状态追踪是否应该在首个入口可见？',en:'Should status tracking be visible from the first entry?'}]},{signalId:'sig_evidence_readiness',signalType:'content_need',sourceRefs:['flow:Describe issue','flow:Attach evidence'],implication:{zh:'原型必须测试用户是否在提交前理解必需证据。',en:'The prototype must test whether users understand required evidence before submission.'},contentNeeds:['category','description','impact','evidence checklist'],contentSlots:['issue.category','issue.description','evidence.items'],constraints:[{zh:'证据上传可以模拟，但证据要求文案必须真实。',en:'Evidence upload can be simulated; evidence requirement copy must be realistic.'}]},{signalId:'sig_review_before_submit',signalType:'interaction_need',sourceRefs:['flow:Submit issue'],implication:{zh:'原型必须允许用户在最终提交前评审摘要和证据状态。',en:'The prototype must let users review summary and evidence status before final submit.'},contentSlots:['issue.summary','evidence.status']},{signalId:'sig_status_tracking',signalType:'state_need',sourceRefs:['flow:Track status','flow:waiting_for_customer'],implication:{zh:'原型必须表达工单状态、下一步、时间线，以及缺少证据时的恢复路径。',en:'The prototype must represent ticket state, next action, timeline, and a recovery path for missing evidence.'},contentSlots:['ticket.id','status.state','status.timeline','status.nextAction'],constraints:[{zh:'状态必须用文字表达，不能只靠颜色。',en:'Status must be text, not color only.'}]}],designQuestions:[{questionId:'q_required_evidence',question:{zh:'提交前必须收集哪些证据？',en:'What evidence is required before submission?'},whyItMatters:{zh:'证据缺失会造成客服返工。',en:'Missing evidence creates support rework.'},sourceRefs:['flow:Attach evidence']}]};
+      if(key.startsWith('exp'))return builtInExplorationDemo();
+      return{kind:'LowFiPrototypeCurrent',layer:'Current',sourceJourneyRef:'artifact:user_journey_001_current#journey_map',sourceFlowRef:'artifact:flow_model_001_current#flow_model',lowFiDesignLanguage:{principles:['interaction_first','content_realism','data_slots_before_data_layer','one_page_one_file','replayable_routes','accessible_semantics','disposable_code']},pageSet:{pageSetId:'guided_issue_intake_html_pages',startPageId:'help_entry',testQuestion:{zh:'客户能否带着足够证据提交并追踪支持问题？',en:'Can a customer submit and track a support issue with enough evidence?'},pages:[{pageId:'help_entry',title:{zh:'帮助入口',en:'Help entry'},route:'help-entry.html',htmlFile:'demo-pages/guided-issue-intake/help-entry.html',purpose:{zh:'选择自助解决、提交新问题或追踪已有问题。',en:'Choose self-service, start a new issue, or track an existing issue.'},sourceFlowNodes:['Find help'],requiredElements:['search','start_issue','track_existing'],contentSlots:['issue.searchQuery'],defaultParams:{category:'vpn'}},{pageId:'evidence_request',title:{zh:'证据收集',en:'Evidence request'},route:'evidence-request.html',htmlFile:'demo-pages/guided-issue-intake/evidence-request.html',purpose:{zh:'提交前收集问题事实和证据。',en:'Collect issue facts and evidence before submission.'},sourceFlowNodes:['Describe issue','Attach evidence'],requiredElements:['category','description','evidence_checklist'],contentSlots:['issue.category','evidence.items'],defaultParams:{category:'vpn',ticket:'SUP-1042'}},{pageId:'submit_review',title:{zh:'提交确认',en:'Submit review'},route:'submit-review.html',htmlFile:'demo-pages/guided-issue-intake/submit-review.html',purpose:{zh:'最终提交前评审工单摘要。',en:'Review ticket summary before final submission.'},sourceFlowNodes:['Submit issue'],requiredElements:['summary','submit'],contentSlots:['issue.summary','evidence.status'],defaultParams:{ticket:'SUP-1042',evidence:'screenshot'}},{pageId:'tracking_status',title:{zh:'状态追踪',en:'Tracking status'},route:'tracking-status.html',htmlFile:'demo-pages/guided-issue-intake/tracking-status.html',purpose:{zh:'展示工单状态、下一步、负责人和时间线。',en:'Show ticket state, next action, owner, and timeline.'},sourceFlowNodes:['Track status'],requiredElements:['ticket_id','state','timeline'],contentSlots:['ticket.id','status.state','status.timeline'],defaultParams:{ticket:'SUP-1042',state:'in_triage'}}],routeMap:[{fromPageId:'help_entry',toPageId:'evidence_request',trigger:{zh:'开始提交问题',en:'Start an issue'},queryParams:{category:'vpn'}},{fromPageId:'evidence_request',toPageId:'submit_review',trigger:{zh:'继续确认',en:'Continue to review'},queryParams:{ticket:'SUP-1042',evidence:'screenshot'}},{fromPageId:'submit_review',toPageId:'tracking_status',trigger:{zh:'提交问题',en:'Submit issue'},queryParams:{ticket:'SUP-1042',state:'in_triage'}},{fromPageId:'tracking_status',toPageId:'evidence_request',trigger:{zh:'补充被要求的证据',en:'Add requested evidence'},guard:'waiting_for_customer',queryParams:{ticket:'SUP-1042',returnTo:'tracking_status'}}],smokePath:['help_entry','evidence_request','submit_review','tracking_status'],contentData:{defaultDatasetId:'demo_support_issue',dataFiles:[{datasetId:'demo_support_issue',format:'yaml',file:'demo-data/support-issue-demo.yaml'}]},tokenBudget:{pages:4,maxHtmlTokensPerPage:900,estimatedTotalHtmlTokens:2700}},decisionTrace:{selectedOptionId:'guided_issue_intake_pages',reviewer:'human_reviewer',rationale:{zh:'用小而可维护的页面走通完整旅程。',en:'Runs the whole journey with small maintainable pages.'}}};
+    }
+    function builtInExplorationDemo(){
+      const page=(pageId,zh,en,htmlFile,requiredElements=[],params={})=>({pageId,title:{zh,en},route:htmlFile.replace(/^.*\//,''),htmlFile,purpose:{zh:`${zh}的局部低保真页面。`,en:`Local low-fi page for ${en}.`},sourceFlowNodes:['Prototype iteration'],requiredElements,defaultParams:params});
+      const baselinePages=[
+        {pageId:'help_entry',title:{zh:'帮助入口',en:'Help entry'},route:'help-entry.html',htmlFile:'demo-pages/guided-issue-intake/help-entry.html',purpose:{zh:'选择自助解决或提交问题。',en:'Choose self-service or issue submission.'},sourceFlowNodes:['Find help'],requiredElements:['search','start_issue'],defaultParams:{category:'vpn'}},
+        {pageId:'evidence_request',title:{zh:'证据收集',en:'Evidence request'},route:'evidence-request.html',htmlFile:'demo-pages/guided-issue-intake/evidence-request.html',purpose:{zh:'收集问题事实。',en:'Gather issue facts.'},sourceFlowNodes:['Describe issue'],requiredElements:['category','description'],defaultParams:{category:'vpn',ticket:'SUP-1042'}},
+        {pageId:'submit_review',title:{zh:'提交确认',en:'Submit review'},route:'submit-review.html',htmlFile:'demo-pages/guided-issue-intake/submit-review.html',purpose:{zh:'确认摘要。',en:'Confirm summary.'},sourceFlowNodes:['Submit issue'],requiredElements:['summary','submit'],defaultParams:{ticket:'SUP-1042',evidence:'screenshot'}},
+        {pageId:'tracking_status',title:{zh:'状态追踪',en:'Tracking status'},route:'tracking-status.html',htmlFile:'demo-pages/guided-issue-intake/tracking-status.html',purpose:{zh:'展示工单状态。',en:'Show ticket state.'},sourceFlowNodes:['Track status'],requiredElements:['status','timeline'],defaultParams:{ticket:'SUP-1042',state:'in_triage'}}
+      ];
+      const baseline={label:{zh:'现有转移路径',en:'Existing transition path'},pages:baselinePages,routeMap:[{fromPageId:'help_entry',toPageId:'evidence_request',trigger:{zh:'开始提交问题',en:'Start an issue'}},{fromPageId:'evidence_request',toPageId:'submit_review',trigger:{zh:'继续',en:'Continue'}},{fromPageId:'submit_review',toPageId:'tracking_status',trigger:{zh:'提交',en:'Submit'}}],smokePath:['help_entry','evidence_request','submit_review','tracking_status']};
+      const evidencePages=[page('evidence_request','证据收集','Evidence request','demo-pages/guided-issue-intake/evidence-request.html',['category','description','impact','evidence_checklist'],{category:'vpn',ticket:'SUP-1042'}),page('submit_review','提交确认','Submit review','demo-pages/guided-issue-intake/submit-review.html',['summary','evidence_status','submit'],{ticket:'SUP-1042',evidence:'screenshot'}),page('tracking_status','状态追踪','Tracking status','demo-pages/guided-issue-intake/tracking-status.html',['status','timeline','add_evidence'],{ticket:'SUP-1042',state:'waiting_for_customer'})];
+      const statusPages=[page('tracking_status','状态追踪','Tracking status','demo-pages/guided-issue-intake/tracking-status.html',['ticket_lookup','timeline','new_issue'],{ticket:'SUP-1042'}),page('help_entry','帮助入口','Help entry','demo-pages/guided-issue-intake/help-entry.html',['search','start_issue'],{category:'vpn'}),page('evidence_request','证据收集','Evidence request','demo-pages/guided-issue-intake/evidence-request.html',['category','description'],{category:'vpn',ticket:'SUP-1042'})];
+      const assistantPages=[page('help_entry','帮助入口','Help entry','demo-pages/guided-issue-intake/help-entry.html',['search','assistant_prompt','start_issue'],{category:'vpn'}),page('submit_review','提交确认','Submit review','demo-pages/guided-issue-intake/submit-review.html',['generated_summary','edit','submit'],{ticket:'SUP-1042',evidence:'assistant_summary'}),page('tracking_status','状态追踪','Tracking status','demo-pages/guided-issue-intake/tracking-status.html',['status','timeline'],{ticket:'SUP-1042',state:'in_triage'})];
+      const proposal=(proposalId,title,goal,recommendation,pages,routeMap,smokePath,changes)=>({proposalId,title,goal,recommendation,localPrototype:{scope:goal,startPageId:smokePath[0],previewPageId:smokePath[0],pages,routeMap,smokePath},changes,comparisonNotes:[{zh:'对比现有路径，本方案只验证本轮最小可评审变化。',en:'Compared with the existing path, this proposal validates the smallest reviewable change.'}],validationTasks:[{zh:'点击局部路径并确认页面预览能走通。',en:'Click the local path and confirm the page preview works.'}]});
+      return{kind:'LowFiPrototypeExploration',layer:'Exploration',rawArtifactRef:'artifact:low_fi_prototype_001_raw',sourceJourneyRef:'artifact:user_journey_001_current#journey_map',sourceFlowRef:'artifact:flow_model_001_current#flow_model',proposalSet:{proposalSetId:'exp_002_evidence_iteration',title:{zh:'证据处理探索',en:'Evidence handling exploration'},goal:{zh:'比较本轮可进入 Current 的低保真原型改动。',en:'Compare prototype changes that may enter Current.'},baseCurrentRef:'artifact:low_fi_prototype_001_current@iter_001',recommendedProposalId:'evidence_gate',baseline,proposals:[
+        proposal('evidence_gate',{zh:'A 证据门槛',en:'A Evidence gate'},{zh:'提交前明确证据要求，并增加状态页返回证据收集的恢复路径。',en:'Clarify evidence before submit and add a recovery route from status to evidence.'},'recommended',evidencePages,[{fromPageId:'evidence_request',toPageId:'submit_review',trigger:{zh:'证据已准备',en:'Evidence ready'},queryParams:{evidence:'screenshot'}},{fromPageId:'submit_review',toPageId:'tracking_status',trigger:{zh:'提交',en:'Submit'},queryParams:{ticket:'SUP-1042',state:'in_triage'}},{fromPageId:'tracking_status',toPageId:'evidence_request',trigger:{zh:'补充证据',en:'Add evidence'},guard:'waiting_for_customer',queryParams:{ticket:'SUP-1042',returnTo:'tracking_status'}}],['evidence_request','submit_review','tracking_status','evidence_request'],[{changeId:'chg_add_recovery_route',changeType:'add',targetType:'route',targetId:'tracking_status->evidence_request',summary:{zh:'新增从状态追踪回到证据收集的恢复路由。',en:'Add recovery route from status to evidence.'},after:{zh:'状态为 waiting_for_customer 时可补充证据。',en:'Users can add evidence when status is waiting_for_customer.'}},{changeId:'chg_modify_evidence_copy',changeType:'modify',targetType:'content',targetId:'evidence_request.header.context',pageId:'evidence_request',summary:{zh:'把参数式上下文替换为用户可理解的证据提示。',en:'Replace parameter-like context with evidence guidance.'},before:{zh:'data=demo_support_issue · category=vpn · ticket=SUP-1042',en:'data=demo_support_issue · category=vpn · ticket=SUP-1042'},after:{zh:'已准备工单草稿 SUP-1042；分类建议为 VPN / Network。',en:'Draft ticket SUP-1042 is prepared; category suggestion is VPN / Network.'}}]),
+        proposal('status_first',{zh:'B 状态优先',en:'B Status first'},{zh:'优先确认是否已有工单，减少重复提交。',en:'Check existing ticket status first to reduce duplicates.'},'alternative',statusPages,[{fromPageId:'tracking_status',toPageId:'help_entry',trigger:{zh:'没有活跃工单',en:'No active ticket'}},{fromPageId:'help_entry',toPageId:'evidence_request',trigger:{zh:'开始提交',en:'Start issue'}}],['tracking_status','help_entry','evidence_request'],[{changeId:'chg_add_status_entry',changeType:'add',targetType:'page',targetId:'tracking_status',summary:{zh:'把状态查询作为入口。',en:'Use status lookup as entry.'},after:{zh:'首屏优先查询已有工单。',en:'First screen checks existing ticket.'}},{changeId:'chg_modify_entry_route',changeType:'modify',targetType:'route',targetId:'help_entry->evidence_request',summary:{zh:'提交入口从状态页兜底进入。',en:'Issue creation becomes fallback from status.'},before:{zh:'帮助入口直接进入提交。',en:'Help entry goes directly to submit.'},after:{zh:'无活跃工单后再进入提交。',en:'Enter submit only after no active ticket.'}}]),
+        proposal('assistant_light',{zh:'C 轻量助手',en:'C Assistant light'},{zh:'用助手先生成问题摘要，再进入提交确认。',en:'Use assistant clarification before review.'},'risky',assistantPages,[{fromPageId:'help_entry',toPageId:'submit_review',trigger:{zh:'生成摘要',en:'Generate summary'}},{fromPageId:'submit_review',toPageId:'tracking_status',trigger:{zh:'提交',en:'Submit'}}],['help_entry','submit_review','tracking_status'],[{changeId:'chg_add_assistant_prompt',changeType:'add',targetType:'element',targetId:'help_entry.assistant_prompt',pageId:'help_entry',summary:{zh:'新增助手澄清入口。',en:'Add assistant clarification entry.'},after:{zh:'用户可先回答澄清问题。',en:'User can answer clarifying questions first.'}},{changeId:'chg_delete_evidence_step',changeType:'delete',targetType:'page',targetId:'evidence_request',summary:{zh:'删除独立证据收集步骤。',en:'Remove standalone evidence collection step.'},before:{zh:'独立证据收集页。',en:'Standalone evidence page.'},after:{zh:'由助手摘要带入提交确认。',en:'Assistant summary carries details into review.'}}])
+      ]},reviewQuestions:[{questionId:'q_select_proposal',question:{zh:'本轮选择哪一个 proposal 进入 Current 汇总？',en:'Which proposal should enter Current?'},whyItMatters:{zh:'Current 会汇总被接受的多轮低保真改动。',en:'Current accumulates accepted low-fi iterations.'},answerType:'single_choice',options:['evidence_gate','status_first','assistant_light'],defaultRecommendation:'evidence_gate'}]};
+    }
+    function loadDemo(name){render(demoData((name||'current').toLowerCase()))}
+    window.addEventListener('message',e=>render(parseResource(e.data&&e.data.resource)));
+    if(qs.get('demo')||qs.get('layer')) loadDemo(qs.get('demo')||qs.get('layer'));
+    else if(window.__ACAS_RENDER_RESOURCE__) render(parseResource(window.__ACAS_RENDER_RESOURCE__));
+    else render({kind:'LowFiPrototypeCurrent',pageSet:{testQuestion:tr('waiting'),pages:[],routeMap:[],smokePath:[]}});
+  </script>
+</body>
+</html>

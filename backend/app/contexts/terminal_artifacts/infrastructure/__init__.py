@@ -1,0 +1,1 @@
+"""Terminal artifacts infrastructure adapters."""

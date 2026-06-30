@@ -8,13 +8,16 @@ import app.repositories.clients as clients_repo
 from app.db import Base
 from app.models import Client, ClientRuntime, ClientStatus, LOCAL_CLIENT_ID
 from app.repositories.clients import (
+    ClientNameUnavailable,
     LOCAL_CLIENT_NAME,
     authenticate_client,
     create_or_rotate_remote_client_by_name,
     create_client,
+    delete_remote_client_for_owner,
     ensure_local_client,
     generate_client_token,
     hash_client_token,
+    list_clients_for_owner,
     verify_client_token,
 )
 
@@ -67,6 +70,45 @@ async def test_create_remote_client_stores_metadata_and_returns_token(session):
     assert client.token_hash.startswith("sha256:")
     assert client.token_hash != token
     assert verify_client_token(token, client.token_hash) is True
+
+
+@pytest.mark.asyncio
+async def test_list_clients_for_owner_returns_only_owned_clients(session):
+    alice_client, _ = await create_client(
+        session,
+        name="alice-remote",
+        runtime=ClientRuntime.remote,
+        owner_user_id="alice",
+    )
+    await create_client(
+        session,
+        name="bob-remote",
+        runtime=ClientRuntime.remote,
+        owner_user_id="bob",
+    )
+    await create_client(session, name="legacy-remote", runtime=ClientRuntime.remote)
+    await session.commit()
+
+    clients = await list_clients_for_owner(session, "alice")
+
+    assert [client.id for client in clients] == [alice_client.id]
+
+
+@pytest.mark.asyncio
+async def test_delete_remote_client_for_owner_does_not_delete_other_owner_client(session):
+    alice_client, _ = await create_client(
+        session,
+        name="alice-remote",
+        runtime=ClientRuntime.remote,
+        owner_user_id="alice",
+    )
+    await session.commit()
+
+    deleted = await delete_remote_client_for_owner(session, alice_client.id, "bob")
+    await session.commit()
+
+    assert deleted is False
+    assert await session.get(Client, alice_client.id) is not None
 
 
 @pytest.mark.asyncio
@@ -181,3 +223,20 @@ async def test_create_or_rotate_remote_client_by_name_reuses_existing_client_and
     assert second.install_path == "/new/path"
     assert second.status is ClientStatus.OFFLINE
     assert len(clients) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_or_rotate_remote_client_by_name_rejects_cross_owner_reuse(session):
+    await create_or_rotate_remote_client_by_name(
+        session,
+        name="office-mac-mini",
+        owner_user_id="alice",
+    )
+    await session.commit()
+
+    with pytest.raises(ClientNameUnavailable, match="another user"):
+        await create_or_rotate_remote_client_by_name(
+            session,
+            name="office-mac-mini",
+            owner_user_id="bob",
+        )

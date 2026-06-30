@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  CODEX_COMPOSER_FOLLOWUP_SUBMIT_INTERVAL_MS,
+  CODEX_COMPOSER_FOLLOWUP_SUBMIT_DURATION_MS,
   CODEX_COMPOSER_SUBMIT_INPUT,
+  agentDirectSubmitFollowupInputs,
   clearLegacyCustomQuickKeys,
   decodeQuickKeyInput,
   filterCustomQuickKeys,
@@ -27,6 +30,17 @@ describe("terminalQuickKeys", () => {
   it("uses a normal terminal enter for non-Codex direct agent submits", () => {
     expect(agentDirectSubmitInput(["claude_code", "/workspace/project"])).toBe(TERMINAL_ENTER_INPUT);
     expect(agentDirectSubmitInput(undefined)).toBe(TERMINAL_ENTER_INPUT);
+  });
+
+  it("uses repeated Codex enhanced enter keys for follow-up submits", () => {
+    expect(CODEX_COMPOSER_FOLLOWUP_SUBMIT_INTERVAL_MS).toBe(500);
+    expect(CODEX_COMPOSER_FOLLOWUP_SUBMIT_DURATION_MS).toBe(3_000);
+    const count = 6;
+    expect(agentDirectSubmitFollowupInputs(["codex", "/workspace/project"])).toEqual(
+      Array.from({ length: count }, () => CODEX_COMPOSER_SUBMIT_INPUT)
+    );
+    expect(agentDirectSubmitFollowupInputs(["claude_code", "/workspace/project"])).toEqual([]);
+    expect(agentDirectSubmitFollowupInputs(undefined)).toEqual([]);
   });
 
   it("decodes custom Ctrl key tokens dynamically", () => {

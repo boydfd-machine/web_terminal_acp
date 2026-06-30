@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useI18n } from "../i18n";
 import type { Client } from "../types";
 
 type ClientSwitcherProps = {
@@ -49,6 +50,7 @@ export function ClientSwitcher({
   onClose,
   onSelectClient
 }: ClientSwitcherProps) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -162,27 +164,27 @@ export function ClientSwitcher({
       <div aria-modal="true" className="client-switcher" role="dialog">
         <div className="client-switcher-header">
           <div>
-            <h2>Switch client</h2>
-            <p className="muted">最近使用的 Client 优先</p>
+            <h2>{t("client.switcher.title")}</h2>
+            <p className="muted">{t("client.switcher.hint")}</p>
           </div>
           <button type="button" onClick={onClose}>
-            Close
+            {t("common.close")}
           </button>
         </div>
 
         <input
           ref={inputRef}
-          aria-label="Search clients"
+          aria-label={t("client.switcher.search")}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search clients..."
+          placeholder={t("client.switcher.search")}
         />
 
         {visibleClients.length === 0 && (
-          <p className="client-switcher-empty">No matching clients.</p>
+          <p className="client-switcher-empty">{t("client.switcher.empty")}</p>
         )}
         {visibleClients.length > 0 && (
-          <ul className="client-switcher-results" role="listbox" aria-label="Clients">
+          <ul className="client-switcher-results" role="listbox" aria-label={t("sidebar.clients.title")}>
             {visibleClients.map((client) => {
               const isActive = client.id === activeClientId;
               const isSelected = client.id === selectedClientId;

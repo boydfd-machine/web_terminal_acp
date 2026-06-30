@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Register the current linked git worktree with Web Terminal (OSC marker).
+set -euo pipefail
+
+if [[ -z "${WEB_TERMINAL_WINDOW_ID:-}" ]]; then
+  echo "register-worktree: WEB_TERMINAL_WINDOW_ID is not set (not a Web Terminal shell?)" >&2
+  exit 1
+fi
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "register-worktree: current directory is not inside a git repository" >&2
+  exit 1
+fi
+
+worktree_root="$(git rev-parse --show-toplevel)"
+if [[ ! -f "$worktree_root/.git" ]]; then
+  echo "register-worktree: must run inside a linked git worktree (.git must be a file)" >&2
+  exit 1
+fi
+
+branch="$(git -C "$worktree_root" branch --show-current 2>/dev/null || true)"
+git_common_dir="$(git -C "$worktree_root" rev-parse --path-format=absolute --git-common-dir)"
+main_repo_root="$(
+  WEB_TERMINAL_GIT_COMMON_DIR="$git_common_dir" python3 - <<'PY'
+import os
+from pathlib import Path
+
+common_dir = Path(os.environ["WEB_TERMINAL_GIT_COMMON_DIR"]).expanduser().resolve()
+if common_dir.name == ".git":
+    print(common_dir.parent)
+else:
+    print(common_dir)
+PY
+)"
+
+payload="$(
+  WEB_TERMINAL_WORKTREE_ROOT="$worktree_root" \
+  WEB_TERMINAL_WORKTREE_BRANCH="$branch" \
+  WEB_TERMINAL_MAIN_REPO_ROOT="$main_repo_root" \
+  python3 - <<'PY'
+import base64
+import json
+import os
+
+payload: dict[str, str] = {
+    "worktree_root": os.environ["WEB_TERMINAL_WORKTREE_ROOT"],
+    "main_repo_root": os.environ["WEB_TERMINAL_MAIN_REPO_ROOT"],
+}
+branch = os.environ.get("WEB_TERMINAL_WORKTREE_BRANCH", "").strip()
+if branch:
+    payload["branch"] = branch
+print(base64.b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode())
+PY
+)"
+
+printf '\033]777;web-terminal-worktree;window_id=%s;payload=%s\007' \
+  "$WEB_TERMINAL_WINDOW_ID" "$payload"
+
+echo "Registered worktree: $worktree_root${branch:+ ($branch)}"
+echo "Next command cwd: $worktree_root"

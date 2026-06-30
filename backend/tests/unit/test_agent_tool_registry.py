@@ -21,6 +21,7 @@ import app.agent_tools.types as agent_tool_types
 from app.agent_tools.types import (
     AgentChatProjection,
     AgentEventProjection,
+    AgentSubagentState,
     AgentToolAdapter,
     AgentToolStorage,
     AgentToolWatchEvent,
@@ -65,6 +66,7 @@ def test_agent_plugin_registry_describes_builtin_agent_clients():
     assert descriptors["antigravity"].command_names == ("agy-p", "agy")
     assert descriptors["antigravity"].capabilities.launch is True
     assert descriptors["antigravity"].capabilities.agent_records is True
+    assert descriptors["antigravity"].capabilities.work_presence is True
     antigravity_plugin = registry.by_agent_id("antigravity")
     assert antigravity_plugin.tool_adapter_module == "antigravity_cli"
     assert antigravity_plugin.tool_adapter_class == "AntigravityCliAdapter"
@@ -201,6 +203,10 @@ def test_adapter_protocol_uses_orm_events_for_projection_methods():
     is_completion_hints = get_type_hints(AgentToolAdapter.is_completion, globalns=namespace)
     assert is_completion_hints["event"] is Event
     assert is_completion_hints["return"] is bool
+
+    subagent_state_hints = get_type_hints(AgentToolAdapter.subagent_state, globalns=namespace)
+    assert subagent_state_hints["event"] is Event
+    assert subagent_state_hints["return"] is AgentSubagentState
 
     summary_text_hints = get_type_hints(AgentToolAdapter.summary_text, globalns=namespace)
     assert summary_text_hints["event"] is Event

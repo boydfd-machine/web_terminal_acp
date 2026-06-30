@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.db import Base
 from app.models import ClientRuntime, ClientStatus, VirtualWindow, WindowStatus
 from app.repositories.clients import create_client, ensure_local_client
-from app.repositories.windows import create_window
+from app.contexts.windows.infrastructure.repository import create_window
 from app.services.runtime.offline_monitor import (
     mark_all_remote_clients_disconnected,
     mark_remote_client_disconnected,
@@ -174,6 +174,76 @@ async def test_reconcile_inventory_restores_present_error_windows(session):
 
     assert reconciled_count == 1
     assert present.status is WindowStatus.active
+
+
+@pytest.mark.asyncio
+async def test_reconcile_inventory_updates_stale_remote_binding_by_local_window_id(session):
+    client, _ = await create_client(session, name="remote", runtime=ClientRuntime.remote)
+    present = await create_window(
+        session,
+        client.id,
+        cwd="/old",
+        shell_command="/bin/bash",
+        remote_session_id="session-old",
+        remote_window_id="@1",
+    )
+    present.status = WindowStatus.disconnected
+    await session.commit()
+
+    reconciled_count = await reconcile_inventory(
+        session,
+        client.id,
+        [
+            {
+                "local_window_id": str(present.id),
+                "remote_session_id": "session-new",
+                "remote_window_id": "@9",
+                "cwd": "/new",
+            }
+        ],
+    )
+    await session.commit()
+
+    assert reconciled_count == 1
+    assert present.status is WindowStatus.active
+    assert present.remote_session_id == "session-new"
+    assert present.remote_window_id == "@9"
+    assert present.cwd == "/new"
+    assert present.shell_command == "/bin/bash"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_inventory_repairs_active_window_remote_binding(session):
+    client, _ = await create_client(session, name="remote", runtime=ClientRuntime.remote)
+    present = await create_window(
+        session,
+        client.id,
+        cwd="/old",
+        shell_command="/bin/bash",
+        remote_session_id="session-old",
+        remote_window_id="@1",
+    )
+    await session.commit()
+
+    reconciled_count = await reconcile_inventory(
+        session,
+        client.id,
+        [
+            {
+                "local_window_id": str(present.id),
+                "remote_session_id": "session-new",
+                "remote_window_id": "@9",
+                "cwd": "/new",
+            }
+        ],
+    )
+    await session.commit()
+
+    assert reconciled_count == 1
+    assert present.status is WindowStatus.active
+    assert present.remote_session_id == "session-new"
+    assert present.remote_window_id == "@9"
+    assert present.cwd == "/new"
 
 
 @pytest.mark.asyncio

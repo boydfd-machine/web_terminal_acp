@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ProjectTerminalPicker } from "../src/components/ProjectTerminalPicker";
+import type { Project } from "../src/types";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -25,6 +26,18 @@ function renderPicker(props: Partial<Parameters<typeof ProjectTerminalPicker>[0]
       />
     );
   });
+}
+
+function projectWithPreference(agentPreference: Project["agent_preference"]): Project {
+  return {
+    client_id: "client-1",
+    path: "/workspace/project",
+    display_name: null,
+    summary_status: null,
+    summary_updated_at: null,
+    window_count: 0,
+    agent_preference: agentPreference
+  };
 }
 
 function clickButtonWithText(text: string): void {
@@ -80,6 +93,29 @@ describe("ProjectTerminalPicker", () => {
       "/workspace/project",
       expect.objectContaining({ agent: "codex", command: "codex" })
     );
+  });
+
+  it("uses the project agent preference when no agent tab was manually selected", () => {
+    const onCreateTerminal = vi.fn();
+
+    renderPicker({
+      projects: [projectWithPreference({
+        agent_profile_id: "builtin/developer",
+        agent_client: "codex",
+        agent_command: "codex --model gpt-5-codex",
+        agent_model_selection: { preset_id: "openai-main", model: "gpt-5-codex" }
+      })],
+      onCreateTerminal
+    });
+    clickProject("/workspace/project");
+
+    expect(onCreateTerminal).toHaveBeenCalledWith("/workspace/project", {
+      agent: "codex",
+      command: "codex --model gpt-5-codex",
+      config: null,
+      profile_id: "builtin/developer",
+      model_selection: { preset_id: "openai-main", model: "gpt-5-codex" }
+    });
   });
 
   it("hides agent clients that do not support launch", () => {

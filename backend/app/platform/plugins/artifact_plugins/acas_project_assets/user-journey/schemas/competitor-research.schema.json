@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acas.local/artifact-definitions/user-journey/competitor-research.schema.json",
+  "title": "User Journey Competitor Research",
+  "type": "object",
+  "required": ["kind", "layer", "researchPerformed", "relevantPatterns"],
+  "properties": {
+    "kind": { "const": "UserJourneyCompetitorResearch" },
+    "layer": { "const": "Competitor Research" },
+    "rawArtifactRef": { "type": "string" },
+    "researchPerformed": { "type": "boolean" },
+    "competitorsReviewed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "category"],
+        "properties": {
+          "name": { "type": "string" },
+          "category": { "type": "string" },
+          "sourceRefs": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": true
+      }
+    },
+    "relevantPatterns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["pattern", "implicationForJourney"],
+        "properties": {
+          "pattern": { "type": "string" },
+          "seenIn": { "type": "array", "items": { "type": "string" } },
+          "affectedPhases": { "type": "array", "items": { "type": "string" } },
+          "implicationForJourney": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "differentiators": { "type": "array", "items": { "type": "object" } },
+    "nonApplicablePatterns": { "type": "array", "items": { "type": "object" } },
+    "openRisks": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

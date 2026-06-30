@@ -1,0 +1,59 @@
+.detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.detail-work-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+}
+
+.manual-work-status-controls {
+  display: inline-flex;
+  flex: 1 1 220px;
+  align-items: center;
+  gap: 6px;
+  min-width: min(100%, 220px);
+  max-width: 360px;
+}
+
+.manual-work-status-controls select {
+  min-width: 0;
+  flex: 1 1 160px;
+  height: 30px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+.manual-work-status-controls button {
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.detail-inline-error {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
+.retry-summary {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.retry-summary label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--skin-text);
+  font-size: 13px;
+}
+
+.retry-summary input[type="checkbox"] {
+  width: auto;
+}

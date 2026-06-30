@@ -1,0 +1,111 @@
+.artifact-quick-open-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: start center;
+  background: rgb(2 6 23 / 62%);
+  padding: min(12vh, 96px) 16px 24px;
+}
+
+.artifact-quick-open {
+  width: min(620px, 100%);
+  max-height: min(720px, calc(var(--web-terminal-viewport-height, 100dvh) - 48px));
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--skin-border);
+  border-radius: 8px;
+  background: var(--skin-code-bg);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 54%);
+  outline: none;
+}
+
+.artifact-quick-open header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--skin-control-hover);
+  padding: 10px 12px;
+}
+
+.artifact-quick-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  border-bottom: 1px solid var(--skin-control-hover);
+  padding: 8px 10px;
+}
+
+.artifact-quick-tabs button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--skin-border);
+  background: var(--skin-panel-raised);
+  color: var(--skin-text);
+  padding: 8px 10px;
+}
+
+.artifact-quick-tabs button.selected {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent-soft);
+  color: var(--skin-text-strong);
+}
+
+.artifact-quick-tabs span {
+  min-width: 20px;
+  border-radius: 999px;
+  background: var(--skin-control-hover);
+  color: var(--skin-text);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.artifact-quick-list {
+  display: grid;
+  gap: 6px;
+  overflow: auto;
+  padding: 10px;
+}
+
+.artifact-quick-list button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  align-items: center;
+  width: 100%;
+  border: 1px solid var(--skin-border);
+  background: var(--skin-code-bg);
+  color: var(--skin-text-strong);
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.artifact-quick-list button.selected {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent-soft);
+}
+
+.artifact-quick-list strong,
+.artifact-quick-list span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-quick-list span {
+  color: var(--skin-muted);
+  font-size: 12px;
+}
+
+.artifact-quick-message {
+  margin: 0;
+  padding: 28px 16px;
+  color: var(--skin-muted);
+  text-align: center;
+}

@@ -1,8 +1,9 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { CSSProperties } from "react";
 
 import { fetchGitRuns } from "../api";
+import { useI18n } from "../i18n";
 import {
   basename,
   commitLabel,
@@ -11,14 +12,13 @@ import {
   fileDelta,
   fileStatusTone,
   formatGitDateTime,
+  gitDiffFileKey,
   gitRunTitle,
-  patchLines,
-  patchLineTone,
   shortSha,
   treeFileLabel
 } from "../gitDiff";
 import type { GitDiffCommit, GitDiffFile, GitWorktreeRun } from "../types";
-import { useOverlayFocus } from "./useOverlayFocus";
+import { GitDiffPatchView } from "./GitDiffPatchView";
 
 type GitRunViewerProps = {
   clientId: string;
@@ -56,6 +56,33 @@ function filterCommits(commits: GitDiffCommit[], selectedSha: string): GitDiffCo
   return commits.filter((commit) => commit.sha === selectedSha);
 }
 
+function firstDiffSelection(commits: GitDiffCommit[]): SelectedDiff | null {
+  for (const commit of commits) {
+    const file = commit.files?.[0];
+    if (file) {
+      return { commit, file };
+    }
+  }
+  return null;
+}
+
+function selectionFromCommits(commits: GitDiffCommit[], selection: SelectedDiff | null): SelectedDiff | null {
+  if (!selection) {
+    return firstDiffSelection(commits);
+  }
+  const selectedFileKey = gitDiffFileKey(selection.file);
+  for (const commit of commits) {
+    if (commit.sha !== selection.commit.sha) {
+      continue;
+    }
+    const file = commit.files?.find((candidate) => gitDiffFileKey(candidate) === selectedFileKey);
+    if (file) {
+      return { commit, file };
+    }
+  }
+  return firstDiffSelection(commits);
+}
+
 function buildFileTree(files: GitDiffFile[]): GitFileTreeNode {
   const root: GitFileTreeNode = { name: "", path: "", children: [], files: [] };
   for (const file of files) {
@@ -87,6 +114,7 @@ function sortFileTree(node: GitFileTreeNode): void {
 }
 
 function RunCard({ run }: { run: GitWorktreeRun }) {
+  const { t } = useI18n();
   const [selectedCommitSha, setSelectedCommitSha] = useState("all");
   const [selectedDiff, setSelectedDiff] = useState<SelectedDiff | null>(null);
   const [fileViewMode, setFileViewMode] = useState<FileViewMode>("tree");
@@ -96,6 +124,10 @@ function RunCard({ run }: { run: GitWorktreeRun }) {
     () => filterCommits(commits, selectedCommitSha),
     [commits, selectedCommitSha]
   );
+  const activeDiff = useMemo(
+    () => selectionFromCommits(visibleCommits, selectedDiff),
+    [visibleCommits, selectedDiff]
+  );
   const title = gitRunTitle(run);
 
   return (
@@ -103,29 +135,29 @@ function RunCard({ run }: { run: GitWorktreeRun }) {
       <header className="git-run-card-header">
         <strong>{title}</strong>
         <span className={`git-run-status ${run.pending_commit ? "pending" : ""}`}>
-          {run.pending_commit ? "pending commit" : run.status}
+          {run.pending_commit ? t("git.run.pendingCommitStatus") : run.status}
         </span>
       </header>
       <dl className="detail-list git-run-meta">
-        <dt>Type</dt>
+        <dt>{t("git.run.type")}</dt>
         <dd>{run.run_type}</dd>
-        <dt>Provider</dt>
+        <dt>{t("git.run.provider")}</dt>
         <dd>{run.agent_provider ?? "-"}</dd>
-        <dt>Worktree</dt>
+        <dt>{t("git.run.worktree")}</dt>
         <dd>{run.worktree_root ?? "-"}</dd>
-        <dt>Discovery</dt>
+        <dt>{t("git.run.discovery")}</dt>
         <dd>{run.discovery_method ?? "-"}</dd>
-        <dt>Started</dt>
+        <dt>{t("git.run.started")}</dt>
         <dd>{formatGitDateTime(run.started_at)}</dd>
-        <dt>Ended</dt>
+        <dt>{t("git.run.ended")}</dt>
         <dd>{run.ended_at ? formatGitDateTime(run.ended_at) : "-"}</dd>
-        <dt>Pending commit</dt>
-        <dd>{run.pending_commit ? "Yes" : "No"}</dd>
+        <dt>{t("git.run.pendingCommit")}</dt>
+        <dd>{run.pending_commit ? t("git.run.yes") : t("git.run.no")}</dd>
         {run.run_type === "tracking" && (
           <>
-            <dt>Start HEAD</dt>
+            <dt>{t("git.run.startHead")}</dt>
             <dd><code>{snapshotText(run, "start_snapshot_json", "head_sha")}</code></dd>
-            <dt>Current HEAD</dt>
+            <dt>{t("git.run.currentHead")}</dt>
             <dd><code>{snapshotText(run, "end_snapshot_json", "head_sha")}</code></dd>
           </>
         )}
@@ -136,11 +168,11 @@ function RunCard({ run }: { run: GitWorktreeRun }) {
         </p>
       )}
       {commits.length > 0 ? (
-        <section className="git-commit-browser" aria-label="Git commit changes">
+        <section className="git-commit-browser" aria-label={t("git.diff.changes")}>
           <label>
-            <span>Commit</span>
+            <span>{t("git.run.commit")}</span>
             <select value={selectedCommitSha} onChange={(event) => setSelectedCommitSha(event.target.value)}>
-              <option value="all">All commits ({commits.length})</option>
+              <option value="all">{t("git.run.allCommits", { count: commits.length })}</option>
               {commits.map((commit) => (
                 <option key={commit.sha} value={commit.sha}>
                   {commitLabel(commit)}
@@ -148,14 +180,14 @@ function RunCard({ run }: { run: GitWorktreeRun }) {
               ))}
             </select>
           </label>
-          <div className="git-file-view-toggle" role="group" aria-label="File display mode">
+          <div className="git-file-view-toggle" role="group" aria-label={t("git.run.fileDisplayMode")}>
             <button
               type="button"
               className={fileViewMode === "tree" ? "selected" : ""}
               onClick={() => setFileViewMode("tree")}
               aria-pressed={fileViewMode === "tree"}
             >
-              Tree
+              {t("git.run.tree")}
             </button>
             <button
               type="button"
@@ -163,7 +195,7 @@ function RunCard({ run }: { run: GitWorktreeRun }) {
               onClick={() => setFileViewMode("list")}
               aria-pressed={fileViewMode === "list"}
             >
-              List
+              {t("git.run.list")}
             </button>
           </div>
           <div className="git-commit-list">
@@ -171,7 +203,7 @@ function RunCard({ run }: { run: GitWorktreeRun }) {
               <section key={commit.sha} className="git-commit-item">
                 <header>
                   <div>
-                    <strong>{commit.subject || "Untitled commit"}</strong>
+                    <strong>{commit.subject || t("git.run.untitledCommit")}</strong>
                     <code>{shortSha(commit.short_sha || commit.sha)}</code>
                   </div>
                   {commit.authored_at && <time>{formatGitDateTime(commit.authored_at)}</time>}
@@ -179,20 +211,24 @@ function RunCard({ run }: { run: GitWorktreeRun }) {
                 <CommitFileBrowser
                   commit={commit}
                   mode={fileViewMode}
+                  selectedFileKey={activeDiff?.commit.sha === commit.sha ? gitDiffFileKey(activeDiff.file) : null}
                   onSelectFile={(file) => setSelectedDiff({ commit, file })}
                 />
               </section>
             ))}
           </div>
+          {activeDiff ? (
+            <GitDiffPatchView
+              commit={activeDiff.commit}
+              file={activeDiff.file}
+              className="git-run-inline-diff"
+            />
+          ) : (
+            <p className="muted">{t("git.diff.selectFilePatch")}</p>
+          )}
         </section>
       ) : (
-        diff && <p className="muted">No committed file diff captured yet.</p>
-      )}
-      {selectedDiff && (
-        <GitDiffModal
-          selection={selectedDiff}
-          onClose={() => setSelectedDiff(null)}
-        />
+        diff && <p className="muted">{t("git.run.noCommittedDiff")}</p>
       )}
     </article>
   );
@@ -201,27 +237,31 @@ function RunCard({ run }: { run: GitWorktreeRun }) {
 function CommitFileBrowser({
   commit,
   mode,
+  selectedFileKey,
   onSelectFile
 }: {
   commit: GitDiffCommit;
   mode: FileViewMode;
+  selectedFileKey: string | null;
   onSelectFile: (file: GitDiffFile) => void;
 }) {
+  const { t } = useI18n();
   const files = commit.files ?? [];
   const fileTree = useMemo(() => buildFileTree(files), [files]);
 
   if (files.length === 0) {
-    return <p className="muted">No file changes captured for this commit.</p>;
+    return <p className="muted">{t("git.run.noFileChanges")}</p>;
   }
   if (mode === "tree") {
     return (
-      <div className="git-file-tree" aria-label="Changed files tree">
+      <div className="git-file-tree" aria-label={t("git.run.changedFilesTree")}>
         {fileTree.files.map((file) => (
           <GitFileButton
             key={`${commit.sha}:${file.old_path ?? ""}:${file.path}`}
             file={file}
             label={treeFileLabel(file)}
             path={displayPath(file)}
+            selected={gitDiffFileKey(file) === selectedFileKey}
             onSelect={() => onSelectFile(file)}
           />
         ))}
@@ -231,6 +271,7 @@ function CommitFileBrowser({
             node={node}
             commitSha={commit.sha}
             depth={0}
+            selectedFileKey={selectedFileKey}
             onSelectFile={onSelectFile}
           />
         ))}
@@ -241,7 +282,12 @@ function CommitFileBrowser({
     <ul className="git-file-list">
       {files.map((file) => (
         <li key={`${commit.sha}:${file.old_path ?? ""}:${file.path}`}>
-          <GitFileButton file={file} path={displayPath(file)} onSelect={() => onSelectFile(file)} />
+          <GitFileButton
+            file={file}
+            path={displayPath(file)}
+            selected={gitDiffFileKey(file) === selectedFileKey}
+            onSelect={() => onSelectFile(file)}
+          />
         </li>
       ))}
     </ul>
@@ -252,11 +298,13 @@ function GitFileTreeBranch({
   node,
   commitSha,
   depth,
+  selectedFileKey,
   onSelectFile
 }: {
   node: GitFileTreeNode;
   commitSha: string;
   depth: number;
+  selectedFileKey: string | null;
   onSelectFile: (file: GitDiffFile) => void;
 }) {
   return (
@@ -271,6 +319,7 @@ function GitFileTreeBranch({
           label={treeFileLabel(file)}
           path={displayPath(file)}
           depth={depth + 1}
+          selected={gitDiffFileKey(file) === selectedFileKey}
           onSelect={() => onSelectFile(file)}
         />
       ))}
@@ -280,6 +329,7 @@ function GitFileTreeBranch({
           node={child}
           commitSha={commitSha}
           depth={depth + 1}
+          selectedFileKey={selectedFileKey}
           onSelectFile={onSelectFile}
         />
       ))}
@@ -292,22 +342,25 @@ function GitFileButton({
   label,
   path,
   depth = 0,
+  selected = false,
   onSelect
 }: {
   file: GitDiffFile;
   label?: string;
   path: string;
   depth?: number;
+  selected?: boolean;
   onSelect: () => void;
 }) {
   const statusTone = fileStatusTone(file.status);
   return (
     <button
       type="button"
-      className="git-file-button"
+      className={`git-file-button${selected ? " selected" : ""}`}
       style={{ "--git-file-tree-depth": depth } as GitTreeDepthStyle}
       onClick={onSelect}
       title={path}
+      aria-pressed={selected}
     >
       <span className={`git-file-status ${statusTone}`}>{file.status ?? "modified"}</span>
       <span className="git-file-path">{label ?? path}</span>
@@ -319,49 +372,8 @@ function GitFileButton({
   );
 }
 
-function GitDiffModal({ selection, onClose }: { selection: SelectedDiff; onClose: () => void }) {
-  const { commit, file } = selection;
-  const panelRef = useRef<HTMLElement | null>(null);
-  const handleEscape = useCallback(() => {
-    onClose();
-  }, [onClose]);
-
-  useOverlayFocus({
-    isOpen: true,
-    ref: panelRef,
-    onEscape: handleEscape
-  });
-
-  return (
-    <div className="git-diff-modal" role="dialog" aria-modal="true" aria-label="Git file diff">
-      <button type="button" className="git-diff-modal-backdrop" aria-label="Close diff" onClick={onClose} />
-      <section ref={panelRef} className={`git-diff-modal-panel ${fileStatusTone(file.status)}`}>
-        <header>
-          <div>
-            <strong>{displayPath(file)}</strong>
-            <p>{commitLabel(commit)}</p>
-          </div>
-          <button type="button" onClick={onClose}>Close</button>
-        </header>
-        <div className="git-diff-modal-meta">
-          <span className={`git-file-status ${fileStatusTone(file.status)}`}>{file.status ?? "modified"}</span>
-          <span className="git-file-additions">+{fileCount(file.additions)}</span>
-          <span className="git-file-deletions">-{fileCount(file.deletions)}</span>
-        </div>
-        <div className="git-diff-patch" role="region" aria-label="File patch">
-          {patchLines(file.patch).map((line, index) => (
-            <div key={`${index}:${line}`} className={`git-diff-line ${patchLineTone(line)}`}>
-              <span className="git-diff-line-number">{index + 1}</span>
-              <code>{line || " "}</code>
-            </div>
-          ))}
-        </div>
-      </section>
-    </div>
-  );
-}
-
 export function GitRunViewer({ clientId, windowId }: GitRunViewerProps) {
+  const { t } = useI18n();
   const runsQuery = useQuery({
     queryKey: ["git-runs", clientId, windowId],
     queryFn: () => fetchGitRuns(clientId, windowId),
@@ -369,21 +381,20 @@ export function GitRunViewer({ clientId, windowId }: GitRunViewerProps) {
   });
 
   if (runsQuery.isLoading) {
-    return <p className="muted">Loading git runs...</p>;
+    return <p className="muted">{t("git.run.loading")}</p>;
   }
   if (runsQuery.isError) {
-    return <p className="error" role="alert">Failed to load git runs.</p>;
+    return <p className="error" role="alert">{t("git.run.loadFailed")}</p>;
   }
   if (!runsQuery.data?.supported) {
     return (
       <p className="muted">
-        No linked git worktree bound to this terminal. Use skill <code>web-terminal-git-worktree</code> in the agent
-        shell.
+        {t("git.run.noWorktree", { skill: "web-terminal-git-worktree" })}
       </p>
     );
   }
   if (runsQuery.data.runs.length === 0) {
-    return <p className="muted">No git worktree tracking records yet.</p>;
+    return <p className="muted">{t("git.run.empty")}</p>;
   }
 
   return (

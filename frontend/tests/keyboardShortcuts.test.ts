@@ -17,8 +17,15 @@ describe("keyboardShortcuts", () => {
   it("uses defaults until a binding is overridden", () => {
     expect(keyboardShortcutLabel(effectiveKeyboardShortcut("settings", {}))).toBe("Alt+,");
     expect(keyboardShortcutLabel(effectiveKeyboardShortcut("switch-terminal-global", {}))).toBe("Alt+Shift+W");
+    expect(keyboardShortcutLabel(effectiveKeyboardShortcut("switch-related-terminal", {}))).toBe("Alt+T");
     expect(keyboardShortcutLabel(effectiveKeyboardShortcut("switch-client", {}))).toBe("Alt+Shift+C");
+    expect(keyboardShortcutLabel(effectiveKeyboardShortcut("clone-terminal", {}))).toBe("Alt+P");
+    expect(keyboardShortcutLabel(effectiveKeyboardShortcut("open-artifacts", {}))).toBe("Alt+A");
+    expect(keyboardShortcutLabel(effectiveKeyboardShortcut("open-project-todo-board", {}))).toBe("Alt+K");
+    expect(keyboardShortcutLabel(effectiveKeyboardShortcut("project-file-search", {}))).toBe("Alt+F");
     expect(keyboardShortcutLabel(effectiveKeyboardShortcut("toggle-aux-terminal", {}))).toBe("Alt+Shift+A");
+    expect(keyboardShortcutLabel(effectiveKeyboardShortcut("switch-workspace-mode", {}))).toBe("Alt+S");
+    expect(keyboardShortcutLabel(effectiveKeyboardShortcut("refit-terminal", {}))).toBe("Alt+M");
 
     writeKeyboardShortcutBindings({ settings: { key: "s", ctrl: true } });
 

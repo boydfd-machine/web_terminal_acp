@@ -3,7 +3,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import inspect as sa_inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.model_base import Base
@@ -237,6 +237,9 @@ def test_command_tracking_filter_ignores_plain_shell_commands() -> None:
     assert coordinator.commands_need_git_worktree_tracking([
         {"phase": "finished", "command": "git worktree add ../feature", "cwd": "/repo", "sequence": 2},
     ]) is True
+    assert coordinator.commands_need_git_worktree_tracking([
+        {"phase": "finished", "command": "git merge agent/feature", "cwd": "/repo", "sequence": 4},
+    ]) is True
     assert coordinator.git_worktree_agent_run_sequences([
         {"phase": "started", "command": "echo hello", "cwd": "/repo", "sequence": 1},
         {"phase": "started", "command": "git worktree add ../feature", "cwd": "/repo", "sequence": 2},
@@ -347,6 +350,42 @@ async def test_git_worktree_refresh_records_diff_from_persisted_baseline(db_sess
 
 
 @pytest.mark.asyncio
+async def test_git_worktree_refresh_query_defers_session_diff_payload(db_session) -> None:
+    client, window = await _add_window(db_session)
+    run = GitWorktreeRun(
+        client_id=client.id,
+        virtual_window_id=window.id,
+        command_sequence="worktree:baseline",
+        status="completed",
+        worktree_root=WORKTREE_ROOT,
+        main_repo_root="/repo",
+        start_snapshot_json=_snapshot(WORKTREE_ROOT),
+        end_snapshot_json=_snapshot(WORKTREE_ROOT),
+        session_diff_json={"files": [{"path": "file.txt", "patch": "x" * 4096}]},
+    )
+    db_session.add(run)
+    await db_session.flush()
+    db_session.expunge_all()
+
+    rows = list(
+        await db_session.scalars(
+            coordinator._runs_for_refresh_query(  # noqa: SLF001
+                window.id,
+                command_sequences=None,
+                include_tracking_run=True,
+                include_unresolved_runs=False,
+            )
+        )
+    )
+
+    assert len(rows) == 1
+    unloaded = sa_inspect(rows[0]).unloaded
+    assert "session_diff_json" in unloaded
+    assert "start_snapshot_json" not in unloaded
+    assert "end_snapshot_json" not in unloaded
+
+
+@pytest.mark.asyncio
 async def test_git_worktree_refresh_persists_commit_file_diff_from_baseline(
     db_session,
     monkeypatch,
@@ -414,6 +453,9 @@ async def test_git_worktree_refresh_persists_commit_file_diff_from_baseline(
             "commits": ["feature"],
         }
     ]
+    assert "commits" not in refreshed.start_snapshot_json
+    assert "commits" not in refreshed.end_snapshot_json
+    assert refreshed.end_snapshot_json["head_sha"] == "feature"
 
 
 @pytest.mark.asyncio

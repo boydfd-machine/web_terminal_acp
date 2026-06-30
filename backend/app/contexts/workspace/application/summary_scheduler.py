@@ -1,0 +1,496 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from uuid import UUID
+
+from sqlalchemy import desc, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.platform.plugins.agent_tools import agent_activity_source_types, get_agent_tool_registry
+from app.config import get_settings
+from app.models import Event, SummaryJob, SummaryJobStatus, VirtualWindow
+from app.contexts.workspace.infrastructure.project_todos_repository import (
+    sync_project_todos_for_completed_window,
+)
+from app.contexts.workspace.application.project_todo_artifacts import (
+    pop_project_todo_artifact_generations,  # noqa: F401 - re-exported for existing callers
+    queue_project_todo_artifact_generations,
+)
+from app.contexts.workspace.application.project_todo_artifact_scheduler import (
+    schedule_project_todo_artifact_generations,  # noqa: F401 - re-exported for existing callers
+)
+from app.contexts.workspace.infrastructure.summary_jobs_repository import enqueue_summary_job
+from app.contexts.activity.application.agent_activity_projection import (
+    event_activity_time,
+    event_is_agent_activity,
+    event_is_agent_completion,
+    event_is_agent_user_input,
+)
+from app.contexts.activity.application.window_runtime_tags import (
+    agent_command_has_inline_task,
+    agent_from_command,
+)
+from app.contexts.workspace.application.summary_terminal_input import TERMINAL_INPUT_COMMAND_KIND, terminal_input_activity
+from app.contexts.workspace.application.project_todo_completion_verification import make_verification_scheduler
+from app.contexts.workspace.application.summary_subagent_state import (
+    apply_subagent_event_to_window,
+    is_subagent_state_event,
+    maybe_promote_stale_subagent_state,
+    should_skip_completion_sync,
+)
+
+INPUT_IDLE_REASON = "input_idle"
+INPUT_INITIAL_MAX_WAIT_REASON = "input_initial_max_wait"
+INPUT_REPEAT_REASON = "input_repeat"
+AGENT_IDLE_REASON = "agent_idle"
+PROJECT_TODO_DISPATCH_REASON = "project_todo_dispatch"
+TERMINAL_COMMAND_FINISHED_KIND = "terminal_command_finished"
+AGENT_WORK_PRESENCE_KIND = "agent_work_presence"
+SUMMARY_AGENT_BURST_GAP_SECONDS = 5 * 60
+
+
+async def schedule_summary_after_terminal_input(
+    session: AsyncSession,
+    window: VirtualWindow,
+    *,
+    now: datetime | None = None,
+) -> SummaryJob | None:
+    """Schedule a summary after shell user input goes idle."""
+    del now
+
+    if _is_ephemeral_window(window):
+        return None
+
+    input_activity = await terminal_input_activity(session, window)
+    if input_activity is None:
+        return None
+    if _command_agent(input_activity.latest_event) is not None:
+        return None
+
+    settings = get_settings()
+    first_input_at = _event_input_time(input_activity.first_event)
+    last_input_at = _event_input_time(input_activity.latest_event)
+    last_summary_at = await _last_summary_at(session, window.id)
+
+    if last_summary_at is None:
+        idle_run_after = last_input_at + timedelta(seconds=settings.terminal_summary_idle_seconds)
+        max_wait_run_after = first_input_at + timedelta(
+            seconds=settings.terminal_summary_initial_max_wait_seconds
+        )
+        run_after = min(max_wait_run_after, idle_run_after)
+        trigger_reason = (
+            INPUT_INITIAL_MAX_WAIT_REASON if max_wait_run_after < idle_run_after else INPUT_IDLE_REASON
+        )
+    else:
+        idle_run_after = last_input_at + timedelta(seconds=settings.terminal_summary_idle_seconds)
+        repeat_run_after = last_summary_at + timedelta(seconds=settings.terminal_summary_repeat_seconds)
+        run_after = min(repeat_run_after, idle_run_after)
+        trigger_reason = INPUT_REPEAT_REASON if repeat_run_after <= idle_run_after else INPUT_IDLE_REASON
+
+    input_generation = input_activity.total
+    return await enqueue_summary_job(
+        session,
+        window.id,
+        trigger_reason=trigger_reason,
+        input_generation=input_generation,
+        run_after=run_after,
+        update_existing=True,
+    )
+
+
+async def schedule_summary_after_agent_activity(
+    session: AsyncSession,
+    window: VirtualWindow,
+    *,
+    event: Event | None = None,
+    now: datetime | None = None,
+    registry=None,
+) -> SummaryJob | None:
+    """Schedule a summary after user agent chat or long-idle assistant activity."""
+    del now
+
+    if _is_ephemeral_window(window):
+        return None
+
+    activity_at = _agent_activity_time_from_event(event) if event is not None else None
+    if event is not None and activity_at is None:
+        return None
+    if activity_at is not None:
+        duplicate_completion = _duplicate_completed_event(window, event)
+        _touch_agent_activity_state(window, event, activity_at)
+        if (
+            event_is_agent_completion(event)
+            and not duplicate_completion
+            and not should_skip_completion_sync(window, event)
+        ):
+            verification_scheduler = make_verification_scheduler(
+                client_id=window.client_id,
+                window_id=window.id,
+                registry=registry,
+            )
+            _changed, artifact_generations = await sync_project_todos_for_completed_window(
+                session,
+                window.client_id,
+                window.id,
+                event_activity_time(event),
+                verification_scheduler=verification_scheduler,
+            )
+            queue_project_todo_artifact_generations(session, artifact_generations)
+
+    user_message_job = await _schedule_after_latest_agent_user_message(session, window, event)
+    if user_message_job is not None:
+        return user_message_job
+
+    burst_start = _ensure_aware(window.agent_activity_burst_start_at) if window.agent_activity_burst_start_at else None
+    last_activity_at = _ensure_aware(window.agent_activity_latest_at) if window.agent_activity_latest_at else None
+    if burst_start is None or last_activity_at is None:
+        return None
+    if not await _was_idle_before(
+        session,
+        window.id,
+        burst_start,
+        current_event_id=event.id if event is not None else None,
+    ):
+        return None
+
+    last_summary_at = await _last_summary_at(session, window.id)
+    if last_summary_at is not None and last_summary_at >= burst_start:
+        return None
+
+    settings = get_settings()
+    run_after = last_activity_at + timedelta(seconds=settings.terminal_summary_idle_seconds)
+
+    return await enqueue_summary_job(
+        session,
+        window.id,
+        trigger_reason=AGENT_IDLE_REASON,
+        input_generation=window.agent_activity_generation,
+        run_after=run_after,
+        update_existing=True,
+    )
+
+
+async def schedule_summary_after_project_todo_dispatch(
+    session: AsyncSession,
+    window: VirtualWindow,
+    *,
+    dispatched_at: datetime | None = None,
+) -> SummaryJob | None:
+    """Schedule a summary for a submitted project todo prompt."""
+    if _is_ephemeral_window(window):
+        return None
+
+    activity_at = _ensure_aware(dispatched_at or datetime.now(UTC))
+    latest = _ensure_aware(window.agent_activity_latest_at) if window.agent_activity_latest_at else None
+    if latest is None or activity_at >= latest:
+        if latest is None or activity_at - latest > timedelta(seconds=SUMMARY_AGENT_BURST_GAP_SECONDS):
+            window.agent_activity_burst_start_at = activity_at
+        window.agent_activity_latest_at = activity_at
+    user_input_at = (
+        _ensure_aware(window.agent_activity_latest_user_input_at)
+        if window.agent_activity_latest_user_input_at
+        else None
+    )
+    if user_input_at is None or activity_at >= user_input_at:
+        window.agent_activity_latest_user_input_at = activity_at
+    window.agent_activity_generation += 1
+
+    settings = get_settings()
+    return await enqueue_summary_job(
+        session,
+        window.id,
+        trigger_reason=PROJECT_TODO_DISPATCH_REASON,
+        input_generation=window.agent_activity_generation,
+        run_after=activity_at + timedelta(seconds=settings.terminal_summary_idle_seconds),
+        update_existing=True,
+    )
+
+
+async def _schedule_after_latest_agent_user_message(
+    session: AsyncSession,
+    window: VirtualWindow,
+    event: Event | None = None,
+) -> SummaryJob | None:
+    user_message_event = _current_user_message_event(window, event)
+    if user_message_event is None:
+        return None
+
+    latest_user_message_at = _ensure_aware(user_message_event.created_at)
+    last_summary_at = await _last_summary_at(session, window.id)
+    if last_summary_at is not None and last_summary_at >= latest_user_message_at:
+        return None
+
+    settings = get_settings()
+    run_after = latest_user_message_at + timedelta(seconds=settings.terminal_summary_idle_seconds)
+
+    return await enqueue_summary_job(
+        session,
+        window.id,
+        trigger_reason=AGENT_IDLE_REASON,
+        input_generation=window.agent_activity_generation,
+        run_after=run_after,
+        update_existing=True,
+    )
+
+
+def _is_ephemeral_window(window: VirtualWindow) -> bool:
+    return window.derived_mode == "ephemeral"
+
+
+def _duplicate_completed_event(window: VirtualWindow, event: Event | None) -> bool:
+    if event is None or event.id is None or not event_is_agent_completion(event):
+        return False
+    if window.agent_activity_latest_event_id != event.id:
+        return False
+    latest_completed = (
+        _ensure_aware(window.agent_activity_latest_completed_at)
+        if window.agent_activity_latest_completed_at
+        else None
+    )
+    if latest_completed is None:
+        return False
+    return event_activity_time(event) <= latest_completed
+
+
+def _current_user_message_event(window: VirtualWindow, event: Event | None) -> Event | None:
+    if event is None or not _is_agent_user_message(event):
+        return None
+    if window.agent_activity_latest_event_id is not None and event.id != window.agent_activity_latest_event_id:
+        return None
+    return event
+
+
+def _is_agent_user_message(event: Event) -> bool:
+    if event.payload_json.get("isSidechain") is True and isinstance(event.payload_json.get("agentId"), str):
+        return False
+    provider = event.payload_json.get("provider")
+    provider_name = provider.strip() if isinstance(provider, str) else None
+    try:
+        adapter = get_agent_tool_registry().by_source_type(event.source_type, provider_name)
+    except (KeyError, ValueError):
+        return event.kind in {"user", "user_message"} or _payload_role(event.payload_json) == "user"
+
+    chat = adapter.project_chat(event)
+    return chat is not None and chat.role == "user"
+
+
+def _payload_role(payload: dict) -> str | None:
+    role = payload.get("role")
+    if isinstance(role, str):
+        return role
+    message = payload.get("message")
+    if isinstance(message, dict):
+        message_role = message.get("role")
+        if isinstance(message_role, str):
+            return message_role
+    return None
+
+
+def _command_agent(event: Event) -> str | None:
+    command = event.payload_json.get("command")
+    return agent_from_command(command if isinstance(command, str) else None)
+
+
+def _event_input_time(event: Event) -> datetime:
+    captured_at = event.payload_json.get("captured_at")
+    if isinstance(captured_at, str):
+        try:
+            return _ensure_aware(datetime.fromisoformat(captured_at))
+        except ValueError:
+            pass
+    return _ensure_aware(event.created_at)
+
+
+def _touch_agent_activity_state(window: VirtualWindow, event: Event, activity_at: datetime) -> None:
+    current = _ensure_aware(activity_at)
+    latest = _ensure_aware(window.agent_activity_latest_at) if window.agent_activity_latest_at else None
+    is_completion = event_is_agent_completion(event)
+    is_user_input = event_is_agent_user_input(event)
+    is_subagent_event = is_subagent_state_event(event)
+    maybe_promote_stale_subagent_state(window, now=current)
+    if is_subagent_event:
+        apply_subagent_event_to_window(window, event, current)
+    if latest is not None and current < latest:
+        if is_completion:
+            _touch_agent_completion_state(window, event)
+        if is_user_input:
+            _touch_agent_user_input_state(window, event)
+        return
+    if latest is not None and current == latest and event.id == window.agent_activity_latest_event_id:
+        if is_completion:
+            _touch_agent_completion_state(window, event)
+        if is_user_input:
+            _touch_agent_user_input_state(window, event)
+        return
+    gap = timedelta(seconds=SUMMARY_AGENT_BURST_GAP_SECONDS)
+    if latest is None or current - latest > gap:
+        window.agent_activity_burst_start_at = current
+    window.agent_activity_latest_at = current
+    if event.id is not None:
+        window.agent_activity_latest_event_id = event.id
+    if is_completion:
+        _touch_agent_completion_state(window, event)
+    if is_user_input:
+        _touch_agent_user_input_state(window, event)
+    window.agent_activity_generation += 1
+
+
+def _touch_agent_completion_state(window: VirtualWindow, event: Event) -> None:
+    completed_at = event_activity_time(event)
+    if int(window.agent_activity_pending_subagent_count or 0) > 0:
+        prev = window.agent_activity_deferred_completed_at
+        if prev is None or completed_at >= _ensure_aware(prev):
+            window.agent_activity_deferred_completed_at = completed_at
+        return
+    latest_completed = (
+        _ensure_aware(window.agent_activity_latest_completed_at)
+        if window.agent_activity_latest_completed_at
+        else None
+    )
+    if latest_completed is None or completed_at >= latest_completed:
+        window.agent_activity_latest_completed_at = completed_at
+    window.agent_activity_deferred_completed_at = None
+
+
+def _touch_agent_user_input_state(window: VirtualWindow, event: Event) -> None:
+    user_input_at = event_activity_time(event)
+    latest_user_input = (
+        _ensure_aware(window.agent_activity_latest_user_input_at)
+        if window.agent_activity_latest_user_input_at
+        else None
+    )
+    if latest_user_input is None or user_input_at >= latest_user_input:
+        window.agent_activity_latest_user_input_at = user_input_at
+
+
+def _agent_activity_time_from_event(event: Event | None) -> datetime | None:
+    if event is None or event.created_at is None:
+        return None
+    if event.kind == AGENT_WORK_PRESENCE_KIND:
+        return _ensure_aware(event.created_at)
+    if event.source_type in agent_activity_source_types() and event_is_agent_activity(event):
+        return event_activity_time(event)
+    if (
+        event.kind == TERMINAL_INPUT_COMMAND_KIND
+        and _command_agent(event) is not None
+        and _command_has_agent_task(event)
+    ):
+        return _event_input_time(event)
+    return None
+
+
+async def _was_idle_before(
+    session: AsyncSession,
+    window_id: UUID,
+    moment: datetime,
+    *,
+    current_event_id: UUID | None = None,
+) -> bool:
+    window = await session.get(VirtualWindow, window_id)
+    if window is None:
+        return True
+    moment_aware = _ensure_aware(moment)
+    activity_times = await _event_activity_times_before(
+        session,
+        window,
+        moment_aware,
+        current_event_id=current_event_id,
+    )
+    if window.terminal_last_output_at is not None:
+        terminal_output_at = _ensure_aware(window.terminal_last_output_at)
+        if terminal_output_at < moment_aware:
+            activity_times.append(terminal_output_at)
+    if not activity_times:
+        return True
+    latest_prior = max(activity_times)
+    return moment_aware - latest_prior > timedelta(seconds=SUMMARY_AGENT_BURST_GAP_SECONDS)
+
+
+async def _event_activity_times_before(
+    session: AsyncSession,
+    window: VirtualWindow,
+    moment: datetime,
+    *,
+    current_event_id: UUID | None = None,
+) -> list[datetime]:
+    times: list[datetime] = []
+    for kind in (
+        TERMINAL_INPUT_COMMAND_KIND,
+        TERMINAL_COMMAND_FINISHED_KIND,
+        AGENT_WORK_PRESENCE_KIND,
+    ):
+        filters = [
+            Event.client_id == window.client_id,
+            Event.virtual_window_id == window.id,
+            Event.kind == kind,
+            Event.created_at < moment,
+        ]
+        if current_event_id is not None:
+            filters.append(Event.id != current_event_id)
+        created_at = await session.scalar(
+            select(Event.created_at)
+            .where(*filters)
+            .order_by(desc(Event.created_at), desc(Event.id))
+            .limit(1)
+        )
+        if created_at is not None:
+            times.append(_ensure_aware(created_at))
+    times.extend(
+        await _agent_activity_times_before(
+            session,
+            window,
+            moment,
+            current_event_id=current_event_id,
+        )
+    )
+    return sorted(set(times))
+
+
+async def _agent_activity_times_before(
+    session: AsyncSession,
+    window: VirtualWindow,
+    moment: datetime,
+    *,
+    current_event_id: UUID | None = None,
+) -> list[datetime]:
+    filters = [
+        Event.client_id == window.client_id,
+        Event.virtual_window_id == window.id,
+        Event.source_type.in_(agent_activity_source_types()),
+        Event.created_at < moment,
+    ]
+    if current_event_id is not None:
+        filters.append(Event.id != current_event_id)
+    events = await session.scalars(
+        select(Event)
+        .where(*filters)
+        .order_by(desc(Event.created_at), desc(Event.id))
+        .limit(100)
+    )
+    return [_ensure_aware(event_activity_time(event)) for event in events if event_is_agent_activity(event)]
+
+
+def _command_has_agent_task(event: Event) -> bool:
+    command = event.payload_json.get("command")
+    return agent_command_has_inline_task(command if isinstance(command, str) else None)
+
+
+async def _last_summary_at(session: AsyncSession, window_id: UUID) -> datetime | None:
+    job = await session.scalar(
+        select(SummaryJob)
+        .where(
+            SummaryJob.virtual_window_id == window_id,
+            SummaryJob.status == SummaryJobStatus.succeeded,
+        )
+        .order_by(desc(SummaryJob.updated_at), desc(SummaryJob.created_at), desc(SummaryJob.id))
+        .limit(1)
+    )
+    if job is None:
+        return None
+    return _ensure_aware(job.updated_at or job.created_at)
+
+
+def _ensure_aware(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)

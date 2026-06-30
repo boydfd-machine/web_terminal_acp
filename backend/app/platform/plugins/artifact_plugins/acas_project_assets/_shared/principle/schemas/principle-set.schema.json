@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acas.local/artifact-definitions/_shared/principle/schemas/principle-set.schema.json",
+  "title": "ACAS Principle Set",
+  "type": "object",
+  "required": ["kind", "layer", "principleSetId", "artifactId", "status", "scope", "sourceRefs", "principles"],
+  "properties": {
+    "kind": { "type": "string", "pattern": "Principle$" },
+    "layer": { "const": "Principle" },
+    "principleSetId": { "type": "string", "minLength": 1 },
+    "artifactId": { "type": "string", "minLength": 1 },
+    "status": { "type": "string", "minLength": 1 },
+    "scope": {
+      "type": "object",
+      "properties": {
+        "application": {},
+        "scenario": {},
+        "actor": {},
+        "artifact": {},
+        "boundary": {}
+      },
+      "additionalProperties": true
+    },
+    "sourceRefs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "principles": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/principle" }
+    },
+    "openRisks": { "type": "array" },
+    "evidenceRefs": { "type": "array" }
+  },
+  "$defs": {
+    "principle": {
+      "type": "object",
+      "required": ["principleId", "title", "statement", "why", "confirmation", "appliesTo"],
+      "properties": {
+        "principleId": { "type": "string", "minLength": 1 },
+        "title": {},
+        "strength": {},
+        "confirmation": { "$ref": "#/$defs/confirmation" },
+        "statement": {},
+        "why": {},
+        "appliesTo": { "$ref": "#/$defs/appliesTo" },
+        "evidenceRefs": { "type": "array" },
+        "sourceRefs": { "type": "array" },
+        "do": { "type": "array" },
+        "dont": { "type": "array" },
+        "tradeoffs": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "confirmation": {
+      "type": "object",
+      "required": ["mode", "result"],
+      "properties": {
+        "mode": { "enum": ["user_confirmed", "agent_decided", "needs_user_confirmation"] },
+        "result": { "enum": ["included", "not_included", "pending"] },
+        "decisionRef": { "type": "string" },
+        "confirmedBy": { "type": "string" },
+        "confirmedAt": { "type": "string" },
+        "question": {},
+        "recommendation": {
+          "type": "object",
+          "properties": {
+            "recommendedResult": { "enum": ["included", "not_included", "pending"] },
+            "reason": {},
+            "facts": { "type": "array" },
+            "risks": { "type": "array" }
+          },
+          "additionalProperties": true
+        },
+        "facts": { "type": "array" },
+        "risks": { "type": "array" },
+        "rationale": {}
+      },
+      "additionalProperties": true
+    },
+    "appliesTo": {
+      "type": "object",
+      "properties": {
+        "scopes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "affectedArtifactRefs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "downstreamArtifactTypes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "riskDelta": {},
+        "evidenceRefs": { "type": "array" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

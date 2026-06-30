@@ -1,0 +1,66 @@
+.agent-record-viewer {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin-top: 20px;
+  overflow: hidden;
+  border-top: 1px solid var(--skin-border-soft);
+  padding-top: 16px;
+}
+
+.agent-record-viewer .agent-record-header {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-record-viewer .agent-record-actions {
+  width: 100%;
+  min-width: 0;
+  justify-content: flex-start;
+}
+
+.agent-record-viewer .agent-record-role-toggle {
+  flex: 1 1 100%;
+  width: 100%;
+  min-width: 0;
+  flex-wrap: wrap;
+  overflow: visible;
+}
+
+.agent-record-viewer .agent-record-role-toggle button {
+  flex: 1 1 auto;
+  min-width: max-content;
+}
+
+.agent-record-body {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.agent-detail-tabs,
+.history-detail-tabs {
+  display: inline-flex;
+  width: fit-content;
+  overflow: hidden;
+  margin-top: 18px;
+  border: 1px solid var(--skin-border);
+  border-radius: 8px;
+  background: var(--skin-code-bg);
+}
+
+.agent-detail-tabs button,
+.history-detail-tabs button {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--skin-muted);
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.agent-detail-tabs button.selected,
+.history-detail-tabs button.selected {
+  background: var(--skin-accent-strong);
+  color: var(--skin-text-strong);
+}

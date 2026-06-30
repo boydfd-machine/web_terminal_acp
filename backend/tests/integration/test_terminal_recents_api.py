@@ -8,9 +8,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.db import Base, get_session
 from app.main import app
-from app.models import LOCAL_CLIENT_ID, TerminalRecentUsage
+from app.models import LOCAL_CLIENT_ID, ProjectTodo, TerminalRecentUsage
 from app.repositories.clients import create_client, ensure_local_client
-from app.repositories.windows import create_window
+from app.contexts.windows.infrastructure.repository import create_window
 
 
 class DbClient:
@@ -60,6 +60,14 @@ async def test_record_and_list_terminal_recents(db_client):
         first.title = "Alpha"
         second = await create_window(session, LOCAL_CLIENT_ID, None, None)
         second.title = "Beta"
+        session.add(
+            ProjectTodo(
+                client_id=LOCAL_CLIENT_ID,
+                project_path="/workspace/alpha",
+                title="Fix settings dispatch",
+                assigned_window_id=first.id,
+            )
+        )
         await session.commit()
 
     record_first = await db_client.post(
@@ -89,6 +97,8 @@ async def test_record_and_list_terminal_recents(db_client):
     assert body["total_pages"] == 1
     assert [item["window_id"] for item in body["items"]] == [str(first.id), str(second.id)]
     assert body["items"][0]["title"] == "Alpha"
+    assert body["items"][0]["todo_title"] == "Fix settings dispatch"
+    assert body["items"][1]["todo_title"] is None
 
 
 @pytest.mark.asyncio

@@ -8,7 +8,7 @@ from app.db import Base, get_session
 from app.main import app
 from app.models import LOCAL_CLIENT_ID
 from app.repositories.clients import ensure_local_client
-from app.repositories.windows import create_window
+from app.contexts.windows.infrastructure.repository import create_window
 
 
 class DbClient:
@@ -96,3 +96,32 @@ async def test_summarize_project_persists_display_name(db_client, monkeypatch) -
     listed = await db_client.get(f"/api/clients/{LOCAL_CLIENT_ID}/project-summaries")
     assert listed.status_code == 200
     assert listed.json()[0]["display_name"] == "演示项目"
+
+
+@pytest.mark.asyncio
+async def test_summarize_project_persists_failure_state(db_client, monkeypatch) -> None:
+    async with db_client.session_factory() as session:
+        await create_window(session, LOCAL_CLIENT_ID, "/tmp/project", "/bin/bash")
+        await session.commit()
+
+    class FailingSummarizer:
+        async def summarize(self, context, *, output_language=None):
+            raise RuntimeError("llm unavailable")
+
+    monkeypatch.setattr(
+        "app.routers.project_summaries.ProjectSummarizer",
+        lambda: FailingSummarizer(),
+    )
+
+    response = await db_client.post(
+        f"/api/clients/{LOCAL_CLIENT_ID}/project-summaries/summarize",
+        json={"project_path": "/tmp/project"},
+    )
+    assert response.status_code == 502
+
+    listed = await db_client.get(f"/api/clients/{LOCAL_CLIENT_ID}/project-summaries")
+    assert listed.status_code == 200
+    summary = listed.json()[0]
+    assert summary["project_path"] == "/tmp/project"
+    assert summary["status"] == "FAILED"
+    assert summary["last_error"] == "llm unavailable"

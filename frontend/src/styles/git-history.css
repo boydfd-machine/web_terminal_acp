@@ -1,0 +1,180 @@
+.git-commit-browser {
+  display: grid;
+  gap: 10px;
+}
+
+.git-commit-browser label {
+  display: grid;
+  gap: 4px;
+  color: var(--skin-muted);
+  font-size: 12px;
+}
+
+.git-commit-browser select {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid var(--skin-border);
+  border-radius: 6px;
+  background: var(--skin-code-bg);
+  color: var(--skin-text-strong);
+  padding: 8px;
+}
+
+.git-file-view-toggle {
+  justify-self: end;
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--skin-border);
+  border-radius: 8px;
+  background: var(--skin-code-bg);
+}
+
+.git-file-view-toggle button {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--skin-muted);
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.git-file-view-toggle button.selected {
+  background: var(--skin-success);
+  color: var(--skin-text-strong);
+}
+
+.git-commit-list {
+  display: grid;
+  gap: 10px;
+}
+
+.git-commit-item {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--skin-control-hover);
+  padding-top: 10px;
+}
+
+.git-commit-item header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.git-commit-item header div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.git-commit-item header strong {
+  color: var(--skin-text-strong);
+  font-size: 13px;
+}
+
+.git-commit-item header code,
+.git-commit-item header time {
+  color: var(--skin-muted);
+  font-size: 11px;
+}
+
+.git-file-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.git-file-tree {
+  display: grid;
+  gap: 4px;
+}
+
+.git-file-tree-branch {
+  display: grid;
+  gap: 4px;
+}
+
+.git-file-tree-directory {
+  min-width: 0;
+  border-left: 1px solid var(--skin-border);
+  color: var(--skin-muted);
+  padding: 4px 8px 2px calc(8px + (var(--git-file-tree-depth) * 16px));
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.git-file-tree-directory span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-file-button {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--skin-border);
+  border-radius: 6px;
+  background: var(--skin-control);
+  color: var(--skin-text);
+  padding: 7px 8px 7px calc(8px + (var(--git-file-tree-depth, 0) * 16px));
+  text-align: left;
+}
+
+.git-file-button:hover,
+.git-file-button.selected {
+  border-color: var(--skin-accent);
+  background: var(--skin-panel-soft);
+}
+
+.git-file-status {
+  color: var(--skin-warning);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.git-file-status.added {
+  color: var(--skin-success-text);
+}
+
+.git-file-status.deleted {
+  color: var(--skin-danger-text);
+}
+
+.git-file-status.renamed {
+  color: var(--skin-accent);
+}
+
+.git-file-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-file-delta {
+  display: inline-flex;
+  gap: 6px;
+  justify-content: end;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.git-file-additions {
+  color: var(--skin-success-text);
+}
+
+.git-file-deletions {
+  color: var(--skin-danger-text);
+}
+
+.git-run-inline-diff {
+  min-height: 280px;
+}

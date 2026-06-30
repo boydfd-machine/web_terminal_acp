@@ -108,6 +108,38 @@ def test_normalize_codex_tool_call():
     assert event.payload_json == raw
 
 
+def test_normalize_codex_rollout_source_path_takes_precedence_over_item_ids():
+    raw = {
+        "trace_id": "trace-item-1",
+        "id": "trace-item-1:0",
+        "payload": {"id": "trace-item-1"},
+        "span": {"name": "response_item", "attributes": {"tool": "bash"}},
+    }
+
+    event = normalize_codex_trace(raw, source_path="/home/user/.web-terminal-acp/codex-homes/123/sessions/2026/06/23/rollout-2026-06-23T09-23-56-codex-session.jsonl")
+
+    assert event.source_id == "codex-session"
+
+
+def test_normalize_codex_sidechain_source_takes_precedence_over_rollout_path():
+    raw = {
+        "trace_id": "trace-item-1",
+        "id": "trace-item-1:0",
+        "payload": {
+            "type": "message",
+            "role": "user",
+            "isSidechain": True,
+            "agentId": "subagent-1",
+            "content": [{"type": "input_text", "text": "Return exactly: 1"}],
+        },
+        "span": {"name": "response_item", "attributes": {"role": "user"}},
+    }
+
+    event = normalize_codex_trace(raw, source_path="/home/user/.web-terminal-acp/codex-homes/123/sessions/2026/06/23/rollout-2026-06-23T09-23-56-main-session.jsonl")
+
+    assert event.source_id == "agent-subagent-1"
+
+
 def test_normalize_codex_long_trace_id_is_bounded_and_deterministic():
     trace_id = "trace-" + "x" * 900
     raw = {"trace_id": trace_id, "span": {"name": "tool_call", "attributes": {"tool": "bash"}}}

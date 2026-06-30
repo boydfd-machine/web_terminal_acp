@@ -1,12 +1,13 @@
+import { useI18n } from "../i18n";
 import type { WorkStatus } from "../types";
 
 type WorkStatusBadgeProps = {
   status: WorkStatus;
 };
 
-function formatDateTime(value: string | null | undefined): string {
+function formatDateTime(value: string | null | undefined, fallback: string): string {
   if (value == null) {
-    return "暂无活动记录";
+    return fallback;
   }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -16,8 +17,11 @@ function formatDateTime(value: string | null | undefined): string {
 }
 
 export function WorkStatusBadge({ status }: WorkStatusBadgeProps) {
+  const { t } = useI18n();
   const className = `work-status-badge ${status.color}`;
-  const title = `最近活动: ${formatDateTime(status.last_activity_at)}`;
+  const title = t("workStatus.recentActivity", {
+    time: formatDateTime(status.last_activity_at, t("workStatus.noActivity"))
+  });
 
   return (
     <span className={className} title={title}>
@@ -28,8 +32,12 @@ export function WorkStatusBadge({ status }: WorkStatusBadgeProps) {
 }
 
 export function WorkStatusDot({ status }: WorkStatusBadgeProps) {
+  const { t } = useI18n();
   const className = `work-status-dot ${status.color}`;
-  const title = `${status.label} · 最近活动: ${formatDateTime(status.last_activity_at)}`;
+  const title = t("workStatus.labelWithRecent", {
+    label: status.label,
+    time: formatDateTime(status.last_activity_at, t("workStatus.noActivity"))
+  });
 
   return <span className={className} title={title} aria-label={status.label} />;
 }

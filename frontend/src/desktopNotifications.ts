@@ -1,4 +1,5 @@
 import type { TerminalNotification } from "./terminalNotifications";
+import { terminalNotificationBody } from "./terminalNotifications";
 
 const DESKTOP_NOTIFICATIONS_KEY = "web-terminal-acp:desktop-notifications-enabled";
 
@@ -39,8 +40,12 @@ export async function ensureDesktopNotificationPermission(): Promise<Notificatio
   return Notification.requestPermission();
 }
 
-export function showAgentTaskDesktopNotification(notification: TerminalNotification): void {
-  if (!readDesktopNotificationsEnabled() || !desktopNotificationsSupported()) {
+export function showAgentTaskDesktopNotification(
+  notification: TerminalNotification,
+  body?: string,
+  enabled = readDesktopNotificationsEnabled(),
+): void {
+  if (!enabled || !desktopNotificationsSupported()) {
     return;
   }
 
@@ -55,9 +60,8 @@ export function showAgentTaskDesktopNotification(notification: TerminalNotificat
     }
   }
 
-  const body = notification.status === "ABORTED" ? "Agent 可能已中断" : "Agent 任务已完成";
   const desktopNotification = new Notification(notification.windowTitle, {
-    body,
+    body: body ?? terminalNotificationBody(notification.status),
     tag: notification.id
   });
   desktopNotification.onclick = () => {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
+import { useI18n } from "../i18n";
 import { isOnboardingEnabled, readOnboardingCompleted, writeOnboardingCompleted } from "../onboarding";
 import { useOverlayFocus } from "./useOverlayFocus";
 
@@ -115,6 +116,7 @@ function cardStyleFor(rect: TargetRect | null): CSSProperties | undefined {
 }
 
 export function OnboardingTour({ steps, onStepAction }: OnboardingTourProps) {
+  const { t } = useI18n();
   const enabled = isOnboardingEnabled();
   const [visible, setVisible] = useState(() => enabled && !readOnboardingCompleted());
   const [index, setIndex] = useState(0);
@@ -249,7 +251,7 @@ export function OnboardingTour({ steps, onStepAction }: OnboardingTourProps) {
       >
         <div className="onboarding-card-header">
           <span>{index + 1} / {steps.length}</span>
-          <button type="button" onClick={complete}>跳过</button>
+          <button type="button" onClick={complete}>{t("onboarding.skip")}</button>
         </div>
         <h2 id="onboarding-title">{step.title}</h2>
         <p>{step.body}</p>
@@ -257,13 +259,13 @@ export function OnboardingTour({ steps, onStepAction }: OnboardingTourProps) {
           <div className="onboarding-step-meta">
             {step.path !== undefined && (
               <div>
-                <span>进入路径</span>
+                <span>{t("onboarding.path")}</span>
                 <strong>{step.path.join(" -> ")}</strong>
               </div>
             )}
             {step.shortcutLabels !== undefined && step.shortcutLabels.length > 0 && (
               <div>
-                <span>快捷键</span>
+                <span>{t("onboarding.shortcuts")}</span>
                 <strong>{step.shortcutLabels.join(" / ")}</strong>
               </div>
             )}
@@ -275,7 +277,7 @@ export function OnboardingTour({ steps, onStepAction }: OnboardingTourProps) {
             disabled={index === 0}
             onClick={() => setIndex((current) => Math.max(0, current - 1))}
           >
-            上一步
+            {t("onboarding.previous")}
           </button>
           <button
             type="button"
@@ -287,7 +289,7 @@ export function OnboardingTour({ steps, onStepAction }: OnboardingTourProps) {
               setIndex((current) => Math.min(steps.length - 1, current + 1));
             }}
           >
-            {isLast ? "完成" : "下一步"}
+            {isLast ? t("onboarding.finish") : t("onboarding.next")}
           </button>
         </div>
       </section>

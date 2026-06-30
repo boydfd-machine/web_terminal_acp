@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acas.local/artifact-definitions/user-journey/current.schema.json",
+  "title": "User Journey Current",
+  "type": "object",
+  "required": ["kind", "layer", "journey", "decisionTrace"],
+  "properties": {
+    "kind": { "const": "UserJourneyCurrent" },
+    "layer": { "const": "Current" },
+    "explorationArtifactRef": { "type": "string" },
+    "journey": {
+      "type": "object",
+      "required": ["persona", "scenario", "trigger", "desiredOutcome", "asIs", "toBe"],
+      "properties": {
+        "persona": {},
+        "scenario": {},
+        "trigger": {},
+        "desiredOutcome": {},
+        "asIs": { "$ref": "#/$defs/journeySide" },
+        "toBe": { "$ref": "#/$defs/journeySide" },
+        "branches": { "type": "array" },
+        "evidenceRefs": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "decisionTrace": {
+      "$ref": "https://acas.local/artifact-definitions/_shared/review-decision/schemas/decision-trace.schema.json#/$defs/decisionTrace"
+    },
+    "openRisks": { "type": "array" },
+    "assumptions": { "type": "array" },
+    "evidenceRefs": { "type": "array" }
+  },
+  "$defs": {
+    "journeySide": {
+      "type": "object",
+      "required": ["phases"],
+      "properties": {
+        "phases": { "type": "array", "items": { "$ref": "#/$defs/phase" } }
+      },
+      "additionalProperties": true
+    },
+    "phase": {
+      "type": "object",
+      "required": ["phaseId", "userGoal"],
+      "properties": {
+        "phaseId": { "type": "string" },
+        "name": {},
+        "userGoal": {},
+        "actions": { "type": "array" },
+        "thoughts": { "type": "array" },
+        "emotion": {},
+        "touchpoints": { "type": "array" },
+        "painPoints": { "type": "array" },
+        "branches": { "type": "array" },
+        "opportunities": { "type": "array" },
+        "systemResponsibilities": { "type": "array" },
+        "metrics": { "type": "array" },
+        "evidenceRefs": { "type": "array" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

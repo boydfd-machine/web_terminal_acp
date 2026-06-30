@@ -1,0 +1,7 @@
+interface:
+  display_name: "Web Terminal Git Worktree"
+  short_description: "Create, register, merge, and clean up Web Terminal agent git worktrees"
+  default_prompt: "Use $web-terminal-git-worktree when developing inside a Web Terminal managed shell, creating or registering an agent worktree, or landing agent/* work back to main."
+
+policy:
+  allow_implicit_invocation: true

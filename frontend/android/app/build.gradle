@@ -14,8 +14,8 @@ android {
         applicationId "com.webterminal.acp"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 21806
-        versionName "2.18.6"
+        versionCode 24101
+        versionName "2.41.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -47,6 +47,16 @@ android {
             signingConfig signingConfigs.debug
         }
     }
+    flavorDimensions "device"
+    productFlavors {
+        standard {
+            dimension "device"
+        }
+        pad {
+            dimension "device"
+            applicationId "com.webterminal.acp.pad"
+        }
+    }
 }
 
 repositories {
@@ -70,8 +80,13 @@ dependencies {
 apply from: 'capacitor.build.gradle'
 
 gradle.taskGraph.whenReady { taskGraph ->
-    if (taskGraph.hasTask(":app:assembleRelease") && !hasReleaseSigningConfig && !allowUnsignedRelease) {
-        throw new GradleException("assembleRelease requires release signing credentials. Use assembleLocalRelease for an installable local APK, or set WEB_TERMINAL_ANDROID_ALLOW_UNSIGNED_RELEASE=true when you intentionally need an unsigned APK for external signing.")
+    def assemblesReleaseApk = taskGraph.allTasks.any { task ->
+        task.path.startsWith(":app:assemble") &&
+            task.name.endsWith("Release") &&
+            !task.name.endsWith("LocalRelease")
+    }
+    if (assemblesReleaseApk && !hasReleaseSigningConfig && !allowUnsignedRelease) {
+        throw new GradleException("Release APK assembly requires release signing credentials. Use assembleStandardLocalRelease or assemblePadLocalRelease for an installable local APK, or set WEB_TERMINAL_ANDROID_ALLOW_UNSIGNED_RELEASE=true when you intentionally need an unsigned APK for external signing.")
     }
 }
 

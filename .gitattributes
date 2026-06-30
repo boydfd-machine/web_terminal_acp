@@ -1,0 +1,3 @@
+backend/app/version.py merge=web-terminal-version
+frontend/package.json merge=web-terminal-version
+frontend/package-lock.json merge=web-terminal-version

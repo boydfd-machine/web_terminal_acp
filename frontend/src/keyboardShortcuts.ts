@@ -1,14 +1,23 @@
+import type { TranslateFn, TranslationKey } from "./i18n";
+
 export type KeyboardShortcutId =
   | "switch-terminal"
+  | "switch-related-terminal"
   | "switch-terminal-global"
   | "switch-client"
   | "new-terminal"
   | "new-terminal-project"
+  | "switch-workspace-mode"
+  | "clone-terminal"
+  | "open-artifacts"
+  | "open-project-todo-board"
+  | "project-file-search"
   | "toggle-aux-terminal"
   | "quick-input"
   | "expand-record"
   | "locate-terminal"
   | "git-diff"
+  | "refit-terminal"
   | "settings";
 
 export type KeyboardShortcut = {
@@ -21,6 +30,7 @@ export type KeyboardShortcut = {
 
 export type KeyboardShortcutDefinition = {
   id: KeyboardShortcutId;
+  labelKey: TranslationKey;
   label: string;
   defaultShortcut: KeyboardShortcut;
 };
@@ -28,17 +38,24 @@ export type KeyboardShortcutDefinition = {
 export type KeyboardShortcutBindings = Partial<Record<KeyboardShortcutId, KeyboardShortcut | null>>;
 
 export const KEYBOARD_SHORTCUT_DEFINITIONS: KeyboardShortcutDefinition[] = [
-  { id: "switch-terminal", label: "切换终端", defaultShortcut: { key: "w", alt: true } },
-  { id: "switch-terminal-global", label: "跨 Client 切换终端", defaultShortcut: { key: "w", alt: true, shift: true } },
-  { id: "switch-client", label: "切换 Client", defaultShortcut: { key: "c", alt: true, shift: true } },
-  { id: "new-terminal", label: "新建终端", defaultShortcut: { key: "n", alt: true } },
-  { id: "new-terminal-project", label: "按项目新建", defaultShortcut: { key: "n", alt: true, shift: true } },
-  { id: "toggle-aux-terminal", label: "Aux terminal", defaultShortcut: { key: "a", alt: true, shift: true } },
-  { id: "quick-input", label: "快速输入", defaultShortcut: { key: "i", alt: true } },
-  { id: "expand-record", label: "展开 Agent 记录", defaultShortcut: { key: "r", alt: true } },
-  { id: "locate-terminal", label: "定位当前终端", defaultShortcut: { key: "l", alt: true } },
-  { id: "git-diff", label: "Git diff", defaultShortcut: { key: "g", alt: true } },
-  { id: "settings", label: "设置", defaultShortcut: { key: ",", alt: true } }
+  { id: "switch-terminal", labelKey: "shortcut.switchTerminal", label: "切换终端", defaultShortcut: { key: "w", alt: true } },
+  { id: "switch-related-terminal", labelKey: "shortcut.switchRelatedTerminal", label: "切换关联终端", defaultShortcut: { key: "t", alt: true } },
+  { id: "switch-terminal-global", labelKey: "shortcut.switchTerminalGlobal", label: "跨 Client 切换终端", defaultShortcut: { key: "w", alt: true, shift: true } },
+  { id: "switch-client", labelKey: "shortcut.switchClient", label: "切换 Client", defaultShortcut: { key: "c", alt: true, shift: true } },
+  { id: "new-terminal", labelKey: "shortcut.newTerminal", label: "新建终端", defaultShortcut: { key: "n", alt: true } },
+  { id: "new-terminal-project", labelKey: "shortcut.newTerminalProject", label: "按项目新建", defaultShortcut: { key: "n", alt: true, shift: true } },
+  { id: "switch-workspace-mode", labelKey: "shortcut.switchWorkspaceMode", label: "切换终端/文件", defaultShortcut: { key: "s", alt: true } },
+  { id: "clone-terminal", labelKey: "shortcut.cloneTerminal", label: "复制终端", defaultShortcut: { key: "p", alt: true } },
+  { id: "open-artifacts", labelKey: "shortcut.openArtifacts", label: "Artifacts", defaultShortcut: { key: "a", alt: true } },
+  { id: "open-project-todo-board", labelKey: "shortcut.openProjectTodoBoard", label: "Kanban", defaultShortcut: { key: "k", alt: true } },
+  { id: "project-file-search", labelKey: "shortcut.projectFileSearch", label: "搜索项目文件", defaultShortcut: { key: "f", alt: true } },
+  { id: "toggle-aux-terminal", labelKey: "shortcut.toggleAuxTerminal", label: "Aux terminal", defaultShortcut: { key: "a", alt: true, shift: true } },
+  { id: "quick-input", labelKey: "shortcut.quickInput", label: "快速输入", defaultShortcut: { key: "i", alt: true } },
+  { id: "expand-record", labelKey: "shortcut.expandRecord", label: "展开 Agent 记录", defaultShortcut: { key: "r", alt: true } },
+  { id: "locate-terminal", labelKey: "shortcut.locateTerminal", label: "定位当前终端", defaultShortcut: { key: "l", alt: true } },
+  { id: "git-diff", labelKey: "shortcut.gitDiff", label: "Git diff", defaultShortcut: { key: "g", alt: true } },
+  { id: "refit-terminal", labelKey: "shortcut.refitTerminal", label: "重置终端大小", defaultShortcut: { key: "m", alt: true } },
+  { id: "settings", labelKey: "shortcut.settings", label: "设置", defaultShortcut: { key: ",", alt: true } }
 ];
 
 const KEYBOARD_SHORTCUT_BINDINGS_KEY = "web-terminal-acp:keyboard-shortcut-bindings";
@@ -144,21 +161,31 @@ export function effectiveKeyboardShortcut(
   return defaultShortcutFor(id);
 }
 
+export function normalizeKeyboardShortcutBindings(value: unknown): KeyboardShortcutBindings {
+  if (value === null || typeof value !== "object") {
+    return {};
+  }
+
+  const parsed = value as Record<string, unknown>;
+  const bindings: KeyboardShortcutBindings = {};
+  for (const definition of KEYBOARD_SHORTCUT_DEFINITIONS) {
+    if (!Object.prototype.hasOwnProperty.call(parsed, definition.id)) {
+      continue;
+    }
+    bindings[definition.id] = normalizeKeyboardShortcut(parsed[definition.id]);
+  }
+  return bindings;
+}
+
 export function readKeyboardShortcutBindings(): KeyboardShortcutBindings {
   if (typeof window === "undefined") {
     return {};
   }
 
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(KEYBOARD_SHORTCUT_BINDINGS_KEY) ?? "{}") as Record<string, unknown>;
-    const bindings: KeyboardShortcutBindings = {};
-    for (const definition of KEYBOARD_SHORTCUT_DEFINITIONS) {
-      if (!Object.prototype.hasOwnProperty.call(parsed, definition.id)) {
-        continue;
-      }
-      bindings[definition.id] = normalizeKeyboardShortcut(parsed[definition.id]);
-    }
-    return bindings;
+    return normalizeKeyboardShortcutBindings(
+      JSON.parse(window.localStorage.getItem(KEYBOARD_SHORTCUT_BINDINGS_KEY) ?? "{}")
+    );
   } catch {
     return {};
   }
@@ -231,9 +258,9 @@ function keyboardEventCodeKey(event: KeyboardEvent): string | null {
   return null;
 }
 
-export function keyboardShortcutLabel(shortcut: KeyboardShortcut | null): string {
+export function keyboardShortcutLabel(shortcut: KeyboardShortcut | null, t?: TranslateFn): string {
   if (shortcut === null) {
-    return "未绑定";
+    return t?.("shortcut.unbound") ?? "未绑定";
   }
 
   const parts: string[] = [];

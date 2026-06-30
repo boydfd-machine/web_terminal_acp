@@ -1,0 +1,301 @@
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) {
+  color-scheme: var(--skin-color-scheme);
+  background: var(--skin-canvas);
+  color: var(--skin-text);
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) :is(button, input, select, textarea) {
+  border-color: var(--skin-border);
+  border-radius: var(--skin-radius);
+  background: var(--skin-control);
+  color: var(--skin-text-strong);
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) :is(button:hover:not(:disabled), input:focus, select:focus, textarea:focus) {
+  border-color: var(--skin-accent);
+  background: var(--skin-control-hover);
+  color: var(--skin-text-strong);
+  outline-color: var(--skin-accent);
+  box-shadow: 0 0 0 2px var(--skin-focus-ring);
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) .project-todo-title-edit-form .project-todo-title-input,
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) .project-todo-title-edit-form .project-todo-title-input:focus {
+  background: transparent;
+  background-color: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) .project-todo-title-button,
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) .project-todo-title-button:hover:not(:disabled),
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) .project-todo-title-button:focus-visible:not(:disabled) {
+  border-color: transparent;
+  background: transparent;
+  background-color: transparent;
+  box-shadow: none;
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) .project-todo-card .project-todo-card-main,
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) .project-todo-card .project-todo-card-main:hover:not(:disabled),
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) .project-todo-card .project-todo-card-main:focus-visible:not(:disabled) {
+  border-color: transparent;
+  background: transparent;
+  color: inherit;
+  box-shadow: none;
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) :is(
+  .workspace,
+  .terminal-stage,
+  .aux-terminal-drawer,
+  .project-kanban-workspace,
+  .project-file-preview,
+  .project-files-view,
+  .artifact-browser,
+  .artifact-preview,
+  .project-artifacts-panel,
+  .system-config-page,
+  .system-model-page
+) {
+  background: var(--skin-workspace);
+  color: var(--skin-text);
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) .workspace-mode-toggle {
+  border-color: var(--skin-border);
+  background: var(--skin-panel);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 6%),
+    0 1px 2px var(--skin-shadow);
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) .workspace-mode-toggle button {
+  border-color: transparent;
+  border-radius: calc(var(--skin-radius) - 2px);
+  background: transparent;
+  color: var(--skin-muted);
+  box-shadow: none;
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) .workspace-mode-toggle button:hover:not(:disabled) {
+  border-color: var(--skin-border);
+  background: var(--skin-control-hover);
+  color: var(--skin-text-strong);
+  box-shadow: none;
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) .workspace-mode-toggle button:focus-visible:not(:disabled) {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--skin-focus-ring);
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) :is(
+  .sidebar,
+  .detail-panel,
+  .project-files-sidebar,
+  .system-config-sidebar,
+  .system-model-list
+) {
+  border-color: var(--skin-border-soft);
+  background: var(--skin-panel);
+  color: var(--skin-text);
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) :is(
+  .toolbar,
+  .terminal-toolbar,
+  .detail-panel-desktop-header,
+  .aux-terminal-header,
+  .project-file-editor-actions,
+  .settings-save-bar,
+  .artifact-toolbar,
+  .artifact-fullscreen-panel header,
+  .settings-modal-header,
+  .add-client-modal-header,
+  .terminal-switcher-header,
+  .project-terminal-picker-header,
+  .mobile-shortcut-fab-drawer-header
+) {
+  border-color: var(--skin-border-soft);
+  background: var(--skin-panel-raised);
+  color: var(--skin-text-strong);
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) :is(
+  .terminal-tab,
+  .client-card,
+  .terminal-project-card,
+  .terminal-project-detail-button,
+  .bootstrap-form,
+  .notification-center,
+  .onboarding-card,
+  .onboarding-step-meta,
+  .detail-section,
+  .project-todo-column,
+  .project-todo-card,
+  .project-todo-type-manager,
+  .project-todo-type-manager-modal,
+  .project-todo-create-dialog,
+  .project-todo-form-quick,
+  .project-todo-mention-menu,
+  .project-todo-type-row,
+  .project-todo-dispatch-template-preview pre,
+  .project-todo-detail-artifact-agents-panel,
+  .project-todo-requested-artifacts-panel,
+  .artifact-panel,
+  .artifact-page-review-card,
+  .artifact-fullscreen-panel,
+  .artifact-quick-open,
+  .artifact-plugin-preview-modal-panel,
+  .settings-modal,
+  .add-client-modal,
+  .terminal-create-modal,
+  .terminal-controls-menu,
+  .terminal-quick-input-panel,
+  .agent-record-modal,
+  .agent-record-modal-panel,
+  .terminal-switcher,
+  .terminal-switcher-panel,
+  .project-terminal-picker,
+  .mobile-shortcut-fab-drawer
+) {
+  border-color: var(--skin-border);
+  border-radius: var(--skin-radius);
+  background: var(--skin-panel-raised);
+  color: var(--skin-text);
+  box-shadow: 0 18px 48px var(--skin-shadow);
+}

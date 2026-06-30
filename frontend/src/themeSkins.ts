@@ -1,4 +1,5 @@
 import type { ITheme } from "@xterm/xterm";
+import type { TranslationKey } from "./i18n";
 
 export type ThemeSkinId = "default" | "linear" | "notion" | "vercel" | "stripe" | "raycast";
 
@@ -7,6 +8,7 @@ type ThemeSkin = {
   label: string;
   source: string;
   summary: string;
+  summaryKey: TranslationKey;
   cssClass: string;
   terminalTheme: ITheme;
 };
@@ -19,6 +21,7 @@ export const THEME_SKINS: ThemeSkin[] = [
     label: "Default",
     source: "Web Terminal",
     summary: "当前深色工作台风格",
+    summaryKey: "theme.default.summary",
     cssClass: "theme-skin-default",
     terminalTheme: {
       background: "#020617",
@@ -33,6 +36,7 @@ export const THEME_SKINS: ThemeSkin[] = [
     label: "Linear",
     source: "design-md/linear.app",
     summary: "近黑工艺感、薰衣草蓝焦点、精细边线",
+    summaryKey: "theme.linear.summary",
     cssClass: "theme-skin-linear",
     terminalTheme: {
       background: "#010102",
@@ -47,6 +51,7 @@ export const THEME_SKINS: ThemeSkin[] = [
     label: "Notion",
     source: "design-md/notion",
     summary: "纸感浅色工作区、墨色文字、紫色主操作",
+    summaryKey: "theme.notion.summary",
     cssClass: "theme-skin-notion",
     terminalTheme: {
       background: "#fbfaf8",
@@ -61,6 +66,7 @@ export const THEME_SKINS: ThemeSkin[] = [
     label: "Vercel",
     source: "design-md/vercel",
     summary: "黑白高对比、极简边框、克制单色控件",
+    summaryKey: "theme.vercel.summary",
     cssClass: "theme-skin-vercel",
     terminalTheme: {
       background: "#000000",
@@ -75,6 +81,7 @@ export const THEME_SKINS: ThemeSkin[] = [
     label: "Stripe",
     source: "design-md/stripe",
     summary: "浅色金融界面、靛蓝操作、柔和蓝灰面板",
+    summaryKey: "theme.stripe.summary",
     cssClass: "theme-skin-stripe",
     terminalTheme: {
       background: "#f6f9fc",
@@ -89,6 +96,7 @@ export const THEME_SKINS: ThemeSkin[] = [
     label: "Raycast",
     source: "design-md/raycast",
     summary: "命令面板式深色界面、白色主按钮、红色强调",
+    summaryKey: "theme.raycast.summary",
     cssClass: "theme-skin-raycast",
     terminalTheme: {
       background: "#07080a",

@@ -18,6 +18,9 @@ It is built for teams and solo operators who want a persistent record of agent w
 
 ## Architecture
 
+For a product-oriented capability overview, see
+[`docs/capability-map.md`](docs/capability-map.md).
+
 | Layer | Role |
 | --- | --- |
 | React + Vite | Browser UI, terminals, settings, search, client registration |
@@ -91,8 +94,15 @@ Important `.env` values:
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
+| `CORS_ALLOW_ORIGINS` | Comma-separated browser origins allowed to call the backend API; add LAN Vite origins such as `http://127.0.0.1:5173` | localhost Vite origins |
 | `WEB_TERMINAL_AUTH_SECRET` | Enables built-in UI/API login when non-empty | empty |
 | `WEB_TERMINAL_AUTH_SESSION_TTL_SECONDS` | Login session lifetime | `604800` |
+| `KEYCLOAK_BASE_URL` | Keycloak server URL; setting this with realm and client id enables Keycloak login | empty |
+| `KEYCLOAK_REALM` | Keycloak realm | empty |
+| `KEYCLOAK_CLIENT_ID` | Keycloak OIDC client id | empty |
+| `KEYCLOAK_CLIENT_SECRET` | Optional confidential-client secret used only by the backend token exchange | empty |
+| `KEYCLOAK_PUBLIC_KEY_PEM` | Optional static Keycloak verification public key; leave empty to use JWKS | empty |
+| `KEYCLOAK_JWKS_CACHE_TTL_SECONDS` | Keycloak JWKS cache TTL | `300` |
 | `BACKEND_PUBLISHED_PORT` | Backend host port | `8001` |
 | `WORKSPACE_DIR` | Host path mounted into backend as `/workspace` | `~/workspace` |
 | `CLAUDE_PROJECTS_DIR` | Claude Code projects directory for JSONL ingest | `~/.claude/projects` |
@@ -103,8 +113,21 @@ Important `.env` values:
 | `VITE_API_BASE` | Frontend build-time fallback API origin; leave empty for Docker nginx proxying | empty |
 | `VITE_CLIENT_AGENT_SERVER_URL` | Optional override for the URL written into SSH/direct remote client configs | empty |
 | `VITE_ENABLE_ONBOARDING` | Frontend build-time switch for the new-user guide; set `true` to enable | empty |
+| `VITE_ENABLE_PAGE_ANNOTATION` | Frontend build-time switch for debug page annotation mode in local Docker builds | `true` |
 
-Do not commit `.env`. Before exposing the app beyond localhost, set `WEB_TERMINAL_AUTH_SECRET`, use strong database passwords, and put a TLS reverse proxy in front of the UI/backend.
+Do not commit `.env`. Before exposing the app beyond localhost, enable Keycloak or set `WEB_TERMINAL_AUTH_SECRET`, use strong database passwords, and put a TLS reverse proxy in front of the UI/backend.
+
+For local Keycloak testing from `http://127.0.0.1:5173`, configure the backend with:
+
+```bash
+KEYCLOAK_BASE_URL=https://auth.example.com
+KEYCLOAK_REALM=home
+KEYCLOAK_CLIENT_ID=web_terminal_mcp_local
+KEYCLOAK_CLIENT_SECRET=<client secret>
+CORS_ALLOW_ORIGINS=http://127.0.0.1:5173
+```
+
+The frontend uses Authorization Code + PKCE, but the backend exchanges the code with Keycloak and verifies the token. In Keycloak, `Root URL`, `Home URL`, `Web origins`, and `Valid redirect URIs` can use `http://127.0.0.1:5173` and `http://127.0.0.1:5173/*`. `Valid post logout redirect URIs` is not required for the current logout flow; setting it to `http://127.0.0.1:5173/*` is fine if Keycloak requires a value.
 
 ## Agent Profiles
 
@@ -136,9 +159,11 @@ Debug and local release APKs can be built from the frontend project:
 cd frontend
 npm run android:build:debug
 npm run android:build:local-release
+npm run android:build:pad:debug
+npm run android:build:pad:local-release
 ```
 
-Use `android:build:local-release` when you need a release-mode APK that can be installed on a device for local validation. The standard `android:build:release` command is for real release artifacts and requires a release keystore; unsigned release APKs are rejected by Android during installation.
+Use `android:build:local-release` or `android:build:pad:local-release` when you need a release-mode APK that can be installed on a device for local validation. The standard `android:build:release` and `android:build:pad:release` commands are for real release artifacts and require a release keystore; unsigned release APKs are rejected by Android during installation.
 
 Set these environment variables or matching Gradle properties before building a signed release:
 
@@ -148,13 +173,17 @@ export WEB_TERMINAL_ANDROID_RELEASE_STORE_PASSWORD=...
 export WEB_TERMINAL_ANDROID_RELEASE_KEY_ALIAS=...
 export WEB_TERMINAL_ANDROID_RELEASE_KEY_PASSWORD=...
 npm run android:build:release
+npm run android:build:pad:release
 ```
 
 If you intentionally need an unsigned APK for external signing, use:
 
 ```bash
 npm run android:build:unsigned-release
+npm run android:build:pad:unsigned-release
 ```
+
+The Pad APK uses package id `com.webterminal.acp.pad` and app label `Web Terminal ACP Pad`, so it can be installed alongside the standard Android app.
 
 ## Install A Remote Client
 
@@ -294,6 +323,14 @@ Use SemVer:
 - `PATCH` for compatible fixes and documentation-only release updates.
 - `MINOR` for compatible features or behavior additions.
 - `MAJOR` for incompatible protocol, API, storage, or deployment changes.
+
+For agent-heavy development, install the repo-local version merge driver once per clone:
+
+```bash
+scripts/install-version-merge-driver.sh
+```
+
+`.gitattributes` routes the version files above through this driver. It resolves version-only conflicts by choosing the highest SemVer value and leaves non-version conflicts for normal manual resolution.
 
 ## License
 

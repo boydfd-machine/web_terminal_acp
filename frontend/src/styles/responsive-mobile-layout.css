@@ -1,0 +1,346 @@
+@media (max-width: 760px) {
+  .onboarding-card {
+    top: auto !important;
+    right: 12px;
+    bottom: 12px;
+    left: 12px !important;
+    width: auto !important;
+    max-width: none;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .app-shell {
+    display: block;
+    height: var(--web-terminal-viewport-height, 100dvh);
+    overflow: hidden;
+  }
+
+  .sidebar,
+  .workspace {
+    height: var(--web-terminal-viewport-height, 100dvh);
+    min-height: 0;
+  }
+
+  .sidebar {
+    border-right: 0;
+    padding: 12px;
+  }
+
+  .workspace {
+    display: none;
+  }
+
+  .mobile-terminal-active .sidebar {
+    display: none;
+  }
+
+  .mobile-terminal-active .workspace {
+    display: flex;
+  }
+
+  .project-files-view {
+    grid-template-columns: 1fr;
+  }
+
+  .project-files-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--skin-border-soft);
+  }
+
+  .sidebar-header {
+    align-items: stretch;
+    display: grid;
+  }
+
+  .mobile-enter-terminal {
+    position: sticky;
+    bottom: -12px;
+    display: block;
+    margin: 16px -12px -12px;
+    border-top: 1px solid var(--skin-border-soft);
+    background: var(--skin-control);
+    padding: 12px;
+  }
+
+  .mobile-enter-terminal button {
+    width: 100%;
+  }
+
+  .toolbar {
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .terminal-toolbar {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .mobile-back-button {
+    grid-column: 1;
+    grid-row: 1;
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    padding: 7px 8px;
+    white-space: nowrap;
+  }
+
+  .workspace-mode-toggle {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .workspace-mode-toggle button {
+    min-width: 0;
+  }
+
+  .project-browse-root-selector {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .terminal-toolbar-title {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .toolbar-title {
+    font-size: 13px;
+  }
+
+  .terminal-actions {
+    grid-column: 3;
+    grid-row: 1;
+    gap: 6px;
+    margin-left: 0;
+  }
+
+  .mobile-agent-preview-button {
+    padding: 7px 8px;
+  }
+
+  .terminal-menu-button {
+    min-width: 44px;
+    padding: 7px 8px;
+  }
+
+  .terminal-create-progress,
+  .terminal-clone-progress {
+    top: 52px;
+    right: 8px;
+    left: 8px;
+    max-width: none;
+  }
+
+  .terminal-clone-progress {
+    top: 8px;
+  }
+
+  .terminal-controls-menu {
+    width: min(320px, calc(100vw - 12px));
+  }
+
+  .aux-terminal-drawer {
+    max-width: 100vw;
+    max-height: var(--web-terminal-viewport-height, 100dvh);
+  }
+
+  .aux-terminal-header {
+    padding: 7px 8px;
+  }
+
+  .aux-terminal-header-actions {
+    gap: 6px;
+  }
+
+  .aux-terminal-header-actions span {
+    display: none;
+  }
+
+  .terminal-virtual-keys {
+    padding: 7px 8px;
+  }
+
+  .terminal-virtual-keys button {
+    min-height: 38px;
+    padding: 6px 9px;
+  }
+
+  .terminal-stage-phone,
+  .terminal-stage-fixed {
+    overscroll-behavior: contain;
+  }
+
+  .terminal-pane-phone {
+    width: 100%;
+    flex: 1 1 0;
+    min-height: 0;
+  }
+
+  .terminal-quick-input-panel {
+    bottom: max(8px, env(safe-area-inset-bottom, 0px));
+    width: calc(100% - 16px);
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+    padding: 7px;
+  }
+
+  .terminal-quick-input-panel textarea {
+    min-height: 42px;
+    max-height: min(48dvh, 300px);
+    padding: 9px 10px;
+    font-size: 16px;
+  }
+
+  .terminal-quick-input-actions {
+    justify-content: flex-end;
+  }
+
+  .terminal-quick-key-list {
+    grid-template-columns: minmax(0, 1fr);
+    max-height: min(34dvh, 220px);
+  }
+
+  .settings-modal-backdrop,
+  .add-client-modal-backdrop,
+  .app-prompt-backdrop,
+  .terminal-create-modal-backdrop,
+  .project-todo-detail-backdrop,
+  .project-todo-create-dialog-backdrop,
+  .project-todo-comment-backdrop,
+  .project-todo-type-manager-modal-backdrop,
+  .project-terminal-picker-backdrop {
+    padding: max(10px, env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-right, 0px))
+      max(10px, env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
+  }
+
+  .settings-modal,
+  .settings-modal-wide,
+  .app-prompt-dialog,
+  .add-client-modal {
+    width: 100%;
+    max-height: calc(100dvh - 20px);
+    padding: 14px;
+  }
+
+  .settings-modal,
+  .settings-modal-wide {
+    height: calc(100dvh - 20px);
+  }
+
+  .app-prompt-backdrop {
+    align-items: start;
+    padding-top: max(10px, env(safe-area-inset-top, 0px));
+  }
+
+  .app-prompt-dialog {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-prompt-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-modal-header,
+  .add-client-modal-header,
+  .settings-modal-title {
+    align-items: stretch;
+  }
+
+  .settings-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settings-save-bar,
+  .settings-save-actions {
+    align-items: stretch;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .quick-key-editor-grid,
+  .quick-key-settings-item,
+  .shortcut-binding-item,
+  .settings-agent-command-grid,
+  .system-config-editor,
+  .system-config-item,
+  .add-client-mode-tabs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .terminal-create-agent-tabs,
+  .project-terminal-picker-agent-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .system-config-json {
+    grid-column: auto;
+  }
+
+  .system-config-item-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .terminal-create-modal {
+    max-height: calc(var(--web-terminal-viewport-height, 100dvh) - 20px);
+    padding: 14px;
+  }
+
+  .project-todo-detail-dialog,
+  .project-todo-create-dialog,
+  .project-todo-comment-modal,
+  .project-todo-type-manager-modal {
+    width: 100%;
+    max-height: calc(var(--web-terminal-viewport-height, 100dvh) - 20px);
+  }
+
+  .terminal-create-header,
+  .terminal-create-actions {
+    align-items: stretch;
+  }
+
+  .quick-key-settings-list {
+    max-height: 42dvh;
+  }
+
+  .agent-record-modal-panel {
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .agent-record-header {
+    align-items: stretch;
+    display: grid;
+  }
+
+  .agent-record-actions {
+    justify-content: flex-start;
+    gap: 6px;
+  }
+
+  .agent-record-terminal-status {
+    min-height: 28px;
+    padding: 3px 8px;
+  }
+
+  .agent-record-modal-scroll {
+    padding-right: 0;
+  }
+
+}

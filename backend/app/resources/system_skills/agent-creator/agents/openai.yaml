@@ -1,0 +1,7 @@
+interface:
+  display_name: "Agent Creator"
+  short_description: "Design or refine Web Terminal ACP agent profiles and companion skills"
+  default_prompt: "Use $agent-creator to design or refine an agent profile, its AGENT.md, companion skills, guardrails, and validation plan."
+
+policy:
+  allow_implicit_invocation: true

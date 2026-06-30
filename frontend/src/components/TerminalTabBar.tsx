@@ -1,3 +1,4 @@
+import { useI18n } from "../i18n";
 import type { TreeWindow } from "../types";
 import { GitPendingBadge } from "./GitPendingBadge";
 import { TerminalUnreadDot } from "./NotificationCenter";
@@ -20,12 +21,14 @@ export function TerminalTabBar({
   onSelectWindow,
   onDeleteWindow
 }: TerminalTabBarProps) {
+  const { t } = useI18n();
+
   if (windows.length === 0) {
-    return <p className="terminal-tab-empty muted">No terminal selected</p>;
+    return <p className="terminal-tab-empty muted">{t("terminal.tab.empty")}</p>;
   }
 
   return (
-    <div className="terminal-tab-list" role="tablist" aria-label="Open terminals">
+    <div className="terminal-tab-list" role="tablist" aria-label={t("terminal.tab.openTerminals")}>
       {windows.map((treeWindow) => {
         const isSelected = treeWindow.id === selectedWindowId;
         const isDeleting = deletingWindowId === treeWindow.id;
@@ -53,7 +56,7 @@ export function TerminalTabBar({
             <button
               type="button"
               className="terminal-tab-delete"
-              aria-label={`Delete ${treeWindow.title}`}
+              aria-label={t("terminal.tab.delete", { title: treeWindow.title })}
               disabled={isDeleting}
               onClick={(event) => {
                 event.stopPropagation();

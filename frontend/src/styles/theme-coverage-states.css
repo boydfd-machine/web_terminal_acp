@@ -1,0 +1,270 @@
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) .project-todo-column.drop-available {
+  border-color: var(--skin-accent);
+  background: var(--skin-selected);
+  box-shadow: inset 0 0 0 1px var(--skin-focus-ring);
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) .project-todo-column.drop-target {
+  border-color: var(--skin-accent-strong);
+  background: var(--skin-selected);
+  box-shadow:
+    inset 0 0 0 2px var(--skin-focus-ring),
+    0 0 0 1px var(--skin-accent);
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) :is(
+  .project-browse-root-menu,
+  .project-browse-root-options button,
+  .client-actions-menu,
+  .client-actions-menu button,
+  .terminal-project-card-count,
+  .count,
+  .detail-tags span,
+  .work-status-badge,
+  .project-todo-type-pill,
+  .project-todo-artifact-selected-chip,
+  .project-todo-artifact-selected-chip button,
+  .project-todo-artifact-select-control,
+  .project-todo-artifact-select-toggle,
+  .project-todo-artifact-options label,
+  .project-todo-agent-record-stats span,
+  .project-todo-agent-record-message-expand,
+  .project-todo-artifact-agent-chip,
+  .project-todo-artifacts button,
+  .artifact-list button,
+  .project-artifact-kind-list button,
+  .project-artifact-version-card,
+  .artifact-quick-list button,
+  .artifact-page-review-card-meta span,
+  .artifact-status,
+  .settings-tabs button,
+  .add-client-mode-tabs button,
+  .project-terminal-picker-agent-tabs button,
+  .terminal-switcher-project-tabs button,
+  .switcher-window,
+  .project-terminal-picker-option,
+  .mobile-shortcut-fab-item
+) {
+  border-color: var(--skin-border);
+  background: var(--skin-panel-soft);
+  color: var(--skin-text);
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) :is(.work-status-badge.gray) {
+  border-color: var(--skin-border);
+  background: var(--skin-panel-soft);
+  color: var(--skin-muted);
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) :is(.work-status-badge.green) {
+  border-color: var(--skin-success);
+  background: var(--skin-success-soft);
+  color: var(--skin-success-text);
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) :is(.work-status-badge.orange) {
+  border-color: var(--skin-warning);
+  background: var(--skin-warning-soft);
+  color: var(--skin-warning-text);
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) :is(.work-status-badge.red) {
+  border-color: var(--skin-danger);
+  background: var(--skin-danger-soft);
+  color: var(--skin-danger-text);
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) :is(
+  .terminal-tab.selected,
+  .client-card.selected,
+  .terminal-project-card.selected,
+  .tree-window.selected,
+  .project-file-node.selected,
+  .project-todo-card.expanded,
+  .project-todo-mention-option.active,
+  .artifact-list button.selected,
+  .project-artifact-kind-list button.selected,
+  .project-artifact-version-card.selected,
+  .artifact-quick-list button.selected,
+  .settings-tabs button.active,
+  .add-client-mode-tabs button.active,
+  .terminal-mode-toggle button.active,
+  .workspace-mode-toggle button.active,
+  .artifact-scope-tabs button.selected,
+  .artifact-domain-tabs button.selected,
+  .project-terminal-picker-agent-tabs button.active,
+  .project-terminal-picker-option.active,
+  .terminal-switcher-project-tabs button.active,
+  .switcher-window.active,
+  .git-diff-browser-row.selected
+) {
+  border-color: var(--skin-accent);
+  background: var(--skin-selected);
+  color: var(--skin-text-strong);
+  box-shadow: inset 0 0 0 1px var(--skin-focus-ring);
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) .workspace-mode-toggle button.active:hover:not(:disabled) {
+  border-color: var(--skin-accent);
+  background: var(--skin-selected-hover);
+  color: var(--skin-text-strong);
+  box-shadow: inset 0 0 0 1px var(--skin-focus-ring);
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) .project-todo-card.selected {
+  border-color: var(--skin-border);
+  background: var(--skin-panel-raised);
+  color: var(--skin-text);
+  box-shadow: 0 18px 48px var(--skin-shadow);
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) .project-todo-card.selected:hover {
+  background: var(--skin-control-hover);
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) :is(
+  .project-todo-title-edit-form .project-todo-title-input,
+  .project-todo-description-edit-form textarea,
+  .project-todo-title-edit-form .project-todo-title-input:focus,
+  .project-todo-description-edit-form textarea:focus
+) {
+  border-color: transparent;
+  background: transparent;
+  background-color: transparent;
+  color: inherit;
+  outline-color: var(--skin-muted);
+  box-shadow: none;
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) .project-todo-title-button,
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) .project-todo-title-button:hover:not(:disabled),
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) .project-todo-title-button:focus-visible:not(:disabled) {
+  border-color: transparent;
+  background: transparent;
+  background-color: transparent;
+  box-shadow: none;
+}
+
+:is(
+  .theme-skin-default,
+  .theme-skin-linear,
+  .theme-skin-notion,
+  .theme-skin-vercel,
+  .theme-skin-stripe,
+  .theme-skin-raycast
+) :is(
+  .terminal-quick-input-actions button[type="submit"],
+  .terminal-clipboard-copy,
+  .settings-save-button,
+  .project-todo-create-action-button.dispatch,
+  .onboarding-card-actions button:last-child
+) {
+  border-color: var(--skin-accent-strong);
+  background: var(--skin-accent-strong);
+  color: var(--skin-accent-text);
+}

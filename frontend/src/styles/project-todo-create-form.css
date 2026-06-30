@@ -1,0 +1,409 @@
+.project-todo-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.project-todo-form input,
+.project-todo-form textarea,
+.project-todo-parent-selector select {
+  min-width: 0;
+  width: 100%;
+}
+
+.project-todo-form .project-todo-description-mention-field {
+  grid-column: 1 / -1;
+}
+
+.project-todo-form-schedule {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+}
+
+.project-todo-form-schedule label {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--skin-muted);
+  font-size: 11px;
+}
+
+.project-todo-parent-selector {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--skin-muted);
+  font-size: 11px;
+}
+
+.project-todo-form-schedule select {
+  min-width: 0;
+  width: 100%;
+}
+
+.project-todo-type-pill {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 160px;
+  border: 1px solid var(--skin-border);
+  border-radius: 999px;
+  background: var(--skin-control);
+  color: var(--skin-accent);
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-todo-form-artifacts {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  position: relative;
+}
+
+.project-todo-input-artifacts {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--skin-muted);
+  font-size: 11px;
+}
+
+.project-todo-input-artifacts small {
+  min-width: 0;
+  color: var(--skin-muted);
+  overflow-wrap: anywhere;
+}
+
+.project-todo-input-artifact-selector {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  position: relative;
+}
+
+.project-todo-form-artifact-model {
+  grid-column: 1 / -1;
+}
+
+.project-todo-form-artifacts legend,
+.project-todo-input-artifact-selector legend {
+  color: var(--skin-muted);
+  font-size: 11px;
+  padding: 0;
+}
+
+.project-todo-artifact-selected-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.project-todo-artifact-selected-chip {
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  max-width: min(100%, 220px);
+  min-height: 24px;
+  border: 1px solid var(--skin-border);
+  border-radius: 6px;
+  background: var(--skin-accent-soft);
+  color: var(--skin-text-strong);
+  padding: 3px 4px 3px 8px;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.project-todo-artifact-selected-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-todo-artifact-selected-chip button {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--skin-muted);
+  padding: 0;
+}
+
+.project-todo-artifact-selected-chip button:hover:not(:disabled),
+.project-todo-artifact-selected-chip button:focus-visible:not(:disabled) {
+  background: rgb(240 246 252 / 10%);
+  color: var(--skin-text-strong);
+}
+
+.project-todo-artifact-selected-chip button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.project-todo-artifact-selected-chip svg {
+  width: 12px;
+  height: 12px;
+}
+
+.project-todo-artifact-select-control {
+  width: min(100%, 260px);
+  min-width: 0;
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--skin-border);
+  border-radius: 6px;
+  background: var(--skin-panel);
+  color: var(--skin-text);
+  padding: 4px 5px 4px 8px;
+  font-size: 11px;
+  line-height: 1.25;
+  text-align: left;
+}
+
+.project-todo-artifact-select-control:hover,
+.project-todo-artifact-select-control:focus-within {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent-soft);
+  color: var(--skin-text-strong);
+}
+
+.project-todo-artifact-select-control.disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.project-todo-artifact-select-input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 1px 0;
+  font: inherit;
+  line-height: inherit;
+  outline: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-todo-artifact-select-input::placeholder {
+  color: var(--skin-muted);
+  opacity: 1;
+}
+
+.project-todo-artifact-select-input:disabled {
+  cursor: not-allowed;
+}
+
+.project-todo-artifact-select-toggle {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+.project-todo-artifact-select-toggle:disabled {
+  cursor: not-allowed;
+}
+
+.project-todo-artifact-select-toggle svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+
+.project-todo-artifact-options {
+  position: absolute;
+  z-index: 7;
+  top: calc(100% + 4px);
+  left: 0;
+  width: min(100%, 300px);
+  min-width: min(220px, 100%);
+  max-height: 220px;
+  overflow: auto;
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--skin-border);
+  border-radius: 8px;
+  background: var(--skin-workspace);
+  padding: 6px;
+  box-shadow: 0 14px 34px rgb(0 0 0 / 36%);
+}
+
+.project-todo-artifact-empty {
+  color: var(--skin-muted);
+  padding: 7px;
+  font-size: 11px;
+}
+
+.project-todo-artifact-options label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  min-height: 28px;
+  border-radius: 6px;
+  color: var(--skin-text);
+  padding: 5px 7px;
+  font-size: 11px;
+}
+
+.project-todo-artifact-options label:hover {
+  background: var(--skin-panel);
+  color: var(--skin-text-strong);
+}
+
+.project-todo-artifact-options input[type="checkbox"] {
+  width: auto;
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.project-todo-artifact-options span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.project-todo-artifact-options strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.project-todo-artifact-options small {
+  display: block;
+  min-width: 0;
+  margin-top: 1px;
+  color: var(--skin-muted);
+  font-size: 10px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.project-todo-form-cron {
+  grid-column: 1 / -1;
+}
+
+.project-todo-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.project-todo-form-quick {
+  align-items: stretch;
+  border: 1px solid var(--skin-border);
+  border-radius: 8px;
+  background: var(--skin-control);
+  padding: 8px;
+}
+
+.project-todo-form-quick input,
+.project-todo-form-quick textarea {
+  border-color: var(--skin-border);
+  background: var(--skin-panel-soft);
+}
+
+.project-todo-form-quick textarea {
+  min-height: 38px;
+  max-height: 96px;
+  resize: vertical;
+}
+
+.project-todo-form-quick .project-todo-form-actions {
+  align-items: stretch;
+}
+
+.project-todo-create-action-button {
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  display: inline-grid;
+  place-items: center;
+  border-color: var(--skin-border);
+  background: var(--skin-control);
+  color: var(--skin-text);
+  padding: 0;
+}
+
+.project-todo-create-action-button.dispatch {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent-strong);
+  color: var(--skin-text-strong);
+}
+
+.project-todo-create-action-button.direct-dispatch {
+  border-color: var(--skin-success);
+  background: var(--skin-success);
+  color: var(--skin-text-strong);
+}
+
+.project-todo-create-action-button:hover:not(:disabled) {
+  border-color: var(--skin-accent);
+  background: var(--skin-control-hover);
+  color: var(--skin-text-strong);
+}
+
+.project-todo-create-action-button.direct-dispatch:hover:not(:disabled) {
+  border-color: var(--skin-success-text);
+  background: var(--skin-success);
+}
+
+.project-todo-create-action-button.dispatch:hover:not(:disabled) {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent-strong);
+}
+
+.project-todo-create-action-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.project-todo-form textarea {
+  min-height: 72px;
+  resize: vertical;
+}

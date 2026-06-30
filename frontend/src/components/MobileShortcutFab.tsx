@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 
+import { useI18n } from "../i18n";
+
 export type MobileShortcutDirection = "up" | "down" | "left" | "right";
 
 export type MobileShortcutAction = {
@@ -42,7 +44,6 @@ const DEFAULT_BOTTOM_OFFSET = 16;
 const TAP_MOVE_TOLERANCE_PX = 6;
 const SWIPE_INPUT_THRESHOLD_PX = 28;
 const LONG_PRESS_DRAG_DELAY_MS = 420;
-const LONG_PRESS_MOVE_TOLERANCE_PX = 10;
 
 function viewportSize(): { width: number; height: number } {
   const viewport = window.visualViewport;
@@ -116,6 +117,7 @@ function swipeDirection(deltaX: number, deltaY: number): MobileShortcutDirection
 }
 
 export function MobileShortcutFab({ visible, actions, onDirectionInput }: MobileShortcutFabProps) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [position, setPosition] = useState<FabPosition | null>(null);
@@ -210,10 +212,6 @@ export function MobileShortcutFab({ visible, actions, onDirectionInput }: Mobile
     dragState.latestPointerX = event.clientX;
     dragState.latestPointerY = event.clientY;
 
-    if (!dragState.dragging && Math.hypot(deltaX, deltaY) > LONG_PRESS_MOVE_TOLERANCE_PX) {
-      clearLongPressTimer(dragState);
-    }
-
     if (!dragState.dragging) {
       return;
     }
@@ -278,13 +276,13 @@ export function MobileShortcutFab({ visible, actions, onDirectionInput }: Mobile
           <button
             type="button"
             className="mobile-shortcut-fab-scrim"
-            aria-label="关闭快捷操作"
+            aria-label={t("mobileShortcut.close")}
             onClick={() => setOpen(false)}
           />
-          <aside className="mobile-shortcut-fab-drawer" role="menu" aria-label="快捷操作">
+          <aside className="mobile-shortcut-fab-drawer" role="menu" aria-label={t("mobileShortcut.title")}>
             <div className="mobile-shortcut-fab-drawer-header">
-              <span>快捷操作</span>
-              <button type="button" aria-label="关闭快捷操作" onClick={() => setOpen(false)}>
+              <span>{t("mobileShortcut.title")}</span>
+              <button type="button" aria-label={t("mobileShortcut.close")} onClick={() => setOpen(false)}>
                 <span aria-hidden="true">×</span>
               </button>
             </div>
@@ -327,7 +325,7 @@ export function MobileShortcutFab({ visible, actions, onDirectionInput }: Mobile
             className="mobile-shortcut-fab-ball"
             aria-expanded={open}
             aria-haspopup="menu"
-            aria-label="打开快捷操作"
+            aria-label={t("mobileShortcut.open")}
             onPointerDown={handleBallPointerDown}
             onPointerMove={handleBallPointerMove}
             onPointerUp={finishBallDrag}

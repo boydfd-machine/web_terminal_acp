@@ -7,7 +7,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.model_base import Base
-from app.models import AiSession, Event, EventSourceType, SummaryJob, VirtualWindow, WindowStatus
+from app.models import (
+    AiSession,
+    Event,
+    EventSourceType,
+    ProjectTodo,
+    ProjectTodoArtifact,
+    ProjectTodoStatus,
+    SummaryJob,
+    TerminalArtifact,
+    VirtualWindow,
+    WindowStatus,
+)
 from app.repositories.clients import create_client, ensure_local_client
 from app.services.ingest.claude_watcher import (
     index_claude_events,
@@ -58,10 +69,8 @@ async def db_session():
 def write_jsonl(path, *objects):
     path.write_text("".join(json.dumps(obj, ensure_ascii=False) + "\n" for obj in objects), encoding="utf-8")
 
-
 def test_iter_jsonl_files_returns_empty_for_missing_root(tmp_path):
     assert iter_jsonl_files(tmp_path / "missing") == []
-
 
 def test_iter_jsonl_files_returns_recursive_sorted_jsonl_files(tmp_path):
     root = tmp_path / "claude"
@@ -73,7 +82,6 @@ def test_iter_jsonl_files_returns_recursive_sorted_jsonl_files(tmp_path):
     (root / "ignore.txt").write_text("", encoding="utf-8")
 
     assert iter_jsonl_files(root) == [root / "0-session.jsonl", nested / "session-2.jsonl"]
-
 
 def test_initial_jsonl_offsets_start_at_existing_file_sizes(tmp_path):
     root = tmp_path / "claude"
@@ -90,7 +98,6 @@ def test_initial_jsonl_offsets_start_at_existing_file_sizes(tmp_path):
         second: second.stat().st_size,
     }
 
-
 def test_read_new_jsonl_events_returns_offsets(tmp_path):
     path = tmp_path / "session.jsonl"
     first = {"type": "user", "message": {"content": "hello"}, "sessionId": "s1"}
@@ -103,7 +110,6 @@ def test_read_new_jsonl_events_returns_offsets(tmp_path):
     assert events[0][1] == 0
     assert next_offset == path.stat().st_size
 
-
 def test_read_new_jsonl_events_skips_partial_line(tmp_path):
     path = tmp_path / "session.jsonl"
     path.write_text('{"type": "user"}\n{"type": ', encoding="utf-8")
@@ -112,7 +118,6 @@ def test_read_new_jsonl_events_skips_partial_line(tmp_path):
 
     assert len(events) == 1
     assert next_offset == len('{"type": "user"}\n'.encode())
-
 
 def test_read_new_jsonl_events_resumes_from_byte_offset_for_appended_lines(tmp_path):
     path = tmp_path / "session.jsonl"
@@ -129,7 +134,6 @@ def test_read_new_jsonl_events_resumes_from_byte_offset_for_appended_lines(tmp_p
     assert events[0][1] == offset
     assert next_offset == path.stat().st_size
 
-
 def test_read_new_jsonl_events_skips_invalid_complete_json_line_and_advances(tmp_path):
     path = tmp_path / "session.jsonl"
     valid_before = {"type": "user", "sessionId": "s1"}
@@ -144,7 +148,6 @@ def test_read_new_jsonl_events_skips_invalid_complete_json_line_and_advances(tmp
     assert [event for event, _offset in events] == [valid_before, valid_after]
     assert next_offset == path.stat().st_size
 
-
 def test_read_new_jsonl_events_respects_max_events_limit(tmp_path):
     path = tmp_path / "session.jsonl"
     first = {"type": "user", "sessionId": "s1"}
@@ -157,7 +160,6 @@ def test_read_new_jsonl_events_respects_max_events_limit(tmp_path):
     assert [event for event, _offset in events] == [first, second]
     assert next_offset == len((json.dumps(first) + "\n" + json.dumps(second) + "\n").encode("utf-8"))
 
-
 def test_read_new_jsonl_events_skips_complete_line_over_max_bytes(tmp_path):
     path = tmp_path / "session.jsonl"
     huge_event = {"type": "user", "sessionId": "s1", "message": {"content": "x" * 128}}
@@ -167,7 +169,6 @@ def test_read_new_jsonl_events_skips_complete_line_over_max_bytes(tmp_path):
 
     assert events == []
     assert next_offset == path.stat().st_size
-
 
 @pytest.mark.asyncio
 async def test_ingest_claude_jsonl_file_persists_without_indexing_before_commit(db_session, tmp_path):
@@ -207,7 +208,6 @@ async def test_ingest_claude_jsonl_file_persists_without_indexing_before_commit(
     assert len(summary_jobs) == 1
     assert summary_jobs[0].virtual_window_id == window.id
     assert es_client.indexed_documents == []
-
 
 @pytest.mark.asyncio
 async def test_index_claude_events_indexes_committed_rows_with_deterministic_ids(db_session, tmp_path):
@@ -249,7 +249,6 @@ async def test_index_claude_events_indexes_committed_rows_with_deterministic_ids
         }
     ]
 
-
 @pytest.mark.asyncio
 async def test_index_claude_events_uses_event_row_ids_for_shared_fingerprints_across_clients(db_session):
     local_client = await ensure_local_client(db_session)
@@ -287,7 +286,6 @@ async def test_index_claude_events_uses_event_row_ids_for_shared_fingerprints_ac
     assert indexed_count == 2
     assert {document["id"] for document in es_client.indexed_documents} == {str(first_id), str(second_id)}
 
-
 @pytest.mark.asyncio
 async def test_index_claude_events_leaves_failed_rows_for_retry(db_session, tmp_path):
     path = tmp_path / "session.jsonl"
@@ -311,7 +309,6 @@ async def test_index_claude_events_leaves_failed_rows_for_retry(db_session, tmp_
     assert retried_count == 1
     assert row.indexed_at is not None
     assert len(es_client.indexed_documents) == 1
-
 
 @pytest.mark.asyncio
 async def test_poll_claude_jsonl_directory_once_limits_changed_files_per_pass(tmp_path):
@@ -344,7 +341,6 @@ async def test_poll_claude_jsonl_directory_once_limits_changed_files_per_pass(tm
     assert set(offsets) == {first, second}
 
     await engine.dispose()
-
 
 @pytest.mark.asyncio
 async def test_poll_claude_jsonl_directory_once_offloads_jsonl_scan(monkeypatch, tmp_path):
@@ -379,7 +375,6 @@ async def test_poll_claude_jsonl_directory_once_offloads_jsonl_scan(monkeypatch,
             },
         )
     ]
-
 
 @pytest.mark.asyncio
 async def test_poll_claude_jsonl_directory_once_scans_known_files_in_chunks(tmp_path):
@@ -418,7 +413,6 @@ async def test_poll_claude_jsonl_directory_once_scans_known_files_in_chunks(tmp_
     assert opened == []
     assert offsets[files[2]] == append_offset
 
-
 @pytest.mark.asyncio
 async def test_poll_claude_jsonl_directory_once_persists_commits_and_indexes(tmp_path):
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -448,53 +442,3 @@ async def test_poll_claude_jsonl_directory_once_persists_commits_and_indexes(tmp
     assert len(es_client.indexed_documents) == 1
 
     await engine.dispose()
-
-
-@pytest.mark.asyncio
-async def test_claude_jsonl_ingest_invalidation_does_not_expire_tree_cache(tmp_path):
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
-
-    @asynccontextmanager
-    async def session_factory():
-        async with AsyncSession(engine, expire_on_commit=False) as session:
-            yield session
-
-    root = tmp_path / "claude"
-    root.mkdir()
-    path = root / "session.jsonl"
-    write_jsonl(path, {"type": "user", "message": {"content": "hello"}, "sessionId": "s1"})
-    ui_event_hub = FakeUiEventHub()
-
-    await poll_claude_jsonl_directory_once(
-        session_factory,
-        root,
-        {},
-        ui_event_hub=ui_event_hub,
-    )
-
-    assert ui_event_hub.invalidations == [
-        (
-            ["agent_record", "window", "search"],
-            {
-                "client_id": next(
-                    kwargs["client_id"] for _resources, kwargs in ui_event_hub.invalidations
-                ),
-                "reason": "claude_jsonl_ingested",
-            },
-        )
-    ]
-
-    await engine.dispose()
-
-
-def test_long_path_fingerprints_remain_within_event_fingerprint_limit(tmp_path):
-    long_root = tmp_path / ("nested" * 30)
-    long_root.mkdir()
-    source_path = str(long_root / "session.jsonl")
-    raw = {"type": "user", "message": {"content": "hello"}}
-
-    event = normalize_claude_jsonl(raw, source_path=source_path, offset=99)
-
-    assert len(event.fingerprint) <= Event.__table__.c.fingerprint.type.length

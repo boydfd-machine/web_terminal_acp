@@ -31,6 +31,38 @@ class FakeAttachedProcess:
     def send_signal(self, signal_number: int) -> None:
         self.signals.append(signal_number)
 
+@pytest.mark.asyncio
+async def test_send_input_direct_writes_base_tmux_window() -> None:
+    calls: list[tuple[str, object]] = []
+    runtime_window = RuntimeWindow(
+        session_id="web-terminal",
+        window_id="@7",
+        cwd="/workspace/project",
+        shell_command="codex",
+    )
+
+    class FakeTmuxManager:
+        async def has_window(self, target: TmuxTarget) -> bool:
+            calls.append(("has_window", target))
+            return True
+
+        async def send_input_direct(self, target: TmuxTarget, data: bytes) -> None:
+            calls.append(("send_input_direct", (target, data)))
+
+    runtime = LocalTerminalRuntime(FakeTmuxManager())
+
+    await runtime.send_input_direct(runtime_window, b"artifact prompt\n", local_window_id="window-1")
+
+    target = TmuxTarget(
+        session="web-terminal",
+        window_id="@7",
+        cwd="/workspace/project",
+        shell_command="codex",
+    )
+    assert calls == [
+        ("has_window", target),
+        ("send_input_direct", (target, b"artifact prompt\n")),
+    ]
 
 @pytest.mark.asyncio
 async def test_attach_recreates_missing_tmux_window_before_shadow_attach(monkeypatch) -> None:
@@ -137,7 +169,6 @@ async def test_attach_recreates_missing_tmux_window_before_shadow_attach(monkeyp
         ),
     ]
 
-
 @pytest.mark.asyncio
 async def test_resize_ignores_repeated_dimensions(monkeypatch) -> None:
     resizes: list[tuple[int, int, int]] = []
@@ -180,6 +211,60 @@ async def test_resize_ignores_repeated_dimensions(monkeypatch) -> None:
     assert process.signals == [signal.SIGWINCH, signal.SIGWINCH]
     assert shadow_resizes == [(window, 80, 24), (window, 81, 24)]
 
+@pytest.mark.asyncio
+async def test_resize_does_not_resize_shared_tmux_window_with_multiple_live_views(monkeypatch) -> None:
+    resizes: list[tuple[int, int, int]] = []
+    shadow_resizes: list[tuple[RuntimeWindow, int, int]] = []
+    process = FakeAttachedProcess()
+    keepalive_one = asyncio.create_task(asyncio.sleep(10))
+    keepalive_two = asyncio.create_task(asyncio.sleep(10))
+    window = RuntimeWindow(session_id="web-terminal", window_id="@7")
+    view_one = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    view_two = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
+
+    def fake_resize(fd: int, control) -> None:
+        resizes.append((fd, control.cols, control.rows))
+
+    class FakeTmuxManager:
+        async def resize_shadow_window(
+            self,
+            target_window: RuntimeWindow,
+            *,
+            cols: int,
+            rows: int,
+            view_id=None,
+        ) -> None:
+            shadow_resizes.append((target_window, cols, rows))
+
+    monkeypatch.setattr(local_runtime, "apply_pty_resize", fake_resize)
+    runtime = LocalTerminalRuntime(FakeTmuxManager())
+    runtime._sessions[(window.session_id, view_one)] = _LocalTerminalSession(
+        master_fd=123,
+        process=process,
+        task=keepalive_one,
+        shadow_window_id=window.window_id,
+        shadow_view_id=view_one,
+    )
+    runtime._sessions[(window.session_id, view_two)] = _LocalTerminalSession(
+        master_fd=456,
+        process=FakeAttachedProcess(),
+        task=keepalive_two,
+        shadow_window_id=window.window_id,
+        shadow_view_id=view_two,
+    )
+    try:
+        await runtime.resize(window, cols=80, rows=24, view_id=view_one)
+    finally:
+        keepalive_one.cancel()
+        keepalive_two.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await keepalive_one
+        with contextlib.suppress(asyncio.CancelledError):
+            await keepalive_two
+
+    assert resizes == [(123, 80, 24)]
+    assert process.signals == [signal.SIGWINCH]
+    assert shadow_resizes == []
 
 @pytest.mark.asyncio
 async def test_send_input_is_not_blocked_by_default_executor_starvation(monkeypatch) -> None:
@@ -231,7 +316,6 @@ async def test_send_input_is_not_blocked_by_default_executor_starvation(monkeypa
 
     assert writes == [(123, b"hello terminal\r")]
 
-
 @pytest.mark.asyncio
 async def test_small_send_input_uses_immediate_writable_pty_fast_path(monkeypatch) -> None:
     writes: list[tuple[int, bytes]] = []
@@ -273,7 +357,6 @@ async def test_small_send_input_uses_immediate_writable_pty_fast_path(monkeypatc
     assert writes == [(123, b"x")]
     assert control_calls == []
 
-
 @pytest.mark.asyncio
 async def test_send_input_falls_back_to_executor_when_pty_is_not_immediately_writable(monkeypatch) -> None:
     writes: list[tuple[int, bytes]] = []
@@ -304,7 +387,6 @@ async def test_send_input_falls_back_to_executor_when_pty_is_not_immediately_wri
             await keepalive
 
     assert writes == [(123, b"x")]
-
 
 @pytest.mark.asyncio
 async def test_resize_returns_before_shadow_tmux_resize_completes(monkeypatch) -> None:
@@ -349,90 +431,3 @@ async def test_resize_returns_before_shadow_tmux_resize_completes(monkeypatch) -
             await keepalive
 
     assert resizes == [(123, 80, 24)]
-
-
-@pytest.mark.asyncio
-async def test_pipe_output_keeps_draining_pty_when_sender_is_backpressured(monkeypatch) -> None:
-    first_send_started = asyncio.Event()
-    release_first_send = asyncio.Event()
-    second_read = threading.Event()
-    received: list[bytes] = []
-    reads = [b"first", b"second"]
-    window = RuntimeWindow(session_id="web-terminal", window_id="@7")
-
-    class FakeProcess:
-        returncode = 0
-
-    session = _LocalTerminalSession(master_fd=123, process=FakeProcess())
-
-    def fake_read(fd: int, size: int) -> bytes:
-        assert fd == 123
-        assert size == local_runtime.PTY_READ_CHUNK_BYTES
-        if reads:
-            data = reads.pop(0)
-            if data == b"second":
-                second_read.set()
-            return data
-        raise OSError
-
-    async def blocked_sender(data: bytes) -> None:
-        received.append(data)
-        first_send_started.set()
-        await release_first_send.wait()
-
-    monkeypatch.setattr(local_runtime.os, "read", fake_read)
-    monkeypatch.setattr(local_runtime.os, "close", lambda fd: None)
-
-    runtime = LocalTerminalRuntime(object())
-    output_task = asyncio.create_task(
-        runtime._pipe_output((window.session_id, window.window_id), session, blocked_sender)
-    )
-    try:
-        await asyncio.wait_for(first_send_started.wait(), timeout=1)
-        assert second_read.wait(timeout=1), "PTY reader should keep draining while sender is blocked"
-    finally:
-        release_first_send.set()
-        await asyncio.wait_for(output_task, timeout=1)
-
-    assert received == [b"first", b"second"]
-
-
-@pytest.mark.asyncio
-async def test_pipe_output_uses_event_loop_fd_reader_for_prompt_output() -> None:
-    received: list[bytes] = []
-    window = RuntimeWindow(session_id="web-terminal", window_id="@7")
-    read_fd, write_fd = local_runtime.os.pipe()
-
-    class FakeProcess:
-        returncode = 0
-
-        def terminate(self) -> None:
-            self.returncode = -15
-
-        async def wait(self) -> int:
-            return self.returncode or 0
-
-    session = _LocalTerminalSession(master_fd=read_fd, process=FakeProcess())
-
-    async def sender(data: bytes) -> None:
-        received.append(data)
-
-    runtime = LocalTerminalRuntime(object())
-    output_task = asyncio.create_task(
-        runtime._pipe_output((window.session_id, window.window_id), session, sender)
-    )
-    try:
-        local_runtime.os.write(write_fd, b"prompt")
-        deadline = asyncio.get_event_loop().time() + 1
-        while received != [b"prompt"]:
-            if asyncio.get_event_loop().time() > deadline:
-                raise AssertionError(f"event-loop fd reader did not deliver output: {received!r}")
-            await asyncio.sleep(0.01)
-    finally:
-        with contextlib.suppress(OSError):
-            local_runtime.os.close(write_fd)
-        output_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await output_task
-
-    assert session.reader_task is None

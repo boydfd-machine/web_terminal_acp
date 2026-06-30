@@ -1,0 +1,400 @@
+.system-config-file-editor-header {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--skin-border-soft);
+  background: var(--skin-panel);
+  padding: 12px 14px;
+}
+
+.system-config-file-editor-header > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.system-config-file-editor-header strong,
+.system-config-file-editor-header small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-config-file-editor-header strong {
+  color: var(--skin-text-strong);
+  font-size: 13px;
+}
+
+.system-config-file-editor-header small {
+  color: var(--skin-muted);
+  font-size: 11px;
+}
+
+.system-config-file-editor-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.system-config-file-editor textarea,
+.system-config-json-preview pre,
+.system-config-mcp-tool pre {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid var(--skin-border-soft);
+  border-radius: 8px;
+  background: var(--skin-code-bg);
+  color: var(--skin-accent-soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.system-config-file-editor textarea {
+  min-height: 0;
+  resize: none;
+  border: 0;
+  border-radius: 0;
+  padding: 16px;
+}
+
+.system-config-file-body {
+  min-height: 0;
+  display: grid;
+  overflow: hidden;
+}
+
+.system-config-file-body textarea {
+  height: 100%;
+  min-height: 0;
+}
+
+.system-config-markdown-preview {
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+  background: var(--skin-code-bg);
+  padding: 16px;
+}
+
+.system-config-markdown-preview .agent-event-markdown {
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.system-config-json-preview pre,
+.system-config-mcp-tool pre {
+  max-height: 320px;
+  overflow: auto;
+  padding: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.system-config-detail-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.system-config-mcp-visual {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  overflow: hidden;
+}
+
+.system-config-mcp-server-summary,
+.system-config-mcp-tools {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: stretch;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.system-config-mcp-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.system-config-mcp-summary-grid div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--skin-border-soft);
+  border-radius: 8px;
+  background: var(--skin-control);
+  padding: 10px;
+}
+
+.system-config-mcp-summary-grid span,
+.system-config-mcp-tool-header span,
+.system-config-mcp-tool-description > span,
+.system-config-mcp-parameters > span {
+  color: var(--skin-muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.system-config-mcp-summary-grid strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--skin-text-strong);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-config-mcp-tool {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  overflow: auto;
+  border: 1px solid var(--skin-border-soft);
+  border-radius: 8px;
+  background: var(--skin-control);
+  padding: 12px;
+}
+
+.system-config-mcp-tool-browser {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: 12px;
+  overflow: hidden;
+}
+
+.system-config-mcp-tool-list {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  overflow: auto;
+}
+
+.system-config-mcp-tool-list button {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  border-color: var(--skin-border-soft);
+  background: var(--skin-panel-soft);
+  color: var(--skin-text);
+  padding: 10px;
+  text-align: left;
+}
+
+.system-config-mcp-tool-list button:hover,
+.system-config-mcp-tool-list button.selected {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent-soft);
+  color: var(--skin-text-strong);
+}
+
+.system-config-mcp-tool-list strong,
+.system-config-mcp-tool-list span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.system-config-mcp-tool-list strong {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.system-config-mcp-tool-list span {
+  color: var(--skin-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.system-config-mcp-tool > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.system-config-mcp-tool strong,
+.system-config-mcp-tool small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.system-config-mcp-tool strong {
+  color: var(--skin-text-strong);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.system-config-mcp-tool small {
+  color: var(--skin-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.system-config-mcp-tool-description p,
+.system-config-mcp-parameters p {
+  margin: 0;
+  color: var(--skin-text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.system-config-mcp-parameter-list {
+  display: grid;
+  gap: 8px;
+}
+
+.system-config-mcp-parameter {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  border: 1px solid var(--skin-border);
+  border-radius: 8px;
+  background: var(--skin-panel-soft);
+  padding: 10px;
+}
+
+.system-config-mcp-parameter div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.system-config-mcp-parameter code {
+  border: 1px solid var(--skin-border);
+  border-radius: 999px;
+  background: var(--skin-code-bg);
+  color: var(--skin-accent);
+  padding: 2px 7px;
+  font-size: 11px;
+}
+
+.system-config-mcp-parameter p {
+  grid-column: 1 / -1;
+  color: var(--skin-muted);
+}
+
+@media (max-width: 760px) {
+  .settings-modal-system-config {
+    height: calc(100dvh - 24px);
+    max-height: calc(100dvh - 24px);
+  }
+
+  .system-config-page,
+  .system-model-page {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+
+  .system-config-page {
+    grid-template-rows: minmax(280px, 0.45fr) minmax(360px, 0.55fr);
+  }
+
+  .system-model-page {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .system-model-workbench {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(240px, 0.4fr) minmax(360px, 0.6fr);
+    overflow: auto;
+  }
+
+  .system-config-sidebar,
+  .system-model-list {
+    border-right: 0;
+    border-bottom: 1px solid var(--skin-border-soft);
+  }
+
+  .system-config-detail-header,
+  .system-config-detail-meta {
+    justify-content: flex-start;
+  }
+
+  .system-config-detail-grid,
+  .system-config-mcp-detail-grid {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+
+  .artifact-plugin-workbench {
+    min-height: 560px;
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(320px, 1fr);
+  }
+
+  .artifact-plugin-preview-modal {
+    padding: max(10px, env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-right, 0px))
+      max(10px, env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
+  }
+
+  .artifact-plugin-preview-modal-panel {
+    width: 100%;
+    height: calc(100dvh - 20px);
+  }
+
+  .artifact-plugin-preview-modal-header {
+    align-items: stretch;
+  }
+
+  .system-config-skill-tree > [role="tree"] {
+    height: 260px !important;
+  }
+
+  .system-config-mcp-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .system-config-item {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .system-model-form,
+  .system-model-config-fields,
+  .agent-cli-settings-grid,
+  .agent-model-picker,
+  .agent-model-split-grid,
+  .agent-model-effort-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .system-model-config-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .system-model-config-grid > span {
+    display: none;
+  }
+
+  .system-config-item-actions {
+    justify-content: flex-start;
+  }
+}

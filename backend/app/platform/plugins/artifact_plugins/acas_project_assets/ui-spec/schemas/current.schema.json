@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acas.local/artifact-definitions/ui-spec/current.schema.json",
+  "title": "UI Spec Current",
+  "type": "object",
+  "required": ["kind", "layer", "visualSystem", "uiArchitecture", "pageSpecs", "componentSpecs", "interactionSpecs", "traceabilityMatrix", "decisionTrace"],
+  "properties": {
+    "kind": { "const": "UISpecCurrent" },
+    "layer": { "const": "Current" },
+    "explorationArtifactRef": { "type": "string" },
+    "sourceRefs": { "type": "array" },
+    "visualSystem": { "$ref": "#/$defs/visualSystem" },
+    "uiArchitecture": { "$ref": "#/$defs/uiArchitecture" },
+    "pageSpecs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/pageSpec" } },
+    "componentSpecs": { "type": "array", "items": { "$ref": "#/$defs/componentSpec" } },
+    "interactionSpecs": { "type": "array", "items": { "$ref": "#/$defs/interactionSpec" } },
+    "stateSpecs": { "type": "array", "items": { "$ref": "#/$defs/stateSpec" } },
+    "traceabilityMatrix": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/traceabilityEntry" } },
+    "decisionTrace": {
+      "$ref": "https://acas.local/artifact-definitions/_shared/review-decision/schemas/decision-trace.schema.json#/$defs/decisionTrace"
+    },
+    "openRisks": { "type": "array" },
+    "assumptions": { "type": "array" },
+    "evidenceRefs": { "type": "array" }
+  },
+  "$defs": {
+    "relativePath": {
+      "type": "string",
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*%)(?!.*(^|/)\\.\\.(/|$)).+$"
+    },
+    "visualSystem": {
+      "type": "object",
+      "required": ["styleId", "title", "sourceType", "tokenSummary"],
+      "properties": {
+        "styleId": { "type": "string" },
+        "title": {},
+        "sourceType": { "enum": ["reviewed_design_md", "reviewed_design_system", "selected_exploration_style"] },
+        "designMdRef": { "$ref": "#/$defs/relativePath" },
+        "designSystemRef": { "$ref": "#/$defs/relativePath" },
+        "tokenSummary": { "type": "object" },
+        "applicationRules": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "uiArchitecture": {
+      "type": "object",
+      "required": ["workspaces", "navigationRules"],
+      "properties": {
+        "workspaces": { "type": "array", "items": { "$ref": "#/$defs/workspace" } },
+        "navigationRules": { "type": "array" },
+        "anchoredArtifacts": { "type": "array" },
+        "crossWorkspaceInteractions": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "workspace": {
+      "type": "object",
+      "required": ["workspaceId", "name", "primaryUser", "anchoredArtifacts"],
+      "properties": {
+        "workspaceId": { "type": "string" },
+        "name": {},
+        "primaryUser": {},
+        "anchoredArtifacts": { "type": "array" },
+        "capabilityRefs": { "type": "array" },
+        "defaultPageId": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "pageSpec": {
+      "type": "object",
+      "required": ["pageId", "workspaceId", "route", "pageType", "purpose", "sourceRefs", "dataSources", "components", "states", "accessibility"],
+      "properties": {
+        "pageId": { "type": "string" },
+        "workspaceId": { "type": "string" },
+        "title": {},
+        "route": { "type": "string" },
+        "sourceFile": { "$ref": "#/$defs/relativePath" },
+        "pageType": { "type": "string" },
+        "purpose": {},
+        "sourceRefs": { "type": "array" },
+        "dataSources": { "type": "array" },
+        "layout": { "type": "object" },
+        "previewFile": { "$ref": "#/$defs/relativePath" },
+        "components": { "type": "array" },
+        "states": { "type": "array" },
+        "interactions": { "type": "array" },
+        "accessibility": { "type": "array" },
+        "evidenceRefs": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "componentSpec": {
+      "type": "object",
+      "required": ["componentId", "name", "componentType", "usage", "states", "accessibility"],
+      "properties": {
+        "componentId": { "type": "string" },
+        "name": {},
+        "componentType": { "type": "string" },
+        "usage": {},
+        "variants": { "type": "array" },
+        "states": { "type": "array" },
+        "tokenRefs": { "type": "array" },
+        "keyboardBehavior": { "type": "array" },
+        "accessibility": { "type": "array" },
+        "sourceRefs": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "interactionSpec": {
+      "type": "object",
+      "required": ["interactionId", "trigger", "target", "successFeedback", "failureRecovery"],
+      "properties": {
+        "interactionId": { "type": "string" },
+        "trigger": {},
+        "target": {},
+        "guard": {},
+        "mutation": {},
+        "successFeedback": {},
+        "failureRecovery": {},
+        "sourceFlowRefs": { "type": "array" },
+        "evidenceRefs": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "stateSpec": {
+      "type": "object",
+      "required": ["stateId", "stateType", "surface", "behavior"],
+      "properties": {
+        "stateId": { "type": "string" },
+        "stateType": { "type": "string" },
+        "surface": {},
+        "behavior": {},
+        "recovery": {},
+        "accessibility": { "type": "array" },
+        "sourceRefs": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "traceabilityEntry": {
+      "type": "object",
+      "required": ["uiObjectId", "type", "upstream", "downstream", "rationale"],
+      "properties": {
+        "uiObjectId": { "type": "string" },
+        "type": { "enum": ["workspace", "page", "component", "interaction", "state", "pattern"] },
+        "upstream": { "type": "object" },
+        "downstream": { "type": "object" },
+        "rationale": {},
+        "risks": { "type": "array" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

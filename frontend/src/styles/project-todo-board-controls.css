@@ -1,0 +1,380 @@
+.project-todo-board-shell,
+.project-todo-board-groups {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.project-todo-board-shell {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.project-todo-board-groups {
+  overflow: hidden;
+}
+
+.project-todo-board-loading {
+  min-width: 0;
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+}
+
+.project-todo-board-loading-spinner {
+  width: 26px;
+  height: 26px;
+  border: 3px solid rgb(148 163 184 / 28%);
+  border-top-color: var(--skin-accent);
+  border-radius: 50%;
+  animation: terminal-create-progress-spin 0.8s linear infinite;
+}
+
+.project-todo-board-toolbar {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--skin-panel-soft);
+  border-radius: 8px;
+  background: var(--skin-panel-soft);
+  padding: 8px;
+}
+
+.project-todo-board-filters,
+.project-todo-board-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.project-todo-board-filters label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--skin-muted);
+  font-size: 11px;
+}
+
+.project-todo-board-filters select,
+.project-todo-board-search input {
+  width: auto;
+  max-width: 160px;
+  min-height: 30px;
+  border-color: var(--skin-panel-soft);
+  background: var(--skin-panel-soft);
+  color: var(--skin-text);
+  padding: 4px 24px 4px 8px;
+  font-size: 12px;
+}
+
+.project-todo-board-search input {
+  width: clamp(160px, 18vw, 240px);
+  max-width: 100%;
+  padding-right: 8px;
+}
+
+.project-todo-board-child-filter {
+  max-width: min(280px, 100%);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.project-todo-board-child-filter span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-todo-board-child-filter .ui-icon {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+}
+
+.project-todo-board-actions button,
+.project-todo-board-filters button {
+  min-height: 30px;
+  border-color: var(--skin-panel-soft);
+  background: var(--skin-panel-soft);
+  color: var(--skin-muted);
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+.project-todo-board-new-button {
+  border-color: var(--skin-accent-strong) !important;
+  background: var(--skin-accent-strong) !important;
+  color: var(--skin-text-strong) !important;
+}
+
+.project-todo-board-settings {
+  position: relative;
+}
+
+.project-todo-board-settings-popover {
+  position: absolute;
+  z-index: 4;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 168px;
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--skin-panel-soft);
+  border-radius: 8px;
+  background: var(--skin-panel-soft);
+  padding: 8px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 34%);
+}
+
+.project-todo-board-settings-popover label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--skin-muted);
+  font-size: 12px;
+}
+
+.project-todo-board-group {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  border-top: 1px solid var(--skin-panel-soft);
+  padding-top: 10px;
+}
+
+.project-todo-board-group-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-todo-board-group-toggle {
+  max-width: 100%;
+  display: inline-grid;
+  grid-template-columns: 18px minmax(0, auto) auto;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--skin-text);
+  padding: 0;
+  text-align: left;
+}
+
+.project-todo-board-group-toggle svg,
+.project-todo-tree-node-header svg {
+  width: 16px;
+  height: 16px;
+  color: var(--skin-muted);
+  stroke-width: 2;
+}
+
+.project-todo-board-group-toggle strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.project-todo-board-group-toggle > span {
+  min-width: 26px;
+  border: 1px solid var(--skin-panel-soft);
+  border-radius: 999px;
+  background: var(--skin-panel-soft);
+  color: var(--skin-muted);
+  padding: 2px 7px;
+  text-align: center;
+  font-size: 11px;
+}
+
+.project-todo-board-group-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--skin-muted);
+  font-size: 11px;
+}
+
+.project-todo-board-progress {
+  width: 104px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--skin-panel-soft);
+}
+
+.project-todo-board-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--skin-success);
+}
+
+.project-todo-column > header {
+  flex-wrap: wrap;
+}
+
+.project-todo-column-cards {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  padding-right: 2px;
+}
+
+.project-todo-column-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  color: var(--skin-muted);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+  user-select: none;
+}
+
+.project-todo-column-view-toggle input {
+  appearance: none;
+  position: relative;
+  width: 34px;
+  height: 18px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--skin-panel-soft);
+  cursor: pointer;
+  flex: 0 0 auto;
+  margin: 0;
+  transition: background 120ms ease;
+}
+
+.project-todo-column-view-toggle input::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--skin-text-strong);
+  transition: transform 120ms ease;
+}
+
+.project-todo-column-view-toggle input:checked {
+  background: var(--skin-accent-strong);
+}
+
+.project-todo-column-view-toggle input:checked::after {
+  transform: translateX(16px);
+}
+
+.project-todo-column-view-toggle input:focus-visible {
+  outline: 2px solid var(--skin-accent);
+  outline-offset: 2px;
+}
+
+.project-todo-column-view-toggle-label {
+  min-width: 24px;
+  color: var(--skin-muted);
+  text-align: center;
+}
+
+.project-todo-column-view-toggle-label.active {
+  color: var(--skin-text-strong);
+}
+
+.project-todo-card-path,
+.project-todo-card-main strong small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-todo-card-path {
+  color: var(--skin-accent);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 10.5px;
+}
+
+.project-todo-tree-list,
+.project-todo-tree-node {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.project-todo-tree-node-header {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+  width: calc(100% - (var(--tree-depth, 0) * 14px));
+  margin-left: calc(var(--tree-depth, 0) * 14px);
+  border: 0;
+  border-radius: 6px;
+  background: var(--skin-panel-soft);
+  color: var(--skin-muted);
+  padding: 5px 6px;
+  text-align: left;
+}
+
+.project-todo-tree-node-header svg.muted {
+  opacity: 0.35;
+}
+
+.project-todo-tree-node-header span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.project-todo-tree-node-header strong {
+  color: var(--skin-muted);
+  font-size: 10px;
+}
+
+.project-todo-card.tree-card {
+  width: calc(100% - (var(--tree-depth, 0) * 14px));
+  margin-left: calc(var(--tree-depth, 0) * 14px);
+}
+
+.project-todo-column-empty,
+.project-todo-board-empty {
+  margin: 0;
+  color: var(--skin-muted);
+  font-size: 12px;
+}
+
+.project-todo-card-tags .git-merge-status-badge,
+.project-todo-list-row .git-merge-status-badge {
+  border-color: var(--skin-danger);
+  background: rgb(127 29 29 / 28%);
+  color: var(--skin-danger-text);
+}
+
+.project-todo-card-tags .git-merge-status-badge.unmerged,
+.project-todo-list-row .git-merge-status-badge.unmerged {
+  border-color: var(--skin-warning-text);
+  background: rgb(120 53 15 / 26%);
+  color: var(--skin-warning-text);
+}

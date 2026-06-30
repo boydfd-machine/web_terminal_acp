@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acas.local/artifact-definitions/_shared/review-decision/schemas/decision-review.schema.json",
+  "title": "ACAS Decision Review",
+  "type": "object",
+  "required": ["kind", "layer", "decisionId", "artifactId", "fromLayer", "toLayer", "status", "optionDecision", "questions"],
+  "properties": {
+    "kind": { "type": "string", "pattern": "Decision$" },
+    "layer": { "const": "Decision" },
+    "decisionId": { "type": "string", "minLength": 1 },
+    "artifactId": { "type": "string", "minLength": 1 },
+    "fromLayer": { "type": "string", "minLength": 1 },
+    "toLayer": { "type": "string", "minLength": 1 },
+    "status": { "type": "string", "minLength": 1 },
+    "reviewer": { "type": "string" },
+    "reviewedAt": { "type": "string" },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "recommendedOptionId": { "type": "string" },
+        "questionCount": { "type": "integer", "minimum": 0 },
+        "defaultableQuestions": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "optionDecision": {
+      "type": "object",
+      "required": ["selectedOptionId"],
+      "properties": {
+        "selectedOptionId": { "type": "string", "minLength": 1 },
+        "agentRecommendedOptionId": { "type": "string" },
+        "userRationale": {},
+        "rationale": {},
+        "userComment": {}
+      },
+      "additionalProperties": true
+    },
+    "questions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/answeredQuestion" }
+    },
+    "userEdits": { "type": "array" },
+    "applyPreview": {
+      "type": "object",
+      "properties": {
+        "writes": { "type": "array" },
+        "currentSource": {},
+        "fieldChanges": { "type": "array" },
+        "remainingOpenRisks": { "type": "array" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "answeredQuestion": {
+      "allOf": [
+        {
+          "$ref": "https://acas.local/artifact-definitions/_shared/review-decision/schemas/clarification-question.schema.json#/$defs/clarificationQuestion"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "answer": {
+              "type": "object",
+              "properties": {
+                "selectedOptionId": { "type": "string" },
+                "selectedOptionIds": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "value": {},
+                "rationale": {},
+                "userComment": {}
+              },
+              "additionalProperties": true
+            },
+            "resultingChange": {}
+          },
+          "additionalProperties": true
+        }
+      ]
+    }
+  },
+  "additionalProperties": true
+}

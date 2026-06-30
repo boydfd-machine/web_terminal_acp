@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acas.local/artifact-definitions/user-journey/exploration.schema.json",
+  "title": "User Journey Exploration",
+  "type": "object",
+  "required": ["kind", "layer", "inferredBoundary", "journeyOptions", "clarificationQuestions"],
+  "properties": {
+    "kind": { "const": "UserJourneyExploration" },
+    "layer": { "const": "Exploration" },
+    "rawArtifactRef": { "type": "string" },
+    "competitorResearchRef": { "type": "string" },
+    "inferredBoundary": {
+      "type": "object",
+      "properties": {
+        "actor": {},
+        "scenario": {},
+        "trigger": {},
+        "desiredOutcome": {},
+        "confidence": { "enum": ["low", "medium", "high"] },
+        "unresolvedParts": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    "journeyOptions": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 4,
+      "items": { "$ref": "#/$defs/journeyOption" }
+    },
+    "clarificationQuestions": {
+      "type": "array",
+      "items": {
+        "$ref": "https://acas.local/artifact-definitions/_shared/review-decision/schemas/clarification-question.schema.json#/$defs/clarificationQuestion"
+      }
+    },
+    "recommendedOptionId": { "type": "string" },
+    "recommendationRationale": {},
+    "competitiveContext": { "type": "object" },
+    "openRisks": { "type": "array" }
+  },
+  "$defs": {
+    "journeyOption": {
+      "type": "object",
+      "required": ["optionId", "title", "asIs", "toBe"],
+      "properties": {
+        "optionId": { "type": "string" },
+        "title": {},
+        "positioning": {},
+        "rationale": {},
+        "asIs": { "$ref": "#/$defs/journeySide" },
+        "toBe": { "$ref": "#/$defs/journeySide" },
+        "changeSummary": {
+          "type": "object",
+          "properties": {
+            "unchanged": { "type": "array" },
+            "modified": { "type": "array" },
+            "added": { "type": "array" },
+            "removed": { "type": "array" }
+          },
+          "additionalProperties": true
+        },
+        "competitiveInfluences": { "type": "array" },
+        "assumptions": { "type": "array" },
+        "risks": { "type": "array" },
+        "evidenceRefs": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "journeySide": {
+      "type": "object",
+      "required": ["phases"],
+      "properties": {
+        "phases": { "type": "array", "items": { "$ref": "#/$defs/phase" } }
+      },
+      "additionalProperties": true
+    },
+    "phase": {
+      "type": "object",
+      "required": ["phaseId", "userGoal"],
+      "properties": {
+        "phaseId": { "type": "string" },
+        "name": {},
+        "userGoal": {},
+        "actions": { "type": "array" },
+        "thoughts": { "type": "array" },
+        "emotion": {},
+        "touchpoints": { "type": "array" },
+        "painPoints": { "type": "array" },
+        "branches": { "type": "array" },
+        "opportunities": { "type": "array" },
+        "systemResponsibilities": { "type": "array" },
+        "metrics": { "type": "array" },
+        "evidenceRefs": { "type": "array" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

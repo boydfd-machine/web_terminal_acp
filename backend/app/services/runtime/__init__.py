@@ -1,1 +1,1 @@
-"""Runtime services for client-agent connections."""
+"""Compatibility package for terminal runtime modules."""

@@ -17,7 +17,8 @@ def test_build_client_update_package_contains_checksum_and_updater_file():
 
     assert isinstance(files, dict)
     assert "client_agent/agent_commands.py" in files
-    assert "services/agent_config.py" in files
+    assert "services/agent_config/__init__.py" in files
+    assert "contexts/agent_profiles/infrastructure/agent_config_store/config_service.py" in files
     assert "client_agent/updater.py" in files
     assert package["checksum"] == package_checksum(files, package["requirements"])
 
@@ -35,7 +36,7 @@ def test_validate_update_payload_rejects_checksum_mismatch():
 
 
 @pytest.mark.asyncio
-async def test_start_self_update_stages_files_and_launches_tmux(tmp_path):
+async def test_start_self_update_stages_files_and_launches_update_session(tmp_path):
     calls: list[list[str]] = []
 
     async def fake_runner(args: list[str]) -> str:
@@ -65,6 +66,10 @@ async def test_start_self_update_stages_files_and_launches_tmux(tmp_path):
     assert update_script.exists()
     update_script_text = update_script.read_text(encoding="utf-8")
     assert "pgrep -f" in update_script_text
+    assert "systemctl --user enable --now web_terminal_acp_client.service" in update_script_text
+    assert "launchctl bootstrap gui/$(id -u)" in update_script_text
+    assert "<key>KeepAlive</key>" in update_script_text
+    assert "tmux new-session -d -s web_terminal_acp_client" in update_script_text
     assert "/update/complete" in update_script_text
     assert calls == [
         [

@@ -1,0 +1,196 @@
+.artifact-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.artifact-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.artifact-toolbar-model {
+  flex: 1 1 100%;
+}
+
+.artifact-toolbar button span {
+  color: var(--skin-accent);
+  font-size: 11px;
+}
+
+.artifact-scope-tabs,
+.artifact-domain-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.artifact-scope-tabs button,
+.artifact-domain-tabs button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--skin-border);
+  background: var(--skin-panel-raised);
+  color: var(--skin-text);
+  padding: 8px 10px;
+}
+
+.artifact-scope-tabs button.selected,
+.artifact-domain-tabs button.selected {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent-soft);
+  color: var(--skin-text-strong);
+}
+
+.artifact-domain-tabs span {
+  min-width: 20px;
+  border-radius: 999px;
+  background: var(--skin-control-hover);
+  color: var(--skin-text);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.artifact-browser {
+  display: grid;
+  gap: 10px;
+}
+
+.artifact-list {
+  display: grid;
+  gap: 6px;
+}
+
+.artifact-list button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  align-items: center;
+  width: 100%;
+  border: 1px solid var(--skin-border);
+  background: var(--skin-code-bg);
+  color: var(--skin-text-strong);
+  text-align: left;
+  padding: 9px 10px;
+}
+
+.artifact-list button.selected {
+  border-color: var(--skin-accent);
+  background: var(--skin-accent-soft);
+}
+
+.artifact-list strong,
+.artifact-list span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-list span {
+  color: var(--skin-muted);
+  font-size: 12px;
+}
+
+.artifact-status {
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: var(--skin-border);
+  color: var(--skin-text-strong);
+  font-size: 11px;
+  font-weight: 700;
+  grid-row: 1 / span 2;
+  grid-column: 2;
+}
+
+.artifact-status.succeeded {
+  background: var(--skin-success-soft);
+  color: var(--skin-success-text);
+}
+
+.artifact-status.failed {
+  background: var(--skin-danger);
+  color: var(--skin-danger-text);
+}
+
+.artifact-status.running,
+.artifact-status.pending {
+  background: var(--skin-warning-soft);
+  color: var(--skin-warning-text);
+}
+
+.artifact-preview {
+  min-height: 360px;
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--skin-border);
+  border-radius: 8px;
+  background: var(--skin-code-bg);
+}
+
+.artifact-preview.page-review {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.artifact-page-review-cards {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 10px;
+  border-bottom: 1px solid var(--skin-border);
+  background: var(--skin-panel-raised);
+}
+
+.artifact-page-review-card {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--skin-border);
+  border-radius: 8px;
+  background: var(--skin-code-bg);
+}
+
+.artifact-page-review-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.artifact-page-review-card-meta span {
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: var(--skin-control-hover);
+  color: var(--skin-text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.artifact-page-review-card strong,
+.artifact-page-review-card p {
+  margin: 0;
+}
+
+.artifact-page-review-card p {
+  color: var(--skin-muted);
+}
+
+.artifact-preview iframe,
+.artifact-fullscreen-panel iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--skin-text-strong);
+}
+
+.artifact-preview > p {
+  place-self: center;
+  margin: 0;
+  padding: 16px;
+  text-align: center;
+}

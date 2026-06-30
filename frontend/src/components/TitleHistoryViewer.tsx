@@ -1,4 +1,5 @@
 import type { WindowTitleHistory, WindowTitleHistoryItem } from "../types";
+import { useI18n, type TranslateFn } from "../i18n";
 
 type Props = {
   history: WindowTitleHistory | null;
@@ -14,41 +15,43 @@ function formatDateTime(value: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
-function sourceLabel(source: string): string {
+function sourceLabel(source: string, t: TranslateFn): string {
   switch (source) {
     case "initial":
-      return "Initial";
+      return t("history.title.source.initial");
     case "baseline":
-      return "Baseline";
+      return t("history.title.source.baseline");
     case "summary":
-      return "Summary";
+      return t("history.title.source.summary");
     case "manual":
-      return "Manual";
+      return t("history.title.source.manual");
     default:
       return source;
   }
 }
 
-function pageLabel(history: WindowTitleHistory): string {
+function pageLabel(history: WindowTitleHistory, t: TranslateFn): string {
   if (history.total === 0) {
-    return "0 title updates";
+    return t("history.title.zero");
   }
   const start = history.offset + 1;
   const end = history.offset + history.items.length;
-  return `${start}-${end} of ${history.total}`;
+  return t("history.title.range", { start, end, total: history.total });
 }
 
 function TitleHistoryRow({ item }: { item: WindowTitleHistoryItem }) {
+  const { t } = useI18n();
+
   return (
     <article className="title-history-item">
       <header>
         <div>
           <strong title={item.title}>{item.title}</strong>
-          <span>{sourceLabel(item.source)}</span>
+          <span>{sourceLabel(item.source, t)}</span>
         </div>
         <time dateTime={item.created_at}>{formatDateTime(item.created_at)}</time>
       </header>
-      <p>{item.summary ?? "No summary at this point."}</p>
+      <p>{item.summary ?? t("history.title.noSummary")}</p>
     </article>
   );
 }
@@ -61,34 +64,36 @@ export function TitleHistoryViewer({
   onPreviousPage,
   onNextPage
 }: Props) {
+  const { t } = useI18n();
+
   if (isLoading) {
-    return <p className="muted">Loading title history...</p>;
+    return <p className="muted">{t("history.title.loading")}</p>;
   }
   if (isError) {
-    return <p className="error" role="alert">Failed to load title history.</p>;
+    return <p className="error" role="alert">{t("history.title.failed")}</p>;
   }
   if (history === null || history.items.length === 0) {
-    return <p className="muted">No title history captured yet.</p>;
+    return <p className="muted">{t("history.title.empty")}</p>;
   }
 
   return (
     <div className="title-history-viewer">
       <div className="agent-record-pagination">
-        <span>{pageLabel(history)}{isFetching ? " · refreshing" : ""}</span>
+        <span>{pageLabel(history, t)}{isFetching ? ` · ${t("history.refreshing")}` : ""}</span>
         <div>
           <button
             type="button"
             disabled={history.offset === 0 || isFetching}
             onClick={onPreviousPage}
           >
-            Previous
+            {t("history.previous")}
           </button>
           <button
             type="button"
             disabled={!history.has_more || isFetching}
             onClick={onNextPage}
           >
-            Next
+            {t("history.next")}
           </button>
         </div>
       </div>

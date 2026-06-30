@@ -1,0 +1,789 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acas.local/artifact-definitions/domain-design/current.schema.json",
+  "title": "Domain Design Current",
+  "type": "object",
+  "required": [
+    "kind",
+    "layer",
+    "explorationArtifactRef",
+    "domainModel",
+    "decisionTrace",
+    "qualityGate"
+  ],
+  "properties": {
+    "kind": {
+      "const": "DomainDesignCurrent"
+    },
+    "layer": {
+      "const": "Current"
+    },
+    "explorationArtifactRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "domainModel": {
+      "$ref": "#/$defs/domainModel"
+    },
+    "decisionTrace": {
+      "$ref": "https://acas.local/artifact-definitions/_shared/review-decision/schemas/decision-trace.schema.json#/$defs/decisionTrace"
+    },
+    "qualityGate": {
+      "$ref": "#/$defs/qualityGate"
+    },
+    "openRisks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/qualityFinding"
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/text"
+      }
+    },
+    "evidenceRefs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "$defs": {
+    "localizedText": {
+      "type": "object",
+      "properties": {
+        "en": {
+          "type": "string"
+        },
+        "zh": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "text": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/localizedText"
+        }
+      ]
+    },
+    "scope": {
+      "type": "object",
+      "required": [
+        "application",
+        "scenario",
+        "actor",
+        "outcome"
+      ],
+      "properties": {
+        "application": {
+          "$ref": "#/$defs/text"
+        },
+        "scenario": {
+          "$ref": "#/$defs/text"
+        },
+        "actor": {
+          "$ref": "#/$defs/text"
+        },
+        "outcome": {
+          "$ref": "#/$defs/text"
+        }
+      },
+      "additionalProperties": true
+    },
+    "domainModel": {
+      "type": "object",
+      "required": [
+        "scope",
+        "boundedContexts",
+        "aggregates",
+        "commands",
+        "domainEvents",
+        "contextRelationships",
+        "capabilityMappings"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "boundedContexts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/boundedContext"
+          }
+        },
+        "aggregates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/aggregate"
+          }
+        },
+        "entities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/domainObject"
+          }
+        },
+        "valueObjects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/domainObject"
+          }
+        },
+        "objectRelationships": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/objectRelationship"
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/command"
+          }
+        },
+        "domainEvents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/domainEvent"
+          }
+        },
+        "contextRelationships": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/contextRelationship"
+          }
+        },
+        "aggregateRelationships": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/aggregateRelationship"
+          }
+        },
+        "capabilityMappings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/capabilityMapping"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "boundedContext": {
+      "type": "object",
+      "required": [
+        "contextId",
+        "name",
+        "mission",
+        "ownedObjects",
+        "boundaries"
+      ],
+      "properties": {
+        "contextId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "$ref": "#/$defs/text"
+        },
+        "mission": {
+          "$ref": "#/$defs/text"
+        },
+        "ownedObjects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "classification": {
+          "type": "string"
+        },
+        "modelRole": {
+          "type": "string"
+        },
+        "boundaries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/text"
+          }
+        },
+        "readModels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ubiquitousLanguage": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/term"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "term": {
+      "type": "object",
+      "required": [
+        "term",
+        "meaning"
+      ],
+      "properties": {
+        "term": {
+          "$ref": "#/$defs/text"
+        },
+        "meaning": {
+          "$ref": "#/$defs/text"
+        }
+      },
+      "additionalProperties": true
+    },
+    "aggregate": {
+      "type": "object",
+      "required": [
+        "aggregateId",
+        "contextId",
+        "aggregateRoot",
+        "lifecycle",
+        "consistencyBoundary",
+        "invariants"
+      ],
+      "properties": {
+        "aggregateId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "aggregateRoot": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "$ref": "#/$defs/text"
+        },
+        "domainObjects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/domainObject"
+          }
+        },
+        "invariants": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/invariant"
+          }
+        },
+        "lifecycle": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "consistencyBoundary": {
+          "$ref": "#/$defs/text"
+        },
+        "attributes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "behaviors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sourceRefs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "domainObject": {
+      "type": "object",
+      "required": [
+        "objectId",
+        "name",
+        "objectType",
+        "description"
+      ],
+      "properties": {
+        "objectId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "$ref": "#/$defs/text"
+        },
+        "objectType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "$ref": "#/$defs/text"
+        },
+        "aggregateId": {
+          "type": "string"
+        },
+        "contextId": {
+          "type": "string"
+        },
+        "identityPolicy": {
+          "$ref": "#/$defs/text"
+        },
+        "lifecycleOwnership": {
+          "$ref": "#/$defs/text"
+        },
+        "equalityBy": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "attributes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "behaviors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "aggregateRelationship": {
+          "$ref": "#/$defs/objectRelationship"
+        }
+      },
+      "additionalProperties": true
+    },
+    "objectRelationship": {
+      "type": "object",
+      "required": [
+        "aggregateId",
+        "relationshipType",
+        "cardinality",
+        "consistency"
+      ],
+      "properties": {
+        "relationshipId": {
+          "type": "string"
+        },
+        "contextId": {
+          "type": "string"
+        },
+        "aggregateId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "aggregateRoot": {
+          "type": "string"
+        },
+        "objectId": {
+          "type": "string"
+        },
+        "objectType": {
+          "type": "string"
+        },
+        "relationshipType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cardinality": {
+          "type": "string",
+          "minLength": 1
+        },
+        "consistency": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rationale": {
+          "$ref": "#/$defs/text"
+        }
+      },
+      "additionalProperties": true
+    },
+    "invariant": {
+      "type": "object",
+      "required": [
+        "invariantId",
+        "statement"
+      ],
+      "properties": {
+        "invariantId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "statement": {
+          "$ref": "#/$defs/text"
+        },
+        "severity": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "command": {
+      "type": "object",
+      "required": [
+        "commandId",
+        "name",
+        "actor",
+        "targetAggregateId",
+        "preconditions",
+        "businessRules",
+        "triggeredEventIds"
+      ],
+      "properties": {
+        "commandId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "actor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "targetAggregateId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "triggeredEventIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "contextId": {
+          "type": "string"
+        },
+        "intent": {
+          "$ref": "#/$defs/text"
+        },
+        "preconditions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/text"
+          }
+        },
+        "businessRules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/text"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "domainEvent": {
+      "type": "object",
+      "required": [
+        "eventId",
+        "name",
+        "owningContextId",
+        "producerAggregateId"
+      ],
+      "properties": {
+        "eventId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owningContextId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "producerAggregateId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "meaning": {
+          "$ref": "#/$defs/text"
+        },
+        "consumers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "consumedByAggregateIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "payloadSummary": {
+          "$ref": "#/$defs/text"
+        },
+        "sourceRefs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "attributes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "behaviors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "contextRelationship": {
+      "type": "object",
+      "required": [
+        "relationshipId",
+        "fromContextId",
+        "toContextId",
+        "relationshipType"
+      ],
+      "properties": {
+        "relationshipId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fromContextId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "toContextId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "relationshipType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "$ref": "#/$defs/text"
+        },
+        "candidateContractRefs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "eventRefs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "aggregateRelationship": {
+      "type": "object",
+      "required": [
+        "relationshipId",
+        "sourceAggregateId",
+        "sourceContextId",
+        "targetContextId",
+        "relationshipType",
+        "relationshipScope",
+        "consistency"
+      ],
+      "properties": {
+        "relationshipId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceAggregateId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceAggregateRoot": {
+          "type": "string"
+        },
+        "sourceContextId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "targetAggregateId": {
+          "type": "string"
+        },
+        "targetAggregateRoot": {
+          "type": "string"
+        },
+        "targetReadModel": {
+          "type": "string"
+        },
+        "targetContextId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "relationshipType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "relationshipScope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "consistency": {
+          "type": "string",
+          "minLength": 1
+        },
+        "viaEvents": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "eventMediations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "description": {
+          "$ref": "#/$defs/text"
+        }
+      },
+      "additionalProperties": true
+    },
+    "capabilityMapping": {
+      "type": "object",
+      "required": [
+        "capabilityRef",
+        "contextId",
+        "mappingType",
+        "rationale",
+        "sourceRefs"
+      ],
+      "properties": {
+        "capabilityRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mappingType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rationale": {
+          "$ref": "#/$defs/text"
+        },
+        "sourceRefs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "capabilityLevel": {
+          "type": "string"
+        },
+        "realizationRole": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "qualityGate": {
+      "type": "object",
+      "required": [
+        "status",
+        "checks"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "passed",
+            "warning",
+            "blocked"
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/qualityCheck"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "qualityCheck": {
+      "type": "object",
+      "required": [
+        "checkId",
+        "status",
+        "message"
+      ],
+      "properties": {
+        "checkId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "warning",
+            "blocked"
+          ]
+        },
+        "message": {
+          "$ref": "#/$defs/text"
+        }
+      },
+      "additionalProperties": true
+    },
+    "qualityFinding": {
+      "type": "object",
+      "required": [
+        "findingId",
+        "summary"
+      ],
+      "properties": {
+        "findingId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "$ref": "#/$defs/text"
+        },
+        "severity": {
+          "type": "string"
+        },
+        "impact": {
+          "$ref": "#/$defs/text"
+        },
+        "mitigation": {
+          "$ref": "#/$defs/text"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

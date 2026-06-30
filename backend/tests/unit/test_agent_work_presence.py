@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.client_agent.agent_work_presence import (
@@ -81,7 +82,9 @@ def test_work_status_from_activity_treats_recent_working_activity_as_working() -
 
 
 @pytest.mark.asyncio
-async def test_touch_agent_work_presence_refreshes_bucketed_event(db_session) -> None:
+async def test_touch_agent_work_presence_refreshes_window_projection_without_event_rows(
+    db_session,
+) -> None:
     client_id = uuid4()
     window_id = uuid4()
     window = VirtualWindow(id=window_id, client_id=client_id, title="Terminal", status=WindowStatus.active)
@@ -109,8 +112,11 @@ async def test_touch_agent_work_presence_refreshes_bucketed_event(db_session) ->
     )
 
     assert first.id == second.id
-    assert second.created_at == second_at
+    assert second.id == window_id
+    assert window.agent_presence_latest_at == second_at
     assert window.agent_activity_latest_at is None
+    rows = (await db_session.execute(select(Event))).scalars().all()
+    assert rows == []
 
 
 @pytest.mark.asyncio

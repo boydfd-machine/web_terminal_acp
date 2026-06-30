@@ -1,5 +1,4 @@
-declare const process: { exitCode?: number };
-
+import { describe, it } from "vitest";
 import { createTerminalSocketOutputQueue, type TerminalSocketOutputPost } from "../src/terminalSocketOutputQueue.js";
 
 function assert(condition: unknown, message: string): void {
@@ -141,14 +140,9 @@ async function testControlMessagesDoNotMergeWithEachOtherOrOutput(): Promise<voi
   assert(textOf(posts[3].data) === "b", "trailing output should be preserved");
 }
 
-async function run(): Promise<void> {
-  await testInputDoesNotDropQueuedOutput();
-  await testQueuedInteractiveOutputFlushesImmediatelyAfterAck();
-  await testNonInteractiveOutputStillBatchesOnTimer();
-  await testControlMessagesDoNotMergeWithEachOtherOrOutput();
-}
-
-run().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
+describe("terminalSocketOutputQueue", () => {
+  it("does not drop queued output when input is sent", testInputDoesNotDropQueuedOutput);
+  it("flushes queued interactive output immediately after ack", testQueuedInteractiveOutputFlushesImmediatelyAfterAck);
+  it("still batches non-interactive output on timer", testNonInteractiveOutputStillBatchesOnTimer);
+  it("does not merge control messages with each other or output", testControlMessagesDoNotMergeWithEachOtherOrOutput);
 });

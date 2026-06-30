@@ -10,7 +10,7 @@ from app.main import app
 from app.model_base import Base
 from app.models import AiSession, ClientRuntime, Event, SummaryJob, VirtualWindow
 from app.repositories.clients import create_client, ensure_local_client
-from app.repositories.windows import create_window
+from app.contexts.windows.infrastructure.repository import create_window
 from app.services.ingest.codex_receiver import receive_codex_trace
 from app.services.search_index import AI_EVENTS_INDEX
 

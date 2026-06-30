@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acas.local/artifact-definitions/capability-map/current.schema.json",
+  "title": "Capability Map Current",
+  "type": "object",
+  "required": ["kind", "layer", "capabilityMap", "decisionTrace"],
+  "properties": {
+    "kind": { "const": "CapabilityMapCurrent" },
+    "layer": { "const": "Current" },
+    "explorationArtifactRef": { "type": "string" },
+    "sourceJourneyRef": { "type": "string" },
+    "sourceFlowRef": { "type": "string" },
+    "sourcePrototypeRef": { "type": "string" },
+    "sourceArchitectureRefs": { "type": "array", "items": { "type": "string" } },
+    "capabilityMap": {
+      "type": "object",
+      "required": ["mapId", "mapScope", "layoutModel", "capabilities"],
+      "properties": {
+        "mapId": { "type": "string", "minLength": 1 },
+        "title": {},
+        "mapScope": { "$ref": "#/$defs/mapScope" },
+        "layoutModel": { "$ref": "#/$defs/layoutModel" },
+        "capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/capability" }
+        },
+        "relationships": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relationship" }
+        },
+        "qualitySignals": { "type": "array" },
+        "openQuestions": { "type": "array" },
+        "evidenceRefs": { "type": "array" }
+      },
+      "additionalProperties": true,
+      "not": { "required": ["capabilityDomains"] }
+    },
+    "decisionTrace": {
+      "$ref": "https://acas.local/artifact-definitions/_shared/review-decision/schemas/decision-trace.schema.json#/$defs/decisionTrace"
+    },
+    "openRisks": { "type": "array" },
+    "assumptions": { "type": "array" },
+    "evidenceRefs": { "type": "array" }
+  },
+  "$defs": {
+    "mapScope": {
+      "type": "object",
+      "required": ["target", "scenario", "outcome"],
+      "properties": {
+        "target": {},
+        "actor": {},
+        "scenario": {},
+        "outcome": {},
+        "mapType": { "enum": ["business", "platform", "dual"] },
+        "boundary": {}
+      },
+      "additionalProperties": true
+    },
+    "layoutModel": {
+      "type": "object",
+      "required": ["layoutId", "layoutTree"],
+      "properties": {
+        "layoutId": { "type": "string", "minLength": 1 },
+        "orientation": { "enum": ["architecture_tree", "layered_vertical", "matrix", "custom"] },
+        "reuseAxis": {},
+        "layoutTree": { "$ref": "#/$defs/layoutTreeNode" },
+        "placementRules": { "type": "array" },
+        "legend": { "type": "array" }
+      },
+      "additionalProperties": true,
+      "not": { "required": ["zones"] }
+    },
+    "layoutTreeNode": {
+      "oneOf": [
+        { "$ref": "#/$defs/layoutContainerNode" },
+        { "$ref": "#/$defs/layoutZoneNode" }
+      ]
+    },
+    "layoutContainerNode": {
+      "type": "object",
+      "required": ["type", "children"],
+      "properties": {
+        "type": { "enum": ["stack", "split"] },
+        "title": {},
+        "direction": { "enum": ["horizontal", "vertical"] },
+        "children": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/layoutTreeNode" }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "split" } }, "required": ["type"] },
+          "then": { "required": ["direction"] }
+        }
+      ],
+      "additionalProperties": true
+    },
+    "layoutZoneNode": {
+      "type": "object",
+      "required": ["type", "zoneId", "title", "role", "capabilityIds"],
+      "properties": {
+        "type": { "const": "zone" },
+        "zoneId": { "type": "string", "minLength": 1 },
+        "title": {},
+        "role": {
+          "enum": [
+            "experience",
+            "platform",
+            "foundation",
+            "observability",
+            "governance",
+            "development",
+            "management",
+            "other"
+          ]
+        },
+        "purpose": {},
+        "capabilityIds": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": true,
+      "not": { "required": ["children"] }
+    },
+    "capability": {
+      "type": "object",
+      "required": [
+        "capabilityId",
+        "level",
+        "name",
+        "capabilityType",
+        "reuseLevel",
+        "granularity",
+        "maturity",
+        "intent",
+        "inScope",
+        "outOfScope",
+        "successSignals",
+        "scenarioRefs",
+        "sourceTrace",
+        "downstreamTrace"
+      ],
+      "properties": {
+        "capabilityId": { "type": "string", "minLength": 1 },
+        "level": { "enum": ["L1", "L2"] },
+        "parentCapabilityId": { "type": "string" },
+        "name": {},
+        "capabilityType": { "enum": ["business", "platform", "foundation", "side_plane"] },
+        "reuseLevel": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "granularity": { "enum": ["coarse", "medium", "fine"] },
+        "maturity": { "enum": ["absent", "manual", "assisted", "automated", "optimized"] },
+        "intent": {},
+        "inScope": { "type": "array", "minItems": 1 },
+        "outOfScope": { "type": "array" },
+        "successSignals": { "type": "array", "minItems": 1 },
+        "scenarioRefs": { "type": "array", "minItems": 1 },
+        "sourceTrace": { "$ref": "#/$defs/sourceTrace" },
+        "downstreamTrace": { "$ref": "#/$defs/downstreamTrace" },
+        "sourceRefs": { "type": "array" },
+        "realizedBy": { "type": "array" },
+        "dependsOn": { "type": "array" },
+        "supports": { "type": "array" },
+        "risk": {},
+        "evidenceRefs": { "type": "array" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "level": { "const": "L2" } },
+            "required": ["level"]
+          },
+          "then": { "required": ["parentCapabilityId"] }
+        }
+      ],
+      "not": {
+        "anyOf": [
+          { "required": ["zoneId"] },
+          { "required": ["domainId"] },
+          { "required": ["position"] }
+        ]
+      },
+      "additionalProperties": true
+    },
+    "sourceTrace": {
+      "type": "object",
+      "properties": {
+        "journeyRefs": { "type": "array" },
+        "flowRefs": { "type": "array" },
+        "prototypeRefs": { "type": "array" },
+        "architectureRefs": { "type": "array" },
+        "researchRefs": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "downstreamTrace": {
+      "type": "object",
+      "properties": {
+        "domainHints": { "type": "array" },
+        "uiHints": { "type": "array" },
+        "contractHints": { "type": "array" },
+        "engineeringHints": { "type": "array" },
+        "excludedRationale": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "relationship": {
+      "type": "object",
+      "required": ["fromCapabilityId", "toCapabilityId", "relationType"],
+      "properties": {
+        "fromCapabilityId": { "type": "string", "minLength": 1 },
+        "toCapabilityId": { "type": "string", "minLength": 1 },
+        "relationType": { "enum": ["supports", "depends_on", "realizes", "governs", "observes", "enables"] },
+        "label": {}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
