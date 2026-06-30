@@ -27,7 +27,7 @@ OVERSIZED_SOURCE_BASELINE = {
     "backend/tests/integration/test_window_api_agent_record_chat_pagination.py": 501,
     "backend/tests/unit/test_agent_config_service_model_settings.py": 832,
     "backend/tests/unit/test_agent_config_service_codex_window_profiles.py": 602,
-    "backend/tests/unit/test_bootstrap_installer.py": 506,
+    "backend/tests/unit/test_bootstrap_installer.py": 504,
     "backend/tests/unit/test_client_agent_agent_tool_watchers_codex_claude_offsets.py": 522,
     "backend/tests/unit/test_client_agent_agent_tool_watchers_history_and_cursor.py": 501,
     "backend/tests/unit/test_client_agent_runner_runtime_lifecycle.py": 526,
