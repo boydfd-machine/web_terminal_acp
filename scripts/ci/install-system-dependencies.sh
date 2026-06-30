@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PACKAGES=("$@")
-if [[ "${#PACKAGES[@]}" -eq 0 ]]; then
-  PACKAGES=(tmux zsh)
-fi
+# Packages every CI job needs: the explicitly requested set plus the base
+# tools that tests and scripts assume are present. rsync is required by
+# scripts/sync-to-github.sh, which is exercised by the open-source release
+# sync unit test.
+BASE_PACKAGES=(rsync)
+PACKAGES=("${BASE_PACKAGES[@]}" "$@")
 
 APT_CACHE_ROOT="${APT_CACHE_ROOT:-$HOME/.cache/uv/apt}"
 APT_ARCHIVES_DIR="$APT_CACHE_ROOT/archives"

@@ -1,4 +1,7 @@
+import pytest
+
 from app.client_agent.agent_commands import agent_command_with_official_model_flag
+from app.client_agent.cursor_official_models import list_cursor_official_models
 from app.contexts.agent_profiles.domain.cursor_official_models import (
     CURSOR_OFFICIAL_MODEL_PRESET_ID,
     parse_cursor_official_models_output,
@@ -20,6 +23,39 @@ gpt-5.3-codex - Codex 5.3
         {"id": "composer-2.5", "label": "Composer 2.5 (current)"},
         {"id": "gpt-5.3-codex", "label": "Codex 5.3"},
     ]
+
+
+def test_list_cursor_official_models_prefers_proxychains_wrapper(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_which(command: str) -> str | None:
+        if command == "proxychains4":
+            return "/usr/bin/proxychains4"
+        if command == "cursor-agent":
+            return "~/.local/bin/cursor-agent"
+        if command == "agent":
+            return "~/.local/bin/agent"
+        return None
+
+    def fake_run(args, **kwargs):
+        calls.append(list(args))
+
+        class Result:
+            returncode = 0
+            stdout = """Available models\n\nauto - Auto\ncomposer-2.5 - Composer 2.5\n"""
+
+        if args[0] == "/usr/bin/proxychains4":
+            Result.stdout = """Available models\n\nauto - Auto\ngpt-5.3-codex - Codex 5.3\n"""
+        return Result()
+
+    monkeypatch.setattr("app.client_agent.cursor_official_models.shutil.which", fake_which)
+    monkeypatch.setattr("app.client_agent.cursor_official_models.subprocess.run", fake_run)
+
+    assert list_cursor_official_models() == [
+        {"id": "auto", "label": "Auto"},
+        {"id": "gpt-5.3-codex", "label": "Codex 5.3"},
+    ]
+    assert calls == [["/usr/bin/proxychains4", "-q", "~/.local/bin/cursor-agent", "models"]]
 
 
 def test_agent_command_with_official_model_flag_inserts_model_after_agent() -> None:

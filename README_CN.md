@@ -11,11 +11,14 @@ Web Terminal ACP 是一个面向 shell 与 AI 编程 Agent 工作流的浏览器
 - **浏览器终端工作台**：xterm.js 终端窗格，底层由 tmux 承载，可重连。
 - **多客户端运行时**：可直接使用 server 所在主机，也可注册其他机器为 remote client。
 - **Agent 工作记录**：采集 Claude Code JSONL、Codex trace、Cursor adapter 事件、终端输出与摘要。
+- **Agent profiles**：在 `~/.web-terminal-acp/agents` 下配置可复用的 Web Terminal ACP agents，共享 skills、`AGENT.md`，并保留各 agent-client 自己的 plugins/hooks 配置。
 - **搜索与摘要**：Elasticsearch 索引终端输出和 Agent 事件；OpenAI 兼容 API 可生成标题、标签、摘要和目录建议。
 - **Agent worktree 追踪**：Web Terminal 管理的 shell 会设置 `WEB_TERMINAL_WINDOW_ID`，便于编码 Agent 在 linked git worktree 中工作，并把状态显示在 UI 里。
 - **remote client 直接注册**：在 Settings 生成一次性 token，目标机器从 server 拉取安装脚本和 client 包完成安装。
 
 ## 架构
+
+产品能力视角可参考 [`docs/capability-map.md`](docs/capability-map.md)。
 
 | 组件 | 作用 |
 | --- | --- |
@@ -90,7 +93,7 @@ docker compose up -d --wait elasticsearch
 
 | 变量 | 用途 | 默认 |
 | --- | --- | --- |
-| `CORS_ALLOW_ORIGINS` | 允许浏览器调用 backend API 的前端 origin，多个用逗号分隔；局域网 Vite 联调可加 `http://127.0.0.1:5173` | localhost Vite origin |
+| `CORS_ALLOW_ORIGINS` | 允许浏览器调用 backend API 的前端 origin，多个用逗号分隔；局域网 Vite 联调可加 `http://dev-host:5173` | localhost Vite origin |
 | `WEB_TERMINAL_AUTH_SECRET` | 非空时启用 UI/API 内置登录 | 空 |
 | `WEB_TERMINAL_AUTH_SESSION_TTL_SECONDS` | 登录态有效期 | `604800` |
 | `KEYCLOAK_BASE_URL` | Keycloak 服务地址；与 realm、client id 同时设置后启用 Keycloak 登录 | 空 |
@@ -113,17 +116,27 @@ docker compose up -d --wait elasticsearch
 
 不要提交 `.env`。对 localhost 之外开放之前，请启用 Keycloak 或设置 `WEB_TERMINAL_AUTH_SECRET`、使用强数据库密码，并在 UI/backend 前放 TLS 反向代理。
 
-从 `http://127.0.0.1:5173` 做本地 Keycloak 联调时，backend 推荐配置：
+从局域网 Vite origin 做本地 Keycloak 联调时，backend 推荐配置为你的身份服务信息：
 
 ```bash
 KEYCLOAK_BASE_URL=https://auth.example.com
-KEYCLOAK_REALM=home
-KEYCLOAK_CLIENT_ID=web_terminal_mcp_local
+KEYCLOAK_REALM=example
+KEYCLOAK_CLIENT_ID=web_terminal_acp
 KEYCLOAK_CLIENT_SECRET=<client secret>
-CORS_ALLOW_ORIGINS=http://127.0.0.1:5173
+CORS_ALLOW_ORIGINS=http://dev-host:5173
 ```
 
-前端使用 Authorization Code + PKCE，但授权码换 token 和 token 验签都在后端完成，不会把 client secret 暴露给浏览器。Keycloak 控制台中，`Root URL`、`Home URL`、`Web origins` 用 `http://127.0.0.1:5173`，`Valid redirect URIs` 用 `http://127.0.0.1:5173/*` 是合理的。当前退出登录流程不需要 `Valid post logout redirect URIs`；如果 Keycloak 要求填写，可以用 `http://127.0.0.1:5173/*`。
+前端使用 Authorization Code + PKCE，但授权码换 token 和 token 验签都在后端完成，不会把 client secret 暴露给浏览器。Keycloak 控制台中，`Root URL`、`Home URL`、`Web origins` 用 `http://dev-host:5173`，`Valid redirect URIs` 用 `http://dev-host:5173/*` 是合理的。当前退出登录流程不需要 `Valid post logout redirect URIs`；如果 Keycloak 要求填写，可以用 `http://dev-host:5173/*`。
+
+## Agent Profiles
+
+Web Terminal ACP 使用 **agent-client** 作为 Claude Code、Codex、Cursor CLI 等可执行工具的通用称呼。**agent profile** 是这些 agent-client 的可复用启动预设。
+
+Agent profiles 存放在运行终端的机器上的 `~/.web-terminal-acp/agents/<profile-id>`。每个 profile 保存共享的 `skills/`、`skills.disabled/` 和 `AGENT.md`；通过具体 agent-client 启动时，Web Terminal 会把这些公共内容映射到该工具需要的配置文件，例如把 `AGENT.md` 映射为 Claude Code 的 `CLAUDE.md`、Codex 的 `AGENTS.md`。Plugins 和 hooks 仍然属于具体 agent-client，从该机器的全局 agent-client 配置中选择。
+
+在 **Settings -> Agents** 中创建和编辑 profiles。创建终端时，可以选择已配置的 agent profile，也可以直接配置某个 agent-client。
+
+新增内置 agent-client 时，请遵循 [`docs/agent-client-plugins.md`](docs/agent-client-plugins.md) 中的插件契约。
 
 ## 桌面应用构建
 
@@ -145,9 +158,11 @@ npm run electron:dist:mac:zip
 cd frontend
 npm run android:build:debug
 npm run android:build:local-release
+npm run android:build:pad:debug
+npm run android:build:pad:local-release
 ```
 
-需要在真机上安装 release-mode 包做本地验收时，使用 `android:build:local-release`。标准 `android:build:release` 用于正式发布包，需要 release keystore；未签名 release APK 会被 Android 安装器拒绝安装。
+需要在真机上安装 release-mode 包做本地验收时，使用 `android:build:local-release` 或 `android:build:pad:local-release`。标准 `android:build:release` 和 `android:build:pad:release` 用于正式发布包，需要 release keystore；未签名 release APK 会被 Android 安装器拒绝安装。
 
 正式签名 release 构建前，设置以下环境变量或同名 Gradle properties：
 
@@ -157,13 +172,17 @@ export WEB_TERMINAL_ANDROID_RELEASE_STORE_PASSWORD=...
 export WEB_TERMINAL_ANDROID_RELEASE_KEY_ALIAS=...
 export WEB_TERMINAL_ANDROID_RELEASE_KEY_PASSWORD=...
 npm run android:build:release
+npm run android:build:pad:release
 ```
 
 如果明确需要未签名 APK 交给外部签名流程，使用：
 
 ```bash
 npm run android:build:unsigned-release
+npm run android:build:pad:unsigned-release
 ```
+
+Pad APK 使用 package id `com.webterminal.acp.pad` 和应用名 `Web Terminal ACP Pad`，可与标准 Android app 并行安装。
 
 ## 安装 Remote Client
 

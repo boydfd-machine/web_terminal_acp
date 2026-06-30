@@ -7,6 +7,7 @@ This guide is for an AI agent that is asked to install or operate Web Terminal A
 - Prefer Docker Compose for the Web Terminal server.
 - Do not expose the app on a public network without `WEB_TERMINAL_AUTH_SECRET` and a reverse proxy/TLS plan.
 - Do not print registration keys, client tokens, private keys, or `.env` contents into public logs.
+- Do not publish or paste local project artifacts, bug/debug notes, research files, evaluation reports, ACAS artifacts, or private spec documents into public issues, release notes, or shared transcripts.
 - If a required OS package is missing and you do not have permission to install it, stop and ask the user/admin to install the named package.
 - If this host should become a remote client, use the direct registration flow from Settings/API. Do not hand-write client config or tokens.
 
@@ -36,6 +37,7 @@ Clone and configure:
 ```bash
 git clone <repo-url> web_terminal_acp
 cd web_terminal_acp
+git checkout <branch-or-tag>
 cp .env.example .env
 ```
 
@@ -81,6 +83,20 @@ Tell the user the UI URL, usually:
 ```text
 http://localhost:5173
 ```
+
+## Optional: Configure Agent Profiles
+
+Ask: "Do you want reusable Web Terminal ACP agent profiles for Codex, Claude Code, Cursor, or another agent-client?"
+
+If the answer is yes, prefer the UI path:
+
+1. Open **Settings**.
+2. Open **Agents**.
+3. Create a profile with the desired agent-client and launch defaults.
+4. Put shared prompt content in that profile's `AGENT.md`.
+5. Put reusable skills in that profile's `skills/` directory.
+
+Do not copy private API keys into profile files. Plugins and hooks remain agent-client-specific and should come from that machine's normal Codex, Claude Code, Cursor, or other agent-client configuration.
 
 ## Optional: Register This Host As A Remote Client
 

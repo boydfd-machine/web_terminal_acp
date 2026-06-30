@@ -94,7 +94,7 @@ Important `.env` values:
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `CORS_ALLOW_ORIGINS` | Comma-separated browser origins allowed to call the backend API; add LAN Vite origins such as `http://127.0.0.1:5173` | localhost Vite origins |
+| `CORS_ALLOW_ORIGINS` | Comma-separated browser origins allowed to call the backend API; add LAN Vite origins such as `http://dev-host:5173` | localhost Vite origins |
 | `WEB_TERMINAL_AUTH_SECRET` | Enables built-in UI/API login when non-empty | empty |
 | `WEB_TERMINAL_AUTH_SESSION_TTL_SECONDS` | Login session lifetime | `604800` |
 | `KEYCLOAK_BASE_URL` | Keycloak server URL; setting this with realm and client id enables Keycloak login | empty |
@@ -117,17 +117,17 @@ Important `.env` values:
 
 Do not commit `.env`. Before exposing the app beyond localhost, enable Keycloak or set `WEB_TERMINAL_AUTH_SECRET`, use strong database passwords, and put a TLS reverse proxy in front of the UI/backend.
 
-For local Keycloak testing from `http://127.0.0.1:5173`, configure the backend with:
+For local Keycloak testing from a LAN Vite origin, configure the backend with values for your identity provider:
 
 ```bash
 KEYCLOAK_BASE_URL=https://auth.example.com
-KEYCLOAK_REALM=home
-KEYCLOAK_CLIENT_ID=web_terminal_mcp_local
+KEYCLOAK_REALM=example
+KEYCLOAK_CLIENT_ID=web_terminal_acp
 KEYCLOAK_CLIENT_SECRET=<client secret>
-CORS_ALLOW_ORIGINS=http://127.0.0.1:5173
+CORS_ALLOW_ORIGINS=http://dev-host:5173
 ```
 
-The frontend uses Authorization Code + PKCE, but the backend exchanges the code with Keycloak and verifies the token. In Keycloak, `Root URL`, `Home URL`, `Web origins`, and `Valid redirect URIs` can use `http://127.0.0.1:5173` and `http://127.0.0.1:5173/*`. `Valid post logout redirect URIs` is not required for the current logout flow; setting it to `http://127.0.0.1:5173/*` is fine if Keycloak requires a value.
+The frontend uses Authorization Code + PKCE, but the backend exchanges the code with Keycloak and verifies the token. In Keycloak, `Root URL`, `Home URL`, `Web origins`, and `Valid redirect URIs` can use `http://dev-host:5173` and `http://dev-host:5173/*`. `Valid post logout redirect URIs` is not required for the current logout flow; setting it to `http://dev-host:5173/*` is fine if Keycloak requires a value.
 
 ## Agent Profiles
 
