@@ -89,7 +89,7 @@ export function BootstrapClientForm({ isSubmitting, onSubmit }: BootstrapClientF
         rows={8}
         value={privateKey}
         onChange={(event) => setPrivateKey(event.target.value)}
-        placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+        placeholder="Paste an SSH private key here"
       />
 
       <label htmlFor="bootstrap-client-passphrase">{t("bootstrap.passphrase")}</label>

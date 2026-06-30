@@ -214,7 +214,7 @@ def test_build_summary_prompt_redacts_nested_secret_keys_and_token_patterns():
                 "nested": [
                     {"password": "correct-horse-battery-staple"},
                     "use Bearer nestedtokenabcdefghijklmnopqrstuvwxyz as auth",
-                    "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----",
+                    "private_key_placeholder_value",
                 ],
                 "OPENAI_API_KEY": "sk-openai-secret",
                 "ANTHROPIC_API_KEY": "sk-ant-secret",

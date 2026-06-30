@@ -1,7 +1,7 @@
 {
   "name": "web-terminal-acp-frontend",
   "private": true,
-  "version": "2.78.7",
+  "version": "2.78.8",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {

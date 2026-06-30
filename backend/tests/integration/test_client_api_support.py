@@ -128,7 +128,7 @@ BOOTSTRAP_PAYLOAD = {
     "host": "dev.example.com",
     "port": 22,
     "username": "alice",
-    "private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\nsecret\n-----END OPENSSH PRIVATE KEY-----",
+    "private_key": "ssh-private-key-placeholder",
     "passphrase": "ssh-passphrase",
     "server_url": "https://control.example.com",
 }

@@ -19,9 +19,7 @@ from app.services.bootstrap.installer import (
     dependency_check_script,
     _kill_existing_client_processes_command,
 )
-PRIVATE_KEY = (
-    "-----BEGIN OPENSSH PRIVATE KEY-----\nsecret-key-body\n-----END OPENSSH PRIVATE KEY-----"
-)
+PRIVATE_KEY = "ssh-private-key-placeholder"
 PASSPHRASE = "correct horse battery staple"
 TOKEN = "plain-client-token"
 

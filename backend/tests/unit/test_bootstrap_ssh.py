@@ -2,7 +2,7 @@ from app.services.bootstrap import ssh
 from app.services.bootstrap.ssh import SshClient, SshConnectionInfo
 
 
-PRIVATE_KEY = "-----BEGIN OPENSSH PRIVATE KEY-----\nsecret-key-body\n-----END OPENSSH PRIVATE KEY-----"
+PRIVATE_KEY = "ssh-private-key-placeholder"
 
 
 def test_ssh_client_loads_known_hosts_and_accepts_first_bootstrap_host(monkeypatch) -> None:
